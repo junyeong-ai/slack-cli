@@ -1,0 +1,308 @@
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct Config {
+    pub bot_token: Option<String>,
+    pub user_token: Option<String>,
+
+    #[serde(default)]
+    pub cache: CacheConfig,
+
+    #[serde(default)]
+    pub retry: RetryConfig,
+
+    #[serde(default)]
+    pub connection: ConnectionConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CacheConfig {
+    #[serde(default = "default_ttl_hours")]
+    pub ttl_users_hours: u64,
+
+    #[serde(default = "default_ttl_hours")]
+    pub ttl_channels_hours: u64,
+
+    pub data_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RetryConfig {
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: u32,
+
+    #[serde(default = "default_initial_delay_ms")]
+    pub initial_delay_ms: u64,
+
+    #[serde(default = "default_max_delay_ms")]
+    pub max_delay_ms: u64,
+
+    #[serde(default = "default_exponential_base")]
+    pub exponential_base: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectionConfig {
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
+
+    #[serde(default = "default_max_idle_per_host")]
+    pub max_idle_per_host: i32,
+
+    #[serde(default = "default_pool_idle_timeout_seconds")]
+    pub pool_idle_timeout_seconds: u64,
+}
+
+fn default_ttl_hours() -> u64 {
+    24
+}
+fn default_max_attempts() -> u32 {
+    3
+}
+fn default_initial_delay_ms() -> u64 {
+    1000
+}
+fn default_max_delay_ms() -> u64 {
+    60000
+}
+fn default_exponential_base() -> f64 {
+    2.0
+}
+fn default_timeout_seconds() -> u64 {
+    30
+}
+fn default_max_idle_per_host() -> i32 {
+    10
+}
+fn default_pool_idle_timeout_seconds() -> u64 {
+    90
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            ttl_users_hours: 24,
+            ttl_channels_hours: 24,
+            data_path: None,
+        }
+    }
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_delay_ms: 1000,
+            max_delay_ms: 60000,
+            exponential_base: 2.0,
+        }
+    }
+}
+
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: 30,
+            max_idle_per_host: 10,
+            pool_idle_timeout_seconds: 90,
+        }
+    }
+}
+
+impl Config {
+    pub fn load(
+        config_path: Option<PathBuf>,
+        cli_token: Option<String>,
+        cli_user_token: Option<String>,
+        cli_data_dir: Option<PathBuf>,
+    ) -> Result<Self> {
+        let mut config = Self::default();
+
+        let path = config_path.or_else(Self::default_config_path);
+        if let Some(p) = path.filter(|p| p.exists()) {
+            let content = std::fs::read_to_string(&p)
+                .context(format!("Failed to read config: {}", p.display()))?;
+            config = toml::from_str(&content).context("Failed to parse config.toml")?;
+        }
+
+        if let Ok(token) = std::env::var("SLACK_BOT_TOKEN") {
+            config.bot_token = Some(token);
+        }
+        if let Ok(token) = std::env::var("SLACK_USER_TOKEN") {
+            config.user_token = Some(token);
+        }
+
+        if let Some(token) = cli_token {
+            config.bot_token = Some(token);
+        }
+        if let Some(token) = cli_user_token {
+            config.user_token = Some(token);
+        }
+        if let Some(dir) = cli_data_dir {
+            config.cache.data_path = Some(dir);
+        }
+
+        if config.bot_token.is_none() && config.user_token.is_none() {
+            anyhow::bail!(
+                "No Slack token found. Set via:\n\
+                 - Config file: {}\n\
+                 - Environment: SLACK_BOT_TOKEN or SLACK_USER_TOKEN\n\
+                 - CLI flag: --token\n\
+                 - Or run: slack init",
+                Self::default_config_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "~/.config/slack-cli/config.toml".to_string())
+            );
+        }
+
+        Ok(config)
+    }
+
+    pub fn default_config_path() -> Option<PathBuf> {
+        dirs::config_dir().map(|mut p| {
+            p.push("slack-cli");
+            p.push("config.toml");
+            p
+        })
+    }
+
+    pub fn default_data_dir() -> Option<PathBuf> {
+        dirs::data_local_dir()
+            .or_else(dirs::config_dir)
+            .map(|mut p| {
+                p.push("slack-cli");
+                p.push("cache");
+                p
+            })
+    }
+
+    pub fn db_path(&self) -> PathBuf {
+        let mut path = self
+            .cache
+            .data_path
+            .clone()
+            .or_else(Self::default_data_dir)
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "macos")]
+                let fallback = std::path::PathBuf::from(
+                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+                )
+                .join("Library/Application Support/slack-cli/cache");
+
+                #[cfg(not(target_os = "macos"))]
+                let fallback = std::path::PathBuf::from(
+                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
+                )
+                .join(".local/share/slack-cli/cache");
+
+                fallback
+            });
+
+        if let Ok(canonical) = path.canonicalize() {
+            path = canonical;
+        }
+
+        path.push("slack.db");
+        path
+    }
+
+    pub fn show_masked(&self, as_json: bool) -> Result<()> {
+        let mut masked = self.clone();
+
+        if let Some(token) = &masked.bot_token {
+            masked.bot_token = Some(mask_token(token));
+        }
+        if let Some(token) = &masked.user_token {
+            masked.user_token = Some(mask_token(token));
+        }
+
+        if as_json {
+            println!("{}", serde_json::to_string_pretty(&masked)?);
+        } else {
+            println!("Configuration:");
+            println!(
+                "  bot_token: {}",
+                masked.bot_token.as_deref().unwrap_or("-")
+            );
+            println!(
+                "  user_token: {}",
+                masked.user_token.as_deref().unwrap_or("-")
+            );
+            println!("\nCache:");
+            println!("  ttl_users_hours: {}", masked.cache.ttl_users_hours);
+            println!("  ttl_channels_hours: {}", masked.cache.ttl_channels_hours);
+            println!(
+                "  data_path: {}",
+                masked
+                    .cache
+                    .data_path
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| Self::default_data_dir()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "-".to_string()))
+            );
+            println!("\nRetry:");
+            println!("  max_attempts: {}", masked.retry.max_attempts);
+            println!("  initial_delay_ms: {}", masked.retry.initial_delay_ms);
+            println!("  max_delay_ms: {}", masked.retry.max_delay_ms);
+            println!("  exponential_base: {}", masked.retry.exponential_base);
+            println!("\nConnection:");
+            println!("  timeout_seconds: {}", masked.connection.timeout_seconds);
+            println!(
+                "  max_idle_per_host: {}",
+                masked.connection.max_idle_per_host
+            );
+            println!(
+                "  pool_idle_timeout_seconds: {}",
+                masked.connection.pool_idle_timeout_seconds
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn edit_config() -> Result<()> {
+        let path = Self::default_config_path().context("Cannot determine config path")?;
+
+        if !path.exists() {
+            println!(
+                "Config file does not exist: {}\nRun: slack config init",
+                path.display()
+            );
+            return Ok(());
+        }
+
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+            if cfg!(target_os = "macos") {
+                "open".to_string()
+            } else if cfg!(target_os = "windows") {
+                "notepad".to_string()
+            } else {
+                "vi".to_string()
+            }
+        });
+
+        let status = std::process::Command::new(&editor)
+            .arg(&path)
+            .status()
+            .context(format!("Failed to launch editor: {}", editor))?;
+
+        if !status.success() {
+            anyhow::bail!("Editor exited with error");
+        }
+
+        Ok(())
+    }
+}
+
+fn mask_token(token: &str) -> String {
+    if token.len() <= 8 {
+        "*".repeat(token.len())
+    } else {
+        let prefix = &token[..4];
+        let suffix = &token[token.len() - 4..];
+        format!("{}...{}", prefix, suffix)
+    }
+}
