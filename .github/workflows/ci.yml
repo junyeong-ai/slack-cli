@@ -72,7 +72,7 @@ jobs:
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: unittests
-          name: codecov-mcp-slack
+          name: codecov-slack
           verbose: true
 
       - name: Generate HTML coverage report
@@ -104,14 +104,14 @@ jobs:
 
       - name: Check binary size
         run: |
-          ls -lh target/release/mcp-slack
-          du -h target/release/mcp-slack
+          ls -lh target/release/slack
+          du -h target/release/slack
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-binary
-          path: target/release/mcp-slack
+          path: target/release/slack
           retention-days: 7
 
   security-audit:
