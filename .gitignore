@@ -1,0 +1,55 @@
+# Rust
+target/
+**/*.rs.bk
+*.pdb
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+data/
+*.db
+*.db-*
+
+# IDE
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Testing
+tarpaulin-report.html
+cobertura.xml
+coverage/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS specific
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.backup
+*.bak
+
+# Build artifacts
+dist/
+build/
+
+# Agent tooling directories
+.serena/
+.specify/
+specs/
+baseline_metrics.txt

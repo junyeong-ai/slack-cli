@@ -1,0 +1,52 @@
+[package]
+name = "slack-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91.1"
+authors = ["Slack CLI Contributors"]
+description = "Modern Slack CLI with FTS5 cache"
+license = "MIT"
+repository = "https://github.com/yourusername/slack-cli"
+
+[[bin]]
+name = "slack"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "sync", "time"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_urlencoded = "0.7"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"], default-features = false }
+rusqlite = { version = "0.37", features = ["bundled", "chrono", "serde_json"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.31"
+anyhow = "1.0"
+thiserror = "2.0"
+governor = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+dirs = "6.0"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tokio = { version = "1.48", features = ["full", "test-util"] }
+wiremock = "0.6"
+pretty_assertions = "1.4"
+rstest = "0.23"
+serial_test = "3.2"
+tempfile = "3.13"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
