@@ -161,16 +161,32 @@ impl Config {
     }
 
     pub fn default_config_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|mut p| {
-            p.push("slack-cli");
-            p.push("config.toml");
-            p
-        })
+        // Use XDG Base Directory or ~/.config for all platforms
+        std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| PathBuf::from(home).join(".config"))
+            })
+            .map(|mut p| {
+                p.push("slack-cli");
+                p.push("config.toml");
+                p
+            })
     }
 
     pub fn default_data_dir() -> Option<PathBuf> {
-        dirs::data_local_dir()
-            .or_else(dirs::config_dir)
+        // Place cache under config directory for simplicity: ~/.config/slack-cli/cache
+        std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| PathBuf::from(home).join(".config"))
+            })
             .map(|mut p| {
                 p.push("slack-cli");
                 p.push("cache");

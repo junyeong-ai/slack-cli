@@ -93,8 +93,8 @@ slack cache stats
 
 # Refresh cache
 slack cache refresh           # all
-slack cache refresh --users   # users only
-slack cache refresh --channels # channels only
+slack cache refresh users     # users only
+slack cache refresh channels  # channels only
 
 # Config management
 slack config show            # show config (masked tokens)
@@ -186,7 +186,7 @@ export SLACK_USER_TOKEN="xoxp-..."    # User token (recommended)
 ### Config File
 
 **Location**:
-- macOS: `~/Library/Application Support/slack-cli/config.toml`
+- macOS: `~/.config/slack-cli/config.toml`
 - Linux: `~/.config/slack-cli/config.toml`
 - Windows: `%APPDATA%\slack-cli\config.toml`
 
@@ -198,7 +198,7 @@ user_token = "xoxp-..."
 [cache]
 ttl_users_hours = 24
 ttl_channels_hours = 24
-data_path = "~/.local/share/slack-cli/cache"  # macOS: ~/Library/...
+data_path = "~/.config/slack-cli/cache"  # Same for all platforms
 
 [retry]
 max_attempts = 3

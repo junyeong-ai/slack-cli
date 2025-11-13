@@ -93,8 +93,8 @@ slack cache stats
 
 # 캐시 새로고침
 slack cache refresh           # 전체
-slack cache refresh --users   # 사용자만
-slack cache refresh --channels # 채널만
+slack cache refresh users     # 사용자만
+slack cache refresh channels  # 채널만
 
 # 설정 관리
 slack config show            # 설정 표시 (토큰 마스킹)
@@ -186,7 +186,7 @@ export SLACK_USER_TOKEN="xoxp-..."    # 사용자 토큰 (권장)
 ### 설정 파일
 
 **위치**:
-- macOS: `~/Library/Application Support/slack-cli/config.toml`
+- macOS: `~/.config/slack-cli/config.toml`
 - Linux: `~/.config/slack-cli/config.toml`
 - Windows: `%APPDATA%\slack-cli\config.toml`
 
@@ -198,7 +198,7 @@ user_token = "xoxp-..."
 [cache]
 ttl_users_hours = 24
 ttl_channels_hours = 24
-data_path = "~/.local/share/slack-cli/cache"  # macOS는 ~/Library/...
+data_path = "~/.config/slack-cli/cache"  # 모든 플랫폼 동일
 
 [retry]
 max_attempts = 3
