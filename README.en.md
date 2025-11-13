@@ -41,13 +41,33 @@ slack channels "general"
 slack send "#general" "Hello team!"
 ```
 
-**💡 Tip**: Using a user token (`xoxp-`) provides more features.
+**Tip**: Using a user token (`xoxp-`) provides more features.
+
+---
+
+## 📋 Real-World Workflows
+
+**Find user by email and send DM**:
+```bash
+slack users "john@company.com" --json | jq -r '.[0].id' | \
+  xargs -I {} slack send "@{}" "Hello!"
+```
+
+**Send daily standup reminder to team channel**:
+```bash
+slack send "#team-daily" "Daily standup at 9am!"
+```
+
+**Search recent discussions**:
+```bash
+slack search "deployment" --channel "#dev" --json
+```
 
 ---
 
 ## 🎯 Key Features
 
-### 🔍 Powerful Search
+### Powerful Search
 ```bash
 # Search users (name, email, display name)
 slack users "john" --limit 5
@@ -59,7 +79,7 @@ slack channels "dev" --limit 10
 slack search "deadline" --channel "#dev-team"
 ```
 
-### 💬 Message Management
+### Message Management
 ```bash
 # Send message to channel
 slack send "#general" "Meeting in 10 minutes"
@@ -77,7 +97,7 @@ slack messages "#general" --limit 20
 slack thread "#dev-team" 1234567890.123456
 ```
 
-### 📋 Channel Management
+### Channel Management
 ```bash
 # List channel members
 slack members "#dev-team"
@@ -86,7 +106,7 @@ slack members "#dev-team"
 slack channels "general" --json | jq
 ```
 
-### ⚙️ Cache & Config
+### Cache & Config
 ```bash
 # Check cache status
 slack cache stats
@@ -224,68 +244,10 @@ slack users "john" --token xoxp-temporary-token
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Core Architecture
 
-### Core Technologies
-
-**Fast Search**:
-- **SQLite FTS5**: Full-text search engine (< 10ms queries)
-- **WAL Mode**: Concurrent read/write
-- **2-Phase Search**: LIKE exact match → FTS5 fuzzy match
-
-**Cache Strategy**:
-- **Full Load**: Cache all users/channels on startup
-- **TTL-Based**: Auto-refresh after 24 hours
-- **Distributed Lock**: Multi-process safety
-
-**Performance Optimizations**:
-- **Rust 2024**: Memory safety + high performance
-- **Tokio Async**: Asynchronous I/O
-- **Connection Pool**: HTTP connection reuse
-- **Rate Limiting**: Auto-retry + exponential backoff
-
-### System Structure
-
-```
-┌──────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Terminal   │  stdin  │   Slack CLI      │  HTTPS  │    Slack    │
-│   Commands   │◄───────►│   (clap/Tokio)   │◄───────►│  Workspace  │
-│              │  stdout │                  │         │             │
-└──────────────┘         └─────────┬────────┘         └─────────────┘
-                                   │
-                                   ▼
-                          ┌─────────────────┐
-                          │   SQLite Cache  │
-                          │   (WAL + FTS5)  │
-                          │                 │
-                          │ • User FTS5     │
-                          │ • Channel FTS5  │
-                          │ • Distributed   │
-                          │   locking       │
-                          │ • Metadata      │
-                          └─────────────────┘
-```
-
-### Why Caching is Essential
-
-**Slack API Limitations**:
-- 🚫 No channel name search API
-- ⏱️ Low rate limit (Tier 2: 20 calls/min)
-- 🐌 Repeated queries inefficient
-
-**Caching Solution**:
-- 🚀 Full load on startup
-- 🔍 Local FTS5 search (< 10ms)
-- ⚡ Zero API calls
-- 🔄 TTL-based auto-refresh
-
-**Performance Comparison**:
-
-| Operation | Slack API | Cache (FTS5) | Improvement |
-|-----------|-----------|--------------|-------------|
-| User Search | ~500ms + rate limit | **<10ms** | **50x+** |
-| Channel Search | ❌ Unavailable | **<10ms** | **Enabled** |
-| Consecutive Queries | Rate limited | **Unlimited** | **No constraints** |
+Fast local search with SQLite FTS5 (<10ms), 24-hour cache for users/channels, API rate limiting.
+For detailed architecture, see [CLAUDE.md](CLAUDE.md).
 
 ---
 
@@ -354,201 +316,40 @@ WHERE key LIKE 'last_%_sync';
 
 ## 📚 Command Reference
 
-### slack users
+| Command | Description | Example |
+|---------|-------------|---------|
+| `users <query>` | Search users (name, email, display name) | `slack users "john" --limit 5` |
+| `channels <query>` | Search channels (public/private/DM/group DM) | `slack channels "dev" --limit 10` |
+| `send <channel> <text>` | Send message | `slack send "#general" "Hello!"` |
+| `messages <channel>` | Get channel messages | `slack messages "#general" --limit 20` |
+| `thread <channel> <ts>` | Get full thread | `slack thread "#dev" 1234567890.123456` |
+| `members <channel>` | List channel members | `slack members "#dev-team"` |
+| `search <query>` | Search messages (workspace-wide) | `slack search "deadline" --channel "#dev"` |
+| `cache stats` | Show cache statistics (user/channel counts) | `slack cache stats` |
+| `cache refresh` | Refresh cache (all/users/channels) | `slack cache refresh --users` |
+| `config init` | Initialize config | `slack config init --bot-token xoxb-...` |
+| `config show` | Show config (masked tokens) | `slack config show` |
 
-Search users (name, email, display name)
+### Common Options
 
-```bash
-slack users <query> [OPTIONS]
+| Option | Description | Applies To |
+|--------|-------------|------------|
+| `--json` | JSON output format | All commands |
+| `--token <TOKEN>` | Override token temporarily | All commands |
+| `--limit <N>` | Limit results | users, channels, messages, thread, search |
+| `--thread <TS>` | Thread timestamp (for replies) | send |
+| `--channel <CH>` | Limit to specific channel | search |
 
-OPTIONS:
-  --limit <N>      Limit results [default: 10]
-  --json           JSON output format
-  --token <TOKEN>  Override token temporarily
-
-EXAMPLES:
-  slack users "john"
-  slack users "@gmail.com" --limit 20
-  slack users "smith" --json | jq
-```
-
-### slack channels
-
-Search channels (public/private/DM/group DM)
-
-```bash
-slack channels <query> [OPTIONS]
-
-OPTIONS:
-  --limit <N>  Limit results [default: 10]
-  --json       JSON output format
-
-EXAMPLES:
-  slack channels "dev"
-  slack channels "general" --limit 5
-```
-
-### slack send
-
-Send message
-
-```bash
-slack send <channel> <text> [OPTIONS]
-
-OPTIONS:
-  --thread <TS>  Thread timestamp (for replies)
-
-EXAMPLES:
-  slack send "#general" "Hello team!"
-  slack send "@john.doe" "Hi John"
-  slack send "#dev" "Fixed" --thread 1234567890.123456
-```
-
-### slack messages
-
-Get channel messages
-
-```bash
-slack messages <channel> [OPTIONS]
-
-OPTIONS:
-  --limit <N>  Number of messages [default: 100, max: 1000]
-  --json       JSON output format
-
-EXAMPLES:
-  slack messages "#general"
-  slack messages "#dev-team" --limit 50
-```
-
-### slack thread
-
-Get full thread
-
-```bash
-slack thread <channel> <timestamp> [OPTIONS]
-
-OPTIONS:
-  --limit <N>  Number of replies [default: 100]
-  --json       JSON output format
-
-EXAMPLES:
-  slack thread "#general" 1234567890.123456
-```
-
-### slack members
-
-List channel members
-
-```bash
-slack members <channel> [OPTIONS]
-
-OPTIONS:
-  --json  JSON output format
-
-EXAMPLES:
-  slack members "#dev-team"
-```
-
-### slack search
-
-Search messages (workspace-wide)
-
-```bash
-slack search <query> [OPTIONS]
-
-OPTIONS:
-  --channel <CH>  Limit to specific channel
-  --limit <N>     Limit results [default: 10]
-  --json          JSON output format
-
-EXAMPLES:
-  slack search "deadline"
-  slack search "bug" --channel "#dev-team"
-
-NOTE: Requires user token (xoxp-) + search:read scope
-```
-
-### slack cache
-
-Cache management
-
-```bash
-slack cache <COMMAND>
-
-COMMANDS:
-  stats    Show cache statistics (user/channel counts)
-  refresh  Refresh cache [--users|--channels]
-  path     Show cache file path
-
-EXAMPLES:
-  slack cache stats
-  slack cache refresh
-  slack cache refresh --users
-  slack cache path
-```
-
-### slack config
-
-Config management
-
-```bash
-slack config <COMMAND>
-
-COMMANDS:
-  init [OPTIONS]  Initialize config
-  show            Show config (masked tokens)
-  path            Show config file path
-  edit            Edit with default editor
-
-EXAMPLES:
-  slack config init --bot-token xoxb-...
-  slack config show
-  slack config edit
-```
+**Notes**:
+- `search` command requires User token (`xoxp-`) + `search:read` scope
+- `cache refresh` supports `--users` or `--channels` flags for partial refresh
+- Timestamp format: `1234567890.123456` (Slack message ts value)
 
 ---
 
-## 🚀 Development
+## 🚀 Developer Guide
 
-### Building
-
-```bash
-git clone https://github.com/junyeong-ai/slack-cli
-cd slack-cli
-
-cargo build                # Development build
-cargo build --release      # Optimized build
-cargo test                 # Run tests (65 tests)
-cargo clippy              # Lint
-cargo fmt                 # Format
-```
-
-### Project Structure
-
-```
-src/
-├── main.rs              # Entry point: Tokio runtime, config, CLI execution
-├── cli.rs               # clap-based CLI command definitions
-├── config.rs            # Config management (priority: CLI > ENV > File)
-├── format.rs            # Output formatting (text/JSON)
-├── cache/               # SQLite cache
-│   ├── sqlite_cache.rs # Main implementation
-│   ├── schema.rs       # FTS5 schema
-│   ├── users.rs        # User caching
-│   ├── channels.rs     # Channel caching
-│   ├── locks.rs        # Distributed locking
-│   └── helpers.rs      # Utilities
-└── slack/              # Slack API client
-    ├── client.rs       # Unified facade
-    ├── core.rs         # HTTP + Rate Limiting
-    ├── users.rs        # User API
-    ├── channels.rs     # Channel API
-    └── messages.rs     # Message API
-```
-
-**Developer Guide**: [CLAUDE.md](CLAUDE.md) - AI agent-specialized development docs
-
----
+**Architecture, debugging, contribution guide**: See [CLAUDE.md](CLAUDE.md)
 
 ---
 

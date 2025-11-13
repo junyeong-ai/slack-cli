@@ -41,13 +41,33 @@ slack channels "general"
 slack send "#general" "Hello team!"
 ```
 
-**💡 Tip**: User token (`xoxp-`)을 사용하면 더 많은 기능을 사용할 수 있습니다.
+**Tip**: User token (`xoxp-`)을 사용하면 더 많은 기능을 사용할 수 있습니다.
+
+---
+
+## 📋 실전 활용 예제
+
+**이메일로 사용자 찾아 DM 보내기**:
+```bash
+slack users "john@company.com" --json | jq -r '.[0].id' | \
+  xargs -I {} slack send "@{}" "안녕하세요!"
+```
+
+**팀 채널에 일일 알림**:
+```bash
+slack send "#team-daily" "오늘 스탠드업 9시!"
+```
+
+**최근 논의 검색**:
+```bash
+slack search "배포" --channel "#dev" --json
+```
 
 ---
 
 ## 🎯 주요 기능
 
-### 🔍 강력한 검색
+### 강력한 검색
 ```bash
 # 사용자 검색 (이름, 이메일, 표시명)
 slack users "john" --limit 5
@@ -59,7 +79,7 @@ slack channels "dev" --limit 10
 slack search "deadline" --channel "#dev-team"
 ```
 
-### 💬 메시지 관리
+### 메시지 관리
 ```bash
 # 채널에 메시지 전송
 slack send "#general" "Meeting in 10 minutes"
@@ -77,7 +97,7 @@ slack messages "#general" --limit 20
 slack thread "#dev-team" 1234567890.123456
 ```
 
-### 📋 채널 관리
+### 채널 관리
 ```bash
 # 채널 멤버 목록
 slack members "#dev-team"
@@ -86,7 +106,7 @@ slack members "#dev-team"
 slack channels "general" --json | jq
 ```
 
-### ⚙️ 캐시 & 설정
+### 캐시 & 설정
 ```bash
 # 캐시 상태 확인
 slack cache stats
@@ -224,68 +244,10 @@ slack users "john" --token xoxp-temporary-token
 
 ---
 
-## 🏗️ 아키텍처
+## 🏗️ 핵심 구조
 
-### 핵심 기술
-
-**빠른 검색**:
-- **SQLite FTS5**: 전문 검색 엔진 (< 10ms 쿼리)
-- **WAL 모드**: 읽기/쓰기 동시성
-- **2단계 검색**: LIKE 정확 매칭 → FTS5 퍼지 매칭
-
-**캐시 전략**:
-- **전체 로드**: 서버 시작 시 모든 사용자/채널 캐싱
-- **TTL 기반**: 24시간 후 자동 갱신
-- **분산 락**: 다중 프로세스 안전성
-
-**성능 최적화**:
-- **Rust 2024**: 메모리 안전성 + 고성능
-- **Tokio Async**: 비동기 I/O
-- **Connection Pool**: HTTP 연결 재사용
-- **Rate Limiting**: 자동 재시도 + 지수 백오프
-
-### 시스템 구조
-
-```
-┌──────────────┐         ┌──────────────────┐         ┌─────────────┐
-│   Terminal   │  stdin  │   Slack CLI      │  HTTPS  │    Slack    │
-│   Commands   │◄───────►│   (clap/Tokio)   │◄───────►│  Workspace  │
-│              │  stdout │                  │         │             │
-└──────────────┘         └─────────┬────────┘         └─────────────┘
-                                   │
-                                   ▼
-                          ┌─────────────────┐
-                          │   SQLite Cache  │
-                          │   (WAL + FTS5)  │
-                          │                 │
-                          │ • User FTS5     │
-                          │ • Channel FTS5  │
-                          │ • Distributed   │
-                          │   locking       │
-                          │ • Metadata      │
-                          └─────────────────┘
-```
-
-### 왜 캐싱이 필요한가요?
-
-**Slack API 제한**:
-- 🚫 채널 이름 검색 API 없음
-- ⏱️ Rate Limit 낮음 (Tier 2: 20 calls/min)
-- 🐌 반복 쿼리 비효율적
-
-**캐싱 솔루션**:
-- 🚀 시작 시 전체 로드
-- 🔍 로컬 FTS5 검색 (< 10ms)
-- ⚡ API 호출 0회
-- 🔄 TTL 기반 자동 갱신
-
-**성능 비교**:
-
-| 작업 | Slack API | 캐시 (FTS5) | 개선 |
-|------|-----------|-------------|------|
-| 사용자 검색 | ~500ms + rate limit | **<10ms** | **50배+** |
-| 채널 검색 | ❌ 불가능 | **<10ms** | **가능** |
-| 연속 쿼리 | Rate limit 제한 | **무제한** | **제한 없음** |
+SQLite FTS5로 빠른 로컬 검색 (<10ms), 사용자/채널 24시간 캐시, API 호출 속도 제한.
+상세한 아키텍처는 [CLAUDE.md](CLAUDE.md) 참고.
 
 ---
 
@@ -354,199 +316,40 @@ WHERE key LIKE 'last_%_sync';
 
 ## 📚 명령어 참조
 
-### slack users
+| 명령어 | 설명 | 예제 |
+|--------|------|------|
+| `users <query>` | 사용자 검색 (이름, 이메일, 표시명) | `slack users "john" --limit 5` |
+| `channels <query>` | 채널 검색 (공개/비공개/DM/그룹 DM) | `slack channels "dev" --limit 10` |
+| `send <channel> <text>` | 메시지 전송 | `slack send "#general" "Hello!"` |
+| `messages <channel>` | 채널 메시지 조회 | `slack messages "#general" --limit 20` |
+| `thread <channel> <ts>` | 스레드 전체 조회 | `slack thread "#dev" 1234567890.123456` |
+| `members <channel>` | 채널 멤버 목록 | `slack members "#dev-team"` |
+| `search <query>` | 메시지 검색 (워크스페이스 전체) | `slack search "deadline" --channel "#dev"` |
+| `cache stats` | 캐시 통계 (사용자/채널 개수) | `slack cache stats` |
+| `cache refresh` | 캐시 새로고침 (전체/사용자/채널) | `slack cache refresh --users` |
+| `config init` | 설정 초기화 | `slack config init --bot-token xoxb-...` |
+| `config show` | 설정 표시 (토큰 마스킹) | `slack config show` |
 
-사용자 검색 (이름, 이메일, 표시명)
+### 공통 옵션
 
-```bash
-slack users <query> [OPTIONS]
+| 옵션 | 설명 | 적용 범위 |
+|------|------|-----------|
+| `--json` | JSON 형식으로 출력 | 모든 명령어 |
+| `--token <TOKEN>` | 임시 토큰 오버라이드 | 모든 명령어 |
+| `--limit <N>` | 결과 개수 제한 | users, channels, messages, thread, search |
+| `--thread <TS>` | 스레드 타임스탬프 (답장) | send |
+| `--channel <CH>` | 특정 채널로 제한 | search |
 
-OPTIONS:
-  --limit <N>      결과 개수 제한 [기본값: 10]
-  --json           JSON 형식 출력
-  --token <TOKEN>  임시 토큰 오버라이드
-
-EXAMPLES:
-  slack users "john"
-  slack users "@gmail.com" --limit 20
-  slack users "smith" --json | jq
-```
-
-### slack channels
-
-채널 검색 (공개/비공개/DM/그룹 DM)
-
-```bash
-slack channels <query> [OPTIONS]
-
-OPTIONS:
-  --limit <N>  결과 개수 제한 [기본값: 10]
-  --json       JSON 형식 출력
-
-EXAMPLES:
-  slack channels "dev"
-  slack channels "general" --limit 5
-```
-
-### slack send
-
-메시지 전송
-
-```bash
-slack send <channel> <text> [OPTIONS]
-
-OPTIONS:
-  --thread <TS>  스레드 타임스탬프 (답장)
-
-EXAMPLES:
-  slack send "#general" "Hello team!"
-  slack send "@john.doe" "Hi John"
-  slack send "#dev" "Fixed" --thread 1234567890.123456
-```
-
-### slack messages
-
-채널 메시지 조회
-
-```bash
-slack messages <channel> [OPTIONS]
-
-OPTIONS:
-  --limit <N>  메시지 개수 [기본값: 100, 최대: 1000]
-  --json       JSON 형식 출력
-
-EXAMPLES:
-  slack messages "#general"
-  slack messages "#dev-team" --limit 50
-```
-
-### slack thread
-
-스레드 전체 조회
-
-```bash
-slack thread <channel> <timestamp> [OPTIONS]
-
-OPTIONS:
-  --limit <N>  답장 개수 [기본값: 100]
-  --json       JSON 형식 출력
-
-EXAMPLES:
-  slack thread "#general" 1234567890.123456
-```
-
-### slack members
-
-채널 멤버 목록
-
-```bash
-slack members <channel> [OPTIONS]
-
-OPTIONS:
-  --json  JSON 형식 출력
-
-EXAMPLES:
-  slack members "#dev-team"
-```
-
-### slack search
-
-메시지 검색 (워크스페이스 전체)
-
-```bash
-slack search <query> [OPTIONS]
-
-OPTIONS:
-  --channel <CH>  특정 채널로 제한
-  --limit <N>     결과 개수 [기본값: 10]
-  --json          JSON 형식 출력
-
-EXAMPLES:
-  slack search "deadline"
-  slack search "bug" --channel "#dev-team"
-
-NOTE: User token (xoxp-) + search:read scope 필요
-```
-
-### slack cache
-
-캐시 관리
-
-```bash
-slack cache <COMMAND>
-
-COMMANDS:
-  stats    캐시 통계 (사용자/채널 개수)
-  refresh  캐시 새로고침 [--users|--channels]
-  path     캐시 파일 경로 출력
-
-EXAMPLES:
-  slack cache stats
-  slack cache refresh
-  slack cache refresh --users
-  slack cache path
-```
-
-### slack config
-
-설정 관리
-
-```bash
-slack config <COMMAND>
-
-COMMANDS:
-  init [OPTIONS]  설정 초기화
-  show            설정 표시 (토큰 마스킹)
-  path            설정 파일 경로
-  edit            기본 에디터로 수정
-
-EXAMPLES:
-  slack config init --bot-token xoxb-...
-  slack config show
-  slack config edit
-```
+**참고**:
+- `search` 명령어는 User token (`xoxp-`) + `search:read` scope 필요
+- `cache refresh`는 `--users` 또는 `--channels` 플래그로 부분 갱신 가능
+- 타임스탬프 형식: `1234567890.123456` (Slack 메시지 ts 값)
 
 ---
 
-## 🚀 개발
+## 🚀 개발자 가이드
 
-### 빌드
-
-```bash
-git clone https://github.com/junyeong-ai/slack-cli
-cd slack-cli
-
-cargo build                # 개발 빌드
-cargo build --release      # 최적화 빌드
-cargo test                 # 테스트 실행 (65개)
-cargo clippy              # 린트
-cargo fmt                 # 포맷팅
-```
-
-### 프로젝트 구조
-
-```
-src/
-├── main.rs              # 진입점: Tokio 런타임, 설정, CLI 실행
-├── cli.rs               # clap 기반 CLI 명령어 정의
-├── config.rs            # 설정 관리 (우선순위: CLI > ENV > File)
-├── format.rs            # 출력 포맷팅 (텍스트/JSON)
-├── cache/               # SQLite 캐시
-│   ├── sqlite_cache.rs # 메인 구현
-│   ├── schema.rs       # FTS5 스키마
-│   ├── users.rs        # 사용자 캐싱
-│   ├── channels.rs     # 채널 캐싱
-│   ├── locks.rs        # 분산 락
-│   └── helpers.rs      # 유틸리티
-└── slack/              # Slack API 클라이언트
-    ├── client.rs       # 통합 파사드
-    ├── core.rs         # HTTP + Rate Limiting
-    ├── users.rs        # 사용자 API
-    ├── channels.rs     # 채널 API
-    └── messages.rs     # 메시지 API
-```
-
-**개발자 가이드**: [CLAUDE.md](CLAUDE.md) - AI agent 특화 개발 문서
+**아키텍처, 디버깅, 기여 방법**: [CLAUDE.md](CLAUDE.md) 참고
 
 ---
 

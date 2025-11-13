@@ -94,16 +94,7 @@ pub async fn save_users(&self, users: Vec<SlackUser>) -> CacheResult<()> {
 
 ### Async vs Sync
 
-**Rule**: Only async for actual I/O.
-
-| Operation | Async? | Reason |
-|-----------|--------|--------|
-| `cache.save_users()` | ✅ Yes | Distributed lock with retries (uses tokio::time::sleep) |
-| `cache.search_users()` | ❌ No | Pure SQLite query (blocking is fine) |
-| `slack.fetch_all_users()` | ✅ Yes | HTTP API call |
-
-**Why not async for cache reads?**
-SQLite operations are fast (< 10ms). Async overhead not needed. Connection pool handles blocking.
+**Rule**: Only async for actual I/O (HTTP, distributed locks with sleep). SQLite reads are sync.
 
 ### 2-Phase Search Algorithm
 
@@ -155,30 +146,11 @@ pub(super) fn process_fts_query(&self, query: &str) -> String {
 }
 ```
 
-**Critical**: Empty result → skip FTS5, use LIKE fallback.
+**CRITICAL**: Empty FTS5 query → skip FTS5, use LIKE fallback.
 
 ### Error Handling
 
-**Two-tier system**:
-
-1. **CacheError** (typed, library): `ConnectionPoolError`, `DatabaseError`, `LockAcquisitionFailed`
-2. **anyhow::Result** (main.rs): Convert CacheError → anyhow with context
-
-```rust
-// cache/error.rs
-#[derive(Debug, Error)]
-pub enum CacheError {
-    #[error("Failed to acquire lock for '{key}' after {attempts} attempts")]
-    LockAcquisitionFailed { key: String, attempts: usize },
-    // ...
-}
-
-// main.rs
-let users = cache.search_users(&query, limit, false)
-    .context("Failed to search users")?;
-```
-
-**Why**: Library code uses typed errors. CLI boundary uses anyhow for ergonomics.
+**Pattern**: Library uses `CacheError` (thiserror), main.rs uses `anyhow::Result` with context.
 
 ---
 
@@ -254,26 +226,17 @@ pub enum Command {
 
 **Global args**: `--json`, `--token` available for all commands.
 
+### Config Path Resolution
+
+**Priority**: CLI --data-dir > config.data_path > default_data_dir()
+
+- `default_data_dir()`: `~/.config/slack-cli/cache` (unified location)
+- Fallback: Platform-specific if config missing
+- Used by: `db_path()` function
+
 ---
 
 ## Development Tasks
-
-### Add New Command
-
-1. **cli.rs**: Add to `Command` enum
-   ```rust
-   Stats { #[arg(long)] verbose: bool },
-   ```
-
-2. **main.rs**: Add handler
-   ```rust
-   Command::Stats { verbose } => {
-       let (users, channels) = cache.get_counts()?;
-       println!("Users: {}, Channels: {}", users, channels);
-   }
-   ```
-
-3. **Test**: Add test in relevant module
 
 ### Add Cache Field
 
@@ -297,6 +260,12 @@ pub enum Command {
    ```rust
    CREATE VIRTUAL TABLE users_fts USING fts5(name, email, new_field, ...);
    ```
+
+### Schema Migrations
+
+On SCHEMA_VERSION bump: `initialize_schema()` drops and recreates all tables.
+**No migrations** - full rebuild from Slack API.
+**Reason**: Cache is ephemeral (24h TTL), simpler than maintaining migrations.
 
 ### Add Slack API Method
 
@@ -425,46 +394,6 @@ timeout_seconds: 30
 **To make configurable**: Move to `Config` struct, add to `config.toml` parsing.
 
 ---
-
-## Dependencies
-
-| Crate | Version | Purpose |
-|-------|---------|---------|
-| clap | 4.5 | CLI parsing (derive API) |
-| tokio | 1.48 | Async runtime (only needed features) |
-| rusqlite | 0.37 | SQLite with FTS5, bundled |
-| r2d2 | 0.8 | Connection pool |
-| r2d2_sqlite | 0.31 | SQLite adapter |
-| reqwest | 0.12 | HTTP client (rustls, no OpenSSL) |
-| governor | 0.10 | Rate limiting (token bucket) |
-| serde | 1.0 | JSON serialization |
-| anyhow | 1.0 | Error handling (main.rs) |
-| thiserror | 2.0 | Error derive (library) |
-
-**No unused deps**. All features justified.
-
----
-
-## Build & Release
-
-```bash
-cargo build --release      # Optimized (26s)
-cargo test                 # Unit tests (65, 1.6s)
-cargo clippy -- -D warnings # Strict lint (0 warnings)
-cargo fmt                  # Format
-
-# Release binary
-target/release/slack       # 5.8MB (LTO + strip)
-```
-
-**Cargo.toml optimizations**:
-```toml
-[profile.release]
-opt-level = 3
-lto = true          # Link-time optimization
-codegen-units = 1   # Single unit for better optimization
-strip = true        # Remove debug symbols
-```
 
 ---
 
