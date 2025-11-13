@@ -1,0 +1,41 @@
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 1%
+        base: auto
+
+    patch:
+      default:
+        target: 70%
+        base: auto
+        only_pulls: true
+
+comment:
+  layout: "header,diff,flags,components,tree"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+  # Show changes in PR comments
+  branches: null
+
+github_checks:
+  annotations: true
+
+ignore:
+  - "tests/"
+  - "**/*_test.rs"
+  - "**/main.rs"
+
+flags:
+  unittests:
+    paths:
+      - src/
+    carryforward: false
