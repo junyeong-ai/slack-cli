@@ -45,26 +45,6 @@ slack send "#general" "Hello team!"
 
 ---
 
-## 📋 Real-World Workflows
-
-**Find user by email and send DM**:
-```bash
-slack users "john@company.com" --json | jq -r '.[0].id' | \
-  xargs -I {} slack send "@{}" "Hello!"
-```
-
-**Send daily standup reminder to team channel**:
-```bash
-slack send "#team-daily" "Daily standup at 9am!"
-```
-
-**Search recent discussions**:
-```bash
-slack search "deployment" --channel "#dev" --json
-```
-
----
-
 ## 🎯 Key Features
 
 ### Powerful Search
@@ -121,6 +101,11 @@ slack config show            # show config (masked tokens)
 slack config path            # config file path
 slack config edit            # edit with default editor
 ```
+
+**Important Notes**:
+- Stale cache (>24h): Search returns stale data. Run `slack cache refresh` to update
+- `search` command: Not cached, queries API directly. Requires user token + `search:read` scope
+- Channel formats: `#channel-name`, `@username`, or IDs (`C123...`, `U456...`). Prefix optional for IDs
 
 ---
 
@@ -257,8 +242,7 @@ For detailed architecture, see [CLAUDE.md](CLAUDE.md).
 
 ```bash
 # Delete and recreate cache
-rm -rf ~/.local/share/slack-cli/cache  # Linux
-rm -rf ~/Library/Application\ Support/slack-cli/cache  # macOS
+rm -rf ~/.config/slack-cli/cache
 
 # Run again
 slack cache refresh
@@ -271,11 +255,7 @@ slack cache refresh
 - [ ] Verify required scopes added
 - [ ] Confirm workspace reinstall
 
-**Test token**:
-```bash
-curl -H "Authorization: Bearer xoxp-YOUR-TOKEN" \
-  https://slack.com/api/auth.test
-```
+**Test token**: Verify using Slack API `auth.test` endpoint
 
 ### Message Search Not Working
 
@@ -288,28 +268,13 @@ curl -H "Authorization: Bearer xoxp-YOUR-TOKEN" \
 
 ### Debug Logging
 
-```bash
-RUST_LOG=debug slack users "john"
-RUST_LOG=slack_cli::cache=trace slack cache refresh
-```
+Use `RUST_LOG` environment variable for debug logging (e.g., `RUST_LOG=debug slack users "john"`)
 
 ### Inspect Cache Data
 
 ```bash
-sqlite3 ~/.local/share/slack-cli/cache/slack.db
-
-# Useful queries
-SELECT COUNT(*) FROM users;
-SELECT COUNT(*) FROM channels;
-SELECT * FROM metadata;
-
-# Cache freshness
-SELECT
-    key,
-    datetime(CAST(value AS INTEGER), 'unixepoch') as last_sync,
-    (unixepoch() - CAST(value AS INTEGER)) / 3600 as hours_ago
-FROM metadata
-WHERE key LIKE 'last_%_sync';
+# Inspect cache directly with SQLite
+sqlite3 ~/.config/slack-cli/cache/slack.db
 ```
 
 ---
@@ -326,7 +291,7 @@ WHERE key LIKE 'last_%_sync';
 | `members <channel>` | List channel members | `slack members "#dev-team"` |
 | `search <query>` | Search messages (workspace-wide) | `slack search "deadline" --channel "#dev"` |
 | `cache stats` | Show cache statistics (user/channel counts) | `slack cache stats` |
-| `cache refresh` | Refresh cache (all/users/channels) | `slack cache refresh --users` |
+| `cache refresh` | Refresh cache (all/users/channels) | `slack cache refresh users` |
 | `config init` | Initialize config | `slack config init --bot-token xoxb-...` |
 | `config show` | Show config (masked tokens) | `slack config show` |
 
@@ -342,7 +307,7 @@ WHERE key LIKE 'last_%_sync';
 
 **Notes**:
 - `search` command requires User token (`xoxp-`) + `search:read` scope
-- `cache refresh` supports `--users` or `--channels` flags for partial refresh
+- `cache refresh` supports `users` or `channels` argument for partial refresh (e.g., `slack cache refresh users`)
 - Timestamp format: `1234567890.123456` (Slack message ts value)
 
 ---

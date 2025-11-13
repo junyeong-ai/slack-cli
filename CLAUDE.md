@@ -82,6 +82,8 @@ pub async fn save_users(&self, users: Vec<SlackUser>) -> CacheResult<()> {
 
 **Why**: Zero downtime, no partial reads, safe for concurrent CLI invocations.
 
+**Failure Handling**: Cache refresh is atomic per resource type. If refresh fails, old cache remains valid until TTL expires (24h). No partial updates.
+
 **Distributed Locking**:
 - `locks` table: key, instance_id, acquired_at, expires_at
 - 3 retries + exponential backoff (500ms, 1s, 1s)
@@ -98,37 +100,10 @@ pub async fn save_users(&self, users: Vec<SlackUser>) -> CacheResult<()> {
 
 ### 2-Phase Search Algorithm
 
-```rust
-// Phase 1: LIKE substring match (exact match priority)
-let mut query = "
-  SELECT id, data,
-    CASE
-      WHEN name = ? THEN 0
-      WHEN name LIKE ? THEN 1
-      WHEN email LIKE ? THEN 2
-      ELSE 3
-    END as priority
-  FROM users
-  WHERE name LIKE ? OR email LIKE ? OR display_name LIKE ?
-  ORDER BY priority, name
-  LIMIT ?
-";
+**Phase 1**: LIKE with priority (exact=0, name LIKE=1, email LIKE=2)
+**Phase 2**: FTS5 if Phase 1 empty (handles typos/fuzzy)
 
-// Phase 2: FTS5 fuzzy (only if Phase 1 empty)
-if results.is_empty() && !fts_query.is_empty() {
-    query = "
-      SELECT u.id, u.data
-      FROM users u
-      JOIN users_fts f ON u.rowid = f.rowid
-      WHERE users_fts MATCH ?
-      ORDER BY rank
-      LIMIT ?
-    ";
-}
-```
-
-**Why 2-phase?**
-Phase 1 catches exact/substring matches fast. Phase 2 (FTS5) handles typos/fuzzy. Avoids FTS5 overhead for simple queries.
+**Why**: Avoids FTS5 overhead for simple exact/substring matches.
 
 ### FTS5 Query Sanitization
 
@@ -192,15 +167,7 @@ pub struct SlackClient {
 - `get_token(prefer_user)`: Fallback: user_token → bot_token → user_token → error
 - `api_call()`: Rate limiting (governor), exponential backoff, retries
 
-**Pagination**:
-```rust
-let mut cursor = None;
-loop {
-    let response = self.core.api_call("conversations.list", json!({ "cursor": cursor }), ...).await?;
-    cursor = response["response_metadata"]["next_cursor"].as_str();
-    if cursor.is_none() { break; }
-}
-```
+**Pagination**: Standard cursor-based pagination (`response_metadata.next_cursor`)
 
 ### cli.rs
 
@@ -269,31 +236,7 @@ On SCHEMA_VERSION bump: `initialize_schema()` drops and recreates all tables.
 
 ### Add Slack API Method
 
-1. **slack/users.rs** (or appropriate client):
-   ```rust
-   pub async fn fetch_user_status(&self, user_id: &str) -> Result<UserStatus> {
-       let response = self.core.api_call(
-           "users.getPresence",
-           json!({ "user": user_id }),
-           None,
-           false,
-       ).await?;
-       Ok(serde_json::from_value(response["presence"].clone())?)
-   }
-   ```
-
-2. **slack/api_config.rs**: Add rate limit
-   ```rust
-   "users.getPresence" => ApiMethod { tier: Tier::Tier3, per_minute: 50, ... },
-   ```
-
-3. **slack/types.rs**: Add response struct
-   ```rust
-   #[derive(Debug, Deserialize)]
-   pub struct UserStatus {
-       pub presence: String,
-   }
-   ```
+Add method to appropriate client → define rate limit in `api_config.rs` → add response type to `types.rs`
 
 ---
 
@@ -304,7 +247,7 @@ On SCHEMA_VERSION bump: `initialize_schema()` drops and recreates all tables.
 **Check**:
 ```bash
 slack cache stats
-sqlite3 ~/.local/share/slack-cli/cache/slack.db "SELECT * FROM metadata;"
+sqlite3 ~/.config/slack-cli/cache/slack.db "SELECT * FROM metadata;"
 ```
 
 **Fix**:
@@ -339,14 +282,6 @@ if fts_query.is_empty() {
 ---
 
 ## Testing Strategy
-
-**Unit tests** (65 total):
-```bash
-cargo test                              # All
-cargo test cache::users::tests         # Module
-cargo test -- --nocapture               # Show output
-RUST_LOG=debug cargo test              # With logging
-```
 
 **Key test areas**:
 - **Cache operations**: save, get, search (users, channels)
@@ -392,37 +327,6 @@ timeout_seconds: 30
 ```
 
 **To make configurable**: Move to `Config` struct, add to `config.toml` parsing.
-
----
-
----
-
-## Debug Commands
-
-```bash
-# Cache inspection
-sqlite3 ~/.local/share/slack-cli/cache/slack.db ".tables"
-sqlite3 ~/.local/share/slack-cli/cache/slack.db "SELECT COUNT(*) FROM users;"
-
-# FTS5 test
-sqlite3 ~/.local/share/slack-cli/cache/slack.db "
-  SELECT u.name
-  FROM users u
-  JOIN users_fts f ON u.rowid = f.rowid
-  WHERE users_fts MATCH 'john'
-  LIMIT 5;
-"
-
-# Lock status
-sqlite3 ~/.local/share/slack-cli/cache/slack.db "SELECT * FROM locks;"
-
-# Metadata
-sqlite3 ~/.local/share/slack-cli/cache/slack.db "SELECT * FROM metadata;"
-
-# Logging
-RUST_LOG=debug slack users "john"
-RUST_LOG=slack_cli::cache=trace slack cache refresh
-```
 
 ---
 

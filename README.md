@@ -45,26 +45,6 @@ slack send "#general" "Hello team!"
 
 ---
 
-## 📋 실전 활용 예제
-
-**이메일로 사용자 찾아 DM 보내기**:
-```bash
-slack users "john@company.com" --json | jq -r '.[0].id' | \
-  xargs -I {} slack send "@{}" "안녕하세요!"
-```
-
-**팀 채널에 일일 알림**:
-```bash
-slack send "#team-daily" "오늘 스탠드업 9시!"
-```
-
-**최근 논의 검색**:
-```bash
-slack search "배포" --channel "#dev" --json
-```
-
----
-
 ## 🎯 주요 기능
 
 ### 강력한 검색
@@ -121,6 +101,11 @@ slack config show            # 설정 표시 (토큰 마스킹)
 slack config path            # 설정 파일 경로
 slack config edit            # 에디터로 수정
 ```
+
+**중요 사항**:
+- 캐시가 오래됨 (>24h): 검색은 오래된 데이터 반환. `slack cache refresh`로 갱신
+- `search` 명령어: 캐시 미사용, API 직접 호출. User token + `search:read` scope 필요
+- 채널 형식: `#channel-name`, `@username`, 또는 ID (`C123...`, `U456...`). ID에는 prefix 선택사항
 
 ---
 
@@ -257,8 +242,7 @@ SQLite FTS5로 빠른 로컬 검색 (<10ms), 사용자/채널 24시간 캐시, A
 
 ```bash
 # 캐시 삭제 후 재생성
-rm -rf ~/.local/share/slack-cli/cache  # Linux
-rm -rf ~/Library/Application\ Support/slack-cli/cache  # macOS
+rm -rf ~/.config/slack-cli/cache
 
 # 다시 실행
 slack cache refresh
@@ -271,11 +255,7 @@ slack cache refresh
 - [ ] 필수 scope 추가 확인
 - [ ] Workspace 재설치 확인
 
-**토큰 테스트**:
-```bash
-curl -H "Authorization: Bearer xoxp-YOUR-TOKEN" \
-  https://slack.com/api/auth.test
-```
+**토큰 테스트**: Slack API `auth.test` 엔드포인트로 검증
 
 ### 메시지 검색 안 됨
 
@@ -288,28 +268,13 @@ curl -H "Authorization: Bearer xoxp-YOUR-TOKEN" \
 
 ### 디버그 로깅
 
-```bash
-RUST_LOG=debug slack users "john"
-RUST_LOG=slack_cli::cache=trace slack cache refresh
-```
+`RUST_LOG` 환경변수로 디버그 로깅 활성화 (예: `RUST_LOG=debug slack users "john"`)
 
 ### 캐시 데이터 확인
 
 ```bash
-sqlite3 ~/.local/share/slack-cli/cache/slack.db
-
-# 유용한 쿼리
-SELECT COUNT(*) FROM users;
-SELECT COUNT(*) FROM channels;
-SELECT * FROM metadata;
-
-# 캐시 신선도
-SELECT
-    key,
-    datetime(CAST(value AS INTEGER), 'unixepoch') as last_sync,
-    (unixepoch() - CAST(value AS INTEGER)) / 3600 as hours_ago
-FROM metadata
-WHERE key LIKE 'last_%_sync';
+# SQLite로 직접 캐시 검사
+sqlite3 ~/.config/slack-cli/cache/slack.db
 ```
 
 ---
@@ -326,7 +291,7 @@ WHERE key LIKE 'last_%_sync';
 | `members <channel>` | 채널 멤버 목록 | `slack members "#dev-team"` |
 | `search <query>` | 메시지 검색 (워크스페이스 전체) | `slack search "deadline" --channel "#dev"` |
 | `cache stats` | 캐시 통계 (사용자/채널 개수) | `slack cache stats` |
-| `cache refresh` | 캐시 새로고침 (전체/사용자/채널) | `slack cache refresh --users` |
+| `cache refresh` | 캐시 새로고침 (전체/사용자/채널) | `slack cache refresh users` |
 | `config init` | 설정 초기화 | `slack config init --bot-token xoxb-...` |
 | `config show` | 설정 표시 (토큰 마스킹) | `slack config show` |
 
@@ -342,7 +307,7 @@ WHERE key LIKE 'last_%_sync';
 
 **참고**:
 - `search` 명령어는 User token (`xoxp-`) + `search:read` scope 필요
-- `cache refresh`는 `--users` 또는 `--channels` 플래그로 부분 갱신 가능
+- `cache refresh`는 `users` 또는 `channels` 인자로 부분 갱신 가능 (예: `slack cache refresh users`)
 - 타임스탬프 형식: `1234567890.123456` (Slack 메시지 ts 값)
 
 ---
