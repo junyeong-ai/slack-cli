@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: Test Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Run tests with nextest
+        run: cargo nextest run --all-features --workspace --verbose
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install coverage tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,nextest
+
+      - name: Generate coverage with nextest
+        run: |
+          cargo llvm-cov nextest \
+            --all-features \
+            --workspace \
+            --lcov \
+            --output-path lcov.info \
+            --fail-under-lines 50
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          name: codecov-mcp-slack
+          verbose: true
+
+      - name: Generate HTML coverage report
+        if: always()
+        run: cargo llvm-cov report --html
+
+      - name: Upload HTML report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/llvm-cov/html/
+          retention-days: 7
+
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --verbose
+
+      - name: Check binary size
+        run: |
+          ls -lh target/release/mcp-slack
+          du -h target/release/mcp-slack
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binary
+          path: target/release/mcp-slack
+          retention-days: 7
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo-audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
