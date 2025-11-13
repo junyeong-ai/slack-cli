@@ -3,7 +3,6 @@
 [![CI](https://github.com/junyeong-ai/slack-cli/workflows/CI/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
 [![Lint](https://github.com/junyeong-ai/slack-cli/workflows/Lint/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
 [![Rust](https://img.shields.io/badge/rust-1.91.1%2B%20(2024%20edition)-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](https://github.com/junyeong-ai/slack-cli/releases)
 
 > **🌐 [한국어](README.md)** | **English**
@@ -550,10 +549,6 @@ src/
 **Developer Guide**: [CLAUDE.md](CLAUDE.md) - AI agent-specialized development docs
 
 ---
-
-## 📄 License
-
-MIT License - [LICENSE](LICENSE)
 
 ---
 
