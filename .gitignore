@@ -16,7 +16,8 @@ data/
 # IDE
 .idea/
 .vscode/
-.claude/
+.claude/*
+!.claude/skills/
 *.swp
 *.swo
 *~
