@@ -142,6 +142,16 @@ cargo build --release
 cargo install slack-cli
 ```
 
+### 🤖 Claude Code Skill (Optional)
+
+When running `./install.sh`, you can choose to install the Claude Code skill:
+
+- **User-level** (recommended): Available in all projects
+- **Project-level**: Auto-distributed to team via git
+- **Skip**: Manual installation later
+
+The skill enables natural language Slack data queries in Claude Code.
+
 ---
 
 ## 🔑 Generate Slack Token

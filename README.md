@@ -142,6 +142,16 @@ cargo build --release
 cargo install slack-cli
 ```
 
+### 🤖 Claude Code Skill (선택사항)
+
+`./install.sh` 실행 시 Claude Code 스킬 설치 여부를 선택할 수 있습니다:
+
+- **User-level** (권장): 모든 프로젝트에서 사용 가능
+- **Project-level**: Git을 통해 팀 자동 배포
+- **Skip**: 나중에 수동 설치
+
+스킬을 설치하면 Claude Code에서 자연어로 Slack 데이터 조회가 가능합니다.
+
 ---
 
 ## 🔑 Slack 토큰 생성
