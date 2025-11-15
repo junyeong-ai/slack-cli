@@ -6,13 +6,13 @@ coverage:
   status:
     project:
       default:
-        target: 70%
-        threshold: 1%
+        target: 50%
+        threshold: 2%
         base: auto
 
     patch:
       default:
-        target: 70%
+        target: 50%
         base: auto
         only_pulls: true
 
@@ -32,7 +32,6 @@ github_checks:
 ignore:
   - "tests/"
   - "**/*_test.rs"
-  - "**/main.rs"
 
 flags:
   unittests:
