@@ -27,7 +27,7 @@ cd slack-cli
 cargo build --release
 
 # 2. 전역 설치 (선택사항)
-./install.sh
+./scripts/install.sh
 
 # 3. 설정 초기화
 slack config init --bot-token xoxb-your-token
@@ -129,10 +129,10 @@ cargo build --release
 
 ```bash
 # 빌드 후 전역 설치
-./install.sh
+./scripts/install.sh
 
 # 제거
-./uninstall.sh
+./scripts/uninstall.sh
 ```
 
 ### 방법 3: Cargo
@@ -144,7 +144,7 @@ cargo install slack-cli
 
 ### 🤖 Claude Code Skill (선택사항)
 
-`./install.sh` 실행 시 Claude Code 스킬 설치 여부를 선택할 수 있습니다:
+`./scripts/install.sh` 실행 시 Claude Code 스킬 설치 여부를 선택할 수 있습니다:
 
 - **User-level** (권장): 모든 프로젝트에서 사용 가능
 - **Project-level**: Git을 통해 팀 자동 배포

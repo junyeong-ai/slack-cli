@@ -27,7 +27,7 @@ cd slack-cli
 cargo build --release
 
 # 2. Global install (optional)
-./install.sh
+./scripts/install.sh
 
 # 3. Initialize config
 slack config init --bot-token xoxb-your-token
@@ -129,10 +129,10 @@ cargo build --release
 
 ```bash
 # After building, install globally
-./install.sh
+./scripts/install.sh
 
 # Uninstall
-./uninstall.sh
+./scripts/uninstall.sh
 ```
 
 ### Method 3: Cargo
@@ -144,7 +144,7 @@ cargo install slack-cli
 
 ### 🤖 Claude Code Skill (Optional)
 
-When running `./install.sh`, you can choose to install the Claude Code skill:
+When running `./scripts/install.sh`, you can choose to install the Claude Code skill:
 
 - **User-level** (recommended): Available in all projects
 - **Project-level**: Auto-distributed to team via git
