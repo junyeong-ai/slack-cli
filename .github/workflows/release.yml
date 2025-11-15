@@ -120,30 +120,3 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish:
-    name: Publish to crates.io
-    needs: release
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Verify version
-        run: |
-          tag_version="${GITHUB_REF#refs/tags/v}"
-          cargo_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-
-          if [ "$tag_version" != "$cargo_version" ]; then
-            echo "Version mismatch: tag=$tag_version, cargo=$cargo_version"
-            exit 1
-          fi
-
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
