@@ -111,36 +111,33 @@ slack config edit            # edit with default editor
 
 ## 📦 Installation
 
-### Prerequisites
-- Rust 1.91.1+ (2024 edition)
-- Slack workspace access
+### Method 1: Prebuilt Binary (Recommended) ⭐
 
-### Method 1: Build from Source
+**Automated install**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
+```
+
+**Manual install**:
+1. Download binary from [Releases](https://github.com/junyeong-ai/slack-cli/releases)
+2. Extract: `tar -xzf slack-*.tar.gz`
+3. Move to PATH: `mv slack ~/.local/bin/`
+
+### Method 2: Cargo
+
+```bash
+cargo install slack-cli
+```
+
+### Method 3: Build from Source
 
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli
 cd slack-cli
-cargo build --release
-
-# Binary location: target/release/slack
-```
-
-### Method 2: Global Install
-
-```bash
-# After building, install globally
 ./scripts/install.sh
-
-# Uninstall
-./scripts/uninstall.sh
 ```
 
-### Method 3: Cargo
-
-```bash
-# Coming soon
-cargo install slack-cli
-```
+**Requirements**: Rust 1.91.1+
 
 ### 🤖 Claude Code Skill (Optional)
 

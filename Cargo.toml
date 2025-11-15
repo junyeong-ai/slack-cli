@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.91.1"
 authors = ["Slack CLI Contributors"]
-description = "Modern Slack CLI with FTS5 cache"
+description = "Fast Slack CLI with FTS5 cache and local search"
 license = "MIT"
-repository = "https://github.com/yourusername/slack-cli"
+repository = "https://github.com/junyeong-ai/slack-cli"
+homepage = "https://github.com/junyeong-ai/slack-cli"
+keywords = ["slack", "cli", "api", "cache", "search"]
+categories = ["command-line-utilities", "api-bindings"]
+readme = "README.md"
 
 [[bin]]
 name = "slack"

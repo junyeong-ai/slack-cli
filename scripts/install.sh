@@ -3,24 +3,91 @@ set -e
 
 BINARY_NAME="slack"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+REPO="junyeong-ai/slack-cli"
 SKILL_NAME="slack-workspace"
 PROJECT_SKILL_DIR=".claude/skills/$SKILL_NAME"
 USER_SKILL_DIR="$HOME/.claude/skills/$SKILL_NAME"
 
-echo "🚀 Installing Slack CLI..."
-echo
+detect_platform() {
+    local os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    local arch=$(uname -m)
 
-# ============================================================================
-# Skill Installation Functions
-# ============================================================================
+    case "$os" in
+        linux) os="unknown-linux-gnu" ;;
+        darwin) os="apple-darwin" ;;
+        *) echo "Unsupported OS: $os"; exit 1 ;;
+    esac
+
+    case "$arch" in
+        x86_64) arch="x86_64" ;;
+        aarch64|arm64) arch="aarch64" ;;
+        *) echo "Unsupported architecture: $arch"; exit 1 ;;
+    esac
+
+    echo "${arch}-${os}"
+}
+
+get_latest_version() {
+    curl -sf "https://api.github.com/repos/$REPO/releases/latest" \
+        | grep '"tag_name"' \
+        | sed -E 's/.*"v([^"]+)".*/\1/' \
+        || echo ""
+}
+
+download_binary() {
+    local version="$1"
+    local target="$2"
+    local archive="slack-v${version}-${target}.tar.gz"
+    local url="https://github.com/$REPO/releases/download/v${version}/${archive}"
+    local checksum_url="${url}.sha256"
+
+    echo "📥 Downloading $archive..."
+    if ! curl -fLO "$url"; then
+        echo "❌ Download failed"
+        return 1
+    fi
+
+    echo "🔐 Verifying checksum..."
+    if curl -fLO "$checksum_url"; then
+        if command -v sha256sum >/dev/null; then
+            sha256sum -c "${archive}.sha256" || return 1
+        elif command -v shasum >/dev/null; then
+            shasum -a 256 -c "${archive}.sha256" || return 1
+        else
+            echo "⚠️  No checksum tool found, skipping verification"
+        fi
+    fi
+
+    echo "📦 Extracting..."
+    tar -xzf "$archive"
+    rm -f "$archive" "${archive}.sha256"
+
+    echo "$BINARY_NAME"
+}
+
+build_from_source() {
+    echo "🔨 Building from source..."
+    cargo build --release
+    echo "target/release/$BINARY_NAME"
+}
+
+install_binary() {
+    local binary_path="$1"
+
+    mkdir -p "$INSTALL_DIR"
+    cp "$binary_path" "$INSTALL_DIR/$BINARY_NAME"
+    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        codesign --force --deep --sign - "$INSTALL_DIR/$BINARY_NAME" 2>/dev/null || true
+    fi
+
+    echo "✅ Installed to $INSTALL_DIR/$BINARY_NAME"
+}
 
 get_skill_version() {
     local skill_md="$1"
-    if [ -f "$skill_md" ]; then
-        grep "^version:" "$skill_md" 2>/dev/null | sed 's/version: *//' || echo "unknown"
-    else
-        echo "unknown"
-    fi
+    [ -f "$skill_md" ] && grep "^version:" "$skill_md" 2>/dev/null | sed 's/version: *//' || echo "unknown"
 }
 
 check_skill_exists() {
@@ -36,13 +103,8 @@ compare_versions() {
     elif [ "$ver1" = "unknown" ] || [ "$ver2" = "unknown" ]; then
         echo "unknown"
     else
-        # Simple version comparison (assumes semantic versioning)
         if [ "$(printf '%s\n' "$ver1" "$ver2" | sort -V | head -n1)" = "$ver1" ]; then
-            if [ "$ver1" != "$ver2" ]; then
-                echo "older"
-            else
-                echo "equal"
-            fi
+            [ "$ver1" != "$ver2" ] && echo "older" || echo "equal"
         else
             echo "newer"
         fi
@@ -55,26 +117,18 @@ backup_skill() {
 
     echo "📦 Creating backup: $backup_dir"
     cp -r "$USER_SKILL_DIR" "$backup_dir"
-    echo "   ✅ Backup created successfully"
+    echo "   ✅ Backup created"
 }
 
 install_skill() {
     echo "📋 Installing skill to $USER_SKILL_DIR"
-
-    # Create parent directory if needed
     mkdir -p "$(dirname "$USER_SKILL_DIR")"
-
-    # Copy skill files
     cp -r "$PROJECT_SKILL_DIR" "$USER_SKILL_DIR"
-
-    echo "   ✅ Skill installed successfully"
+    echo "   ✅ Skill installed"
 }
 
 prompt_skill_installation() {
-    if [ ! -d "$PROJECT_SKILL_DIR" ]; then
-        echo "ℹ️  No Claude Code skill found in project"
-        return 0
-    fi
+    [ ! -d "$PROJECT_SKILL_DIR" ] && return 0
 
     local project_version=$(get_skill_version "$PROJECT_SKILL_DIR/SKILL.md")
 
@@ -82,9 +136,6 @@ prompt_skill_installation() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "🤖 Claude Code Skill Installation"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "This project includes a Claude Code skill for Slack workspace queries."
-    echo "The skill enables Claude to execute Slack queries automatically."
     echo ""
     echo "Skill: $SKILL_NAME (v$project_version)"
     echo ""
@@ -98,97 +149,52 @@ prompt_skill_installation() {
 
         case "$comparison" in
             equal)
-                echo "✅ You have the latest version installed"
+                echo "✅ Latest version installed"
                 echo ""
-                read -p "Reinstall anyway? [y/N]: " choice
-                case "$choice" in
-                    y|Y)
-                        backup_skill
-                        rm -rf "$USER_SKILL_DIR"
-                        install_skill
-                        ;;
-                    *)
-                        echo "   ⏭️  Skipped"
-                        ;;
-                esac
+                read -p "Reinstall? [y/N]: " choice
+                [[ "$choice" =~ ^[yY]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; } || echo "   ⏭️  Skipped"
                 ;;
             older)
                 echo "🔄 New version available: v$project_version"
                 echo ""
-                read -p "Update to v$project_version? [Y/n]: " choice
-                case "$choice" in
-                    n|N)
-                        echo "   ⏭️  Keeping current version"
-                        ;;
-                    *)
-                        backup_skill
-                        rm -rf "$USER_SKILL_DIR"
-                        install_skill
-                        echo "   ✅ Updated to v$project_version"
-                        ;;
-                esac
+                read -p "Update? [Y/n]: " choice
+                [[ ! "$choice" =~ ^[nN]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; echo "   ✅ Updated to v$project_version"; } || echo "   ⏭️  Keeping current version"
                 ;;
             newer)
-                echo "⚠️  Your installed version (v$existing_version) is newer than project version (v$project_version)"
+                echo "⚠️  Installed version (v$existing_version) > project version (v$project_version)"
                 echo ""
-                read -p "Downgrade to v$project_version? [y/N]: " choice
-                case "$choice" in
-                    y|Y)
-                        backup_skill
-                        rm -rf "$USER_SKILL_DIR"
-                        install_skill
-                        ;;
-                    *)
-                        echo "   ⏭️  Keeping current version"
-                        ;;
-                esac
+                read -p "Downgrade? [y/N]: " choice
+                [[ "$choice" =~ ^[yY]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; } || echo "   ⏭️  Keeping current version"
                 ;;
             *)
                 echo "⚠️  Version comparison failed"
                 echo ""
-                read -p "Reinstall anyway? [y/N]: " choice
-                case "$choice" in
-                    y|Y)
-                        backup_skill
-                        rm -rf "$USER_SKILL_DIR"
-                        install_skill
-                        ;;
-                    *)
-                        echo "   ⏭️  Skipped"
-                        ;;
-                esac
+                read -p "Reinstall? [y/N]: " choice
+                [[ "$choice" =~ ^[yY]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; } || echo "   ⏭️  Skipped"
                 ;;
         esac
     else
         echo "Installation options:"
         echo ""
         echo "  [1] User-level install (RECOMMENDED)"
-        echo "      → Install to ~/.claude/skills/"
-        echo "      → Available in ALL projects with Claude Code"
-        echo "      → Survives project deletion"
+        echo "      → ~/.claude/skills/ (available in all projects)"
         echo ""
         echo "  [2] Project-level only"
-        echo "      → Use skill only in this project"
-        echo "      → Requires project directory to work"
+        echo "      → Works only in this project directory"
         echo ""
-        echo "  [3] Skip installation"
-        echo "      → CLI will work, but Claude won't auto-query Slack"
+        echo "  [3] Skip"
         echo ""
 
         read -p "Choose [1-3] (default: 1): " choice
         case "$choice" in
             2)
                 echo ""
-                echo "✅ Using project-level skill only"
+                echo "✅ Using project-level skill"
                 echo "   Location: $(pwd)/$PROJECT_SKILL_DIR"
-                echo ""
-                echo "ℹ️  Skill will only work when Claude Code is opened in this project directory"
                 ;;
             3)
                 echo ""
-                echo "⏭️  Skill installation skipped"
-                echo ""
-                echo "ℹ️  You can install the skill later by running this script again"
+                echo "⏭️  Skipped"
                 ;;
             1|"")
                 echo ""
@@ -198,14 +204,12 @@ prompt_skill_installation() {
                 echo ""
                 echo "Claude Code can now:"
                 echo "  • Execute Slack queries automatically"
-                echo "  • Find users and channels"
+                echo "  • Search users and channels"
                 echo "  • Retrieve message history"
-                echo "  • Search conversations"
-                echo ""
                 ;;
             *)
                 echo ""
-                echo "❌ Invalid choice. Skipping skill installation."
+                echo "❌ Invalid choice. Skipped."
                 ;;
         esac
     fi
@@ -213,80 +217,75 @@ prompt_skill_installation() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
-# ============================================================================
-# Binary Installation
-# ============================================================================
+main() {
+    echo "🚀 Installing Slack CLI..."
+    echo ""
 
-# Build release binary
-echo "📦 Building release binary..."
-cargo build --release
+    local binary_path=""
+    local target=$(detect_platform)
+    local version=$(get_latest_version)
 
-# Create install directory if it doesn't exist
-mkdir -p "$INSTALL_DIR"
+    if [ -n "$version" ] && command -v curl >/dev/null; then
+        echo "Latest version: v$version"
+        echo ""
+        echo "Installation method:"
+        echo "  [1] Download prebuilt binary (RECOMMENDED - fast)"
+        echo "  [2] Build from source (requires Rust toolchain)"
+        echo ""
+        read -p "Choose [1-2] (default: 1): " method
 
-# Copy binary
-echo "📋 Installing to $INSTALL_DIR/$BINARY_NAME"
-cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
-chmod +x "$INSTALL_DIR/$BINARY_NAME"
+        case "$method" in
+            2)
+                binary_path=$(build_from_source)
+                ;;
+            1|"")
+                binary_path=$(download_binary "$version" "$target") || {
+                    echo "⚠️  Download failed, falling back to source build"
+                    binary_path=$(build_from_source)
+                }
+                ;;
+            *)
+                echo "❌ Invalid choice"
+                exit 1
+                ;;
+        esac
+    else
+        [ -z "$version" ] && echo "⚠️  Cannot fetch latest version, building from source"
+        binary_path=$(build_from_source)
+    fi
 
-# macOS: Ad-hoc sign the binary to prevent "Killed: 9" errors
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "🔏 Signing binary (macOS)..."
-    codesign --force --deep --sign - "$INSTALL_DIR/$BINARY_NAME" 2>/dev/null || true
-fi
+    install_binary "$binary_path"
 
-echo
-echo "✅ Binary installation complete!"
-echo
-echo "Binary installed to: $INSTALL_DIR/$BINARY_NAME"
-echo
+    echo ""
+    if echo "$PATH" | grep -q "$INSTALL_DIR"; then
+        echo "✅ $INSTALL_DIR is in PATH"
+    else
+        echo "⚠️  $INSTALL_DIR not in PATH"
+        echo ""
+        echo "Add to shell profile (~/.bashrc, ~/.zshrc):"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    fi
+    echo ""
 
-# Check if in PATH
-if echo "$PATH" | grep -q "$INSTALL_DIR"; then
-    echo "✅ $INSTALL_DIR is in your PATH"
-    echo
-    echo "You can now run: $BINARY_NAME --help"
-else
-    echo "⚠️  $INSTALL_DIR is not in your PATH"
-    echo
-    echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo
-    echo "Then reload your shell:"
-    echo "  source ~/.zshrc  # or ~/.bashrc"
-fi
-echo
+    if command -v "$BINARY_NAME" &>/dev/null; then
+        echo "Installed version:"
+        "$BINARY_NAME" --version
+        echo ""
+    fi
 
-# Check version
-if command -v "$BINARY_NAME" &> /dev/null; then
-    echo "Installed version:"
-    "$BINARY_NAME" --version
-    echo
-fi
+    prompt_skill_installation
 
-# ============================================================================
-# Skill Installation Prompt
-# ============================================================================
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🎉 Installation Complete!"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Next steps:"
+    echo ""
+    echo "1. Initialize config:   $BINARY_NAME config init"
+    echo "2. Refresh cache:       $BINARY_NAME cache refresh"
+    echo "3. Search users:        $BINARY_NAME users <query>"
+    echo ""
+}
 
-prompt_skill_installation
-
-# ============================================================================
-# Final Message
-# ============================================================================
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "🎉 Installation Complete!"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "📝 Next steps:"
-echo ""
-echo "1. Initialize configuration:"
-echo "   $BINARY_NAME config init"
-echo ""
-echo "2. Refresh cache:"
-echo "   $BINARY_NAME cache refresh"
-echo ""
-echo "3. Search users:"
-echo "   $BINARY_NAME users <query>"
-echo ""
+main

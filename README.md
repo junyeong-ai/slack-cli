@@ -111,36 +111,33 @@ slack config edit            # 에디터로 수정
 
 ## 📦 설치
 
-### Prerequisites
-- Rust 1.91.1+ (2024 edition)
-- Slack workspace 접근 권한
+### 방법 1: Prebuilt Binary (권장) ⭐
 
-### 방법 1: 소스에서 빌드
+**자동 설치**:
+```bash
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
+```
+
+**수동 설치**:
+1. [Releases](https://github.com/junyeong-ai/slack-cli/releases)에서 바이너리 다운로드
+2. 압축 해제: `tar -xzf slack-*.tar.gz`
+3. PATH에 이동: `mv slack ~/.local/bin/`
+
+### 방법 2: Cargo
+
+```bash
+cargo install slack-cli
+```
+
+### 방법 3: 소스 빌드
 
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli
 cd slack-cli
-cargo build --release
-
-# 바이너리 위치: target/release/slack
-```
-
-### 방법 2: 전역 설치
-
-```bash
-# 빌드 후 전역 설치
 ./scripts/install.sh
-
-# 제거
-./scripts/uninstall.sh
 ```
 
-### 방법 3: Cargo
-
-```bash
-# 추후 지원 예정
-cargo install slack-cli
-```
+**Requirements**: Rust 1.91.1+
 
 ### 🤖 Claude Code Skill (선택사항)
 
