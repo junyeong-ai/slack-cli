@@ -12,6 +12,10 @@ keywords = ["slack", "cli", "api", "cache", "search"]
 categories = ["command-line-utilities", "api-bindings"]
 readme = "README.md"
 
+[lib]
+name = "slack_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "slack"
 path = "src/main.rs"
