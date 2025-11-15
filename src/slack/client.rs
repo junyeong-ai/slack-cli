@@ -7,12 +7,12 @@ use super::core::SlackCore;
 use super::messages::SlackMessageClient;
 use super::users::SlackUserClient;
 
-/// Unified Slack client with specialized sub-clients
+/// Slack client with specialized sub-clients
 ///
-/// Access sub-clients directly for their functionality:
-/// - `client.messages` for message operations
-/// - `client.users` for user operations
-/// - `client.channels` for channel operations
+/// Access sub-clients:
+/// - `messages` for message operations
+/// - `users` for user operations
+/// - `channels` for channel operations
 pub struct SlackClient {
     pub messages: SlackMessageClient,
     pub users: SlackUserClient,
