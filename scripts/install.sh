@@ -67,8 +67,10 @@ download_binary() {
 
 build_from_source() {
     echo "🔨 Building from source..."
-    cargo build --release
-    echo "target/release/$BINARY_NAME"
+    if ! cargo build --release; then
+        echo "❌ Build failed"
+        exit 1
+    fi
 }
 
 install_binary() {
@@ -236,12 +238,14 @@ main() {
 
         case "$method" in
             2)
-                binary_path=$(build_from_source)
+                build_from_source > /dev/null
+                binary_path="target/release/$BINARY_NAME"
                 ;;
             1|"")
                 binary_path=$(download_binary "$version" "$target") || {
                     echo "⚠️  Download failed, falling back to source build"
-                    binary_path=$(build_from_source)
+                    build_from_source > /dev/null
+                    binary_path="target/release/$BINARY_NAME"
                 }
                 ;;
             *)
@@ -251,7 +255,8 @@ main() {
         esac
     else
         [ -z "$version" ] && echo "⚠️  Cannot fetch latest version, building from source"
-        binary_path=$(build_from_source)
+        build_from_source > /dev/null
+        binary_path="target/release/$BINARY_NAME"
     fi
 
     install_binary "$binary_path"

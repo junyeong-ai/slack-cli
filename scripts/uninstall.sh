@@ -43,9 +43,8 @@ if [ -d "$USER_SKILL_DIR" ]; then
         echo
 
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            # Create backup
-            local timestamp=$(date +%Y%m%d_%H%M%S)
-            local backup_dir="$USER_SKILL_DIR.backup_$timestamp"
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            backup_dir="$USER_SKILL_DIR.backup_$timestamp"
             cp -r "$USER_SKILL_DIR" "$backup_dir"
             echo "📦 Backup created: $backup_dir"
         fi
