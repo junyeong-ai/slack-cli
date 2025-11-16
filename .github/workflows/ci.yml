@@ -104,14 +104,14 @@ jobs:
 
       - name: Check binary size
         run: |
-          ls -lh target/release/slack
-          du -h target/release/slack
+          ls -lh target/release/slack-cli
+          du -h target/release/slack-cli
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-binary
-          path: target/release/slack
+          path: target/release/slack-cli
           retention-days: 7
 
   security-audit:

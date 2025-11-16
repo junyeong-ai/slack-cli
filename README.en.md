@@ -121,7 +121,7 @@ curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/
 **Manual install**:
 1. Download binary from [Releases](https://github.com/junyeong-ai/slack-cli/releases)
 2. Extract: `tar -xzf slack-*.tar.gz`
-3. Move to PATH: `mv slack ~/.local/bin/`
+3. Move to PATH: `mv slack-cli ~/.local/bin/`
 
 ### Method 2: Cargo
 

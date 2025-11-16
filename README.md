@@ -121,7 +121,7 @@ curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/
 **수동 설치**:
 1. [Releases](https://github.com/junyeong-ai/slack-cli/releases)에서 바이너리 다운로드
 2. 압축 해제: `tar -xzf slack-*.tar.gz`
-3. PATH에 이동: `mv slack ~/.local/bin/`
+3. PATH에 이동: `mv slack-cli ~/.local/bin/`
 
 ### 방법 2: Cargo
 

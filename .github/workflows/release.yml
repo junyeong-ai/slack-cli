@@ -60,16 +60,16 @@ jobs:
           target="${{ matrix.target }}"
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            binary="target/$target/release/slack.exe"
-            archive="slack-v${version}-${target}.zip"
-            cp "$binary" slack.exe
-            7z a "$archive" slack.exe
+            binary="target/$target/release/slack-cli.exe"
+            archive="slack-cli-v${version}-${target}.zip"
+            cp "$binary" slack-cli.exe
+            7z a "$archive" slack-cli.exe
             echo "ASSET=$archive" >> $GITHUB_ENV
           else
-            binary="target/$target/release/slack"
-            archive="slack-v${version}-${target}.tar.gz"
-            cp "$binary" slack
-            tar -czf "$archive" slack
+            binary="target/$target/release/slack-cli"
+            archive="slack-cli-v${version}-${target}.tar.gz"
+            cp "$binary" slack-cli
+            tar -czf "$archive" slack-cli
             echo "ASSET=$archive" >> $GITHUB_ENV
           fi
 
