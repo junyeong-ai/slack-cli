@@ -150,7 +150,7 @@ impl Config {
                  - Config file: {}\n\
                  - Environment: SLACK_BOT_TOKEN or SLACK_USER_TOKEN\n\
                  - CLI flag: --token\n\
-                 - Or run: slack init",
+                 - Or run: slack-cli config init",
                 Self::default_config_path()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "~/.config/slack-cli/config.toml".to_string())
@@ -284,7 +284,7 @@ impl Config {
 
         if !path.exists() {
             println!(
-                "Config file does not exist: {}\nRun: slack config init",
+                "Config file does not exist: {}\nRun: slack-cli config init",
                 path.display()
             );
             return Ok(());

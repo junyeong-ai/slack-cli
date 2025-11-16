@@ -168,13 +168,13 @@ fn handle_config_action(action: &ConfigAction, as_json: bool) -> Result<()> {
 
 fn check_cache_status(cache: &cache::SqliteCache, config: &config::Config) -> Result<()> {
     if cache.is_cache_empty()? {
-        eprintln!("⚠ Cache is empty. Run: slack cache refresh");
+        eprintln!("⚠ Cache is empty. Run: slack-cli cache refresh");
         return Ok(());
     }
 
     let ttl = config.cache.ttl_users_hours;
     if cache.is_cache_stale(ttl)? {
-        eprintln!("⚠ Cache is outdated. Consider running: slack cache refresh");
+        eprintln!("⚠ Cache is outdated. Consider running: slack-cli cache refresh");
     }
 
     Ok(())
@@ -252,7 +252,7 @@ fn init_config(bot_token: Option<String>, user_token: Option<String>, force: boo
     }
 
     println!("✓ Config saved: {}", path.display());
-    println!("\nRun: slack cache refresh");
+    println!("\nRun: slack-cli cache refresh");
 
     Ok(())
 }
