@@ -2,11 +2,11 @@
 name: slack-workspace
 version: 0.1.0
 description: |
-  Query Slack workspace data: search users by name/email, get channel messages,
-  search channels, read thread replies, list members. Works with public/private
-  channels, DMs, group messages. Use when searching Slack conversations, finding
-  team members, checking message history, or user mentions Slack, workspace search,
-  channels, threads, or team communication.
+  Search Slack workspace data using the slack-cli tool. Find team members by name/email,
+  search channels, read message history, check threads, send messages, and list channel members.
+  Use this when the user asks to find colleagues, check Slack conversations, search messages,
+  view channel info, send Slack messages, or mentions: Slack, workspace, teammates, channels,
+  DMs, threads, message history, team communication.
 allowed-tools: Bash
 ---
 
@@ -15,52 +15,65 @@ allowed-tools: Bash
 ## Commands
 
 ```bash
-# Search users
+# Search
 slack-cli users <query> [--limit 10]
-
-# Search channels
 slack-cli channels <query> [--limit 10]
 
-# Get messages
-slack-cli messages <channel> [--limit 100]
+# Messages
+slack-cli messages <channel> [--limit 100] [--cursor <cursor>]
+slack-cli thread <channel> <ts> [--limit 100]
+slack-cli search <query> [--channel <name>] [--user <name>] [--limit 10]
 
-# Read thread
-slack-cli thread <channel> <timestamp>
-
-# List members
+# Actions
+slack-cli send <channel> <text> [--thread <ts>]
 slack-cli members <channel>
 
-# Search messages (requires user token)
-slack-cli search <query> [--channel <name>] [--user <name>]
-
-# Cache management
+# Setup
+slack-cli config init --bot-token xoxb-... [--user-token xoxp-...]
 slack-cli cache refresh [users|channels|all]
-slack-cli cache stats
-
-# Config
-slack-cli config show
-slack-cli config init --bot-token <token>
 ```
 
-## Key Facts
+## Identifiers
 
-**Channel formats**: `#channel-name`, `@username`, or IDs (`C123...`, `U456...`)
-**Cache**: Users/channels cached locally, messages fetched from API
-**Search command**: Requires user token (`xoxp-`), not bot token
-**Refresh**: `slack-cli cache refresh` updates user/channel cache
+- `#general`, `general` → channel name
+- `@alice`, `alice` → user mention
+- `C0123...`, `D0123...`, `G0123...` → channel/DM/group ID
+
+**Note**: `U0123...` (user IDs) invalid for channel commands.
+
+## Token Requirements
+
+- **Bot token** (`xoxb-`): users, channels, send, messages, thread, members
+- **User token** (`xoxp-`): search
 
 ## Examples
 
 ```bash
-# Get recent messages
-slack-cli messages "#team-tech" --limit 20
+# Find user
+slack-cli users alice
 
-# Find colleague
-slack-cli users "john"
+# Get messages
+slack-cli messages "#engineering" --limit 20
 
-# Search workspace (needs user token)
-slack-cli search "bug" --channel "#dev"
+# Send message
+slack-cli send "#ops" "Deploy complete"
 
-# Refresh stale cache
+# Reply in thread
+slack-cli send "#dev" "Fixed!" --thread 1234567890.123456
+
+# List members
+slack-cli members "#leadership"
+
+# Search messages (user token required)
+slack-cli search "bug report" --channel "#dev"
+
+# Refresh cache
 slack-cli cache refresh
 ```
+
+## Error Handling
+
+If command fails:
+- **Cache empty**: Run `slack-cli cache refresh`
+- **Token error**: Verify with `slack-cli config show`
+- **Search fails**: Requires user token (`xoxp-`), not bot token

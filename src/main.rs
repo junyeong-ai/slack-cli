@@ -87,10 +87,8 @@ async fn main() -> Result<()> {
         }
 
         Command::Thread { channel, ts, limit } => {
-            let messages = slack
-                .messages
-                .get_thread_messages(&channel, &ts, limit)
-                .await?;
+            let id = resolve_channel(&channel, &cache)?;
+            let messages = slack.messages.get_thread_messages(&id, &ts, limit).await?;
             format::print_messages(&messages, cli.json);
         }
 
