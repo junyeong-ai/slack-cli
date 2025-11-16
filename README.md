@@ -30,15 +30,15 @@ cargo build --release
 ./scripts/install.sh
 
 # 3. 설정 초기화
-slack config init --bot-token xoxb-your-token
+slack-cli config init --bot-token xoxb-your-token
 
 # 4. 캐시 새로고침
-slack cache refresh
+slack-cli cache refresh
 
 # 5. 사용 시작! 🎉
-slack users "john"
-slack channels "general"
-slack send "#general" "Hello team!"
+slack-cli users "john"
+slack-cli channels "general"
+slack-cli send "#general" "Hello team!"
 ```
 
 **Tip**: User token (`xoxp-`)을 사용하면 더 많은 기능을 사용할 수 있습니다.
@@ -50,60 +50,60 @@ slack send "#general" "Hello team!"
 ### 강력한 검색
 ```bash
 # 사용자 검색 (이름, 이메일, 표시명)
-slack users "john" --limit 5
+slack-cli users "john" --limit 5
 
 # 채널 검색 (이름, 주제, 설명)
-slack channels "dev" --limit 10
+slack-cli channels "dev" --limit 10
 
 # 메시지 검색 (워크스페이스 전체)
-slack search "deadline" --channel "#dev-team"
+slack-cli search "deadline" --channel "#dev-team"
 ```
 
 ### 메시지 관리
 ```bash
 # 채널에 메시지 전송
-slack send "#general" "Meeting in 10 minutes"
+slack-cli send "#general" "Meeting in 10 minutes"
 
 # DM 전송
-slack send "@john.doe" "Hello!"
+slack-cli send "@john.doe" "Hello!"
 
 # 스레드 답장
-slack send "#dev-team" "Done!" --thread 1234567890.123456
+slack-cli send "#dev-team" "Done!" --thread 1234567890.123456
 
 # 채널 메시지 조회
-slack messages "#general" --limit 20
+slack-cli messages "#general" --limit 20
 
 # 스레드 전체 조회
-slack thread "#dev-team" 1234567890.123456
+slack-cli thread "#dev-team" 1234567890.123456
 ```
 
 ### 채널 관리
 ```bash
 # 채널 멤버 목록
-slack members "#dev-team"
+slack-cli members "#dev-team"
 
 # JSON 출력
-slack channels "general" --json | jq
+slack-cli channels "general" --json | jq
 ```
 
 ### 캐시 & 설정
 ```bash
 # 캐시 상태 확인
-slack cache stats
+slack-cli cache stats
 
 # 캐시 새로고침
-slack cache refresh           # 전체
-slack cache refresh users     # 사용자만
-slack cache refresh channels  # 채널만
+slack-cli cache refresh           # 전체
+slack-cli cache refresh users     # 사용자만
+slack-cli cache refresh channels  # 채널만
 
 # 설정 관리
-slack config show            # 설정 표시 (토큰 마스킹)
-slack config path            # 설정 파일 경로
-slack config edit            # 에디터로 수정
+slack-cli config show            # 설정 표시 (토큰 마스킹)
+slack-cli config path            # 설정 파일 경로
+slack-cli config edit            # 에디터로 수정
 ```
 
 **중요 사항**:
-- 캐시가 오래됨 (>24h): 검색은 오래된 데이터 반환. `slack cache refresh`로 갱신
+- 캐시가 오래됨 (>24h): 검색은 오래된 데이터 반환. `slack-cli cache refresh`로 갱신
 - `search` 명령어: 캐시 미사용, API 직접 호출. User token + `search:read` scope 필요
 - 채널 형식: `#channel-name`, `@username`, 또는 ID (`C123...`, `U456...`). ID에는 prefix 선택사항
 
@@ -202,7 +202,7 @@ export SLACK_USER_TOKEN="xoxp-..."    # 사용자 토큰 (권장)
 - Linux: `~/.config/slack-cli/config.toml`
 - Windows: `%APPDATA%\slack-cli\config.toml`
 
-**기본 설정** (`slack config init`로 생성):
+**기본 설정** (`slack-cli config init`로 생성):
 ```toml
 bot_token = "xoxb-..."
 user_token = "xoxp-..."
@@ -231,7 +231,7 @@ CLI 플래그 > 환경 변수 > 설정 파일 > 기본값
 **예시**:
 ```bash
 # 설정 파일의 토큰 오버라이드
-slack users "john" --token xoxp-temporary-token
+slack-cli users "john" --token xoxp-temporary-token
 ```
 
 ---
@@ -252,7 +252,7 @@ SQLite FTS5로 빠른 로컬 검색 (<10ms), 사용자/채널 24시간 캐시, A
 rm -rf ~/.config/slack-cli/cache
 
 # 다시 실행
-slack cache refresh
+slack-cli cache refresh
 ```
 
 ### "Unauthorized" 오류
@@ -275,7 +275,7 @@ slack cache refresh
 
 ### 디버그 로깅
 
-`RUST_LOG` 환경변수로 디버그 로깅 활성화 (예: `RUST_LOG=debug slack users "john"`)
+`RUST_LOG` 환경변수로 디버그 로깅 활성화 (예: `RUST_LOG=debug slack-cli users "john"`)
 
 ### 캐시 데이터 확인
 
@@ -290,17 +290,17 @@ sqlite3 ~/.config/slack-cli/cache/slack.db
 
 | 명령어 | 설명 | 예제 |
 |--------|------|------|
-| `users <query>` | 사용자 검색 (이름, 이메일, 표시명) | `slack users "john" --limit 5` |
-| `channels <query>` | 채널 검색 (공개/비공개/DM/그룹 DM) | `slack channels "dev" --limit 10` |
-| `send <channel> <text>` | 메시지 전송 | `slack send "#general" "Hello!"` |
-| `messages <channel>` | 채널 메시지 조회 | `slack messages "#general" --limit 20` |
-| `thread <channel> <ts>` | 스레드 전체 조회 | `slack thread "#dev" 1234567890.123456` |
-| `members <channel>` | 채널 멤버 목록 | `slack members "#dev-team"` |
-| `search <query>` | 메시지 검색 (워크스페이스 전체) | `slack search "deadline" --channel "#dev"` |
-| `cache stats` | 캐시 통계 (사용자/채널 개수) | `slack cache stats` |
-| `cache refresh` | 캐시 새로고침 (전체/사용자/채널) | `slack cache refresh users` |
-| `config init` | 설정 초기화 | `slack config init --bot-token xoxb-...` |
-| `config show` | 설정 표시 (토큰 마스킹) | `slack config show` |
+| `users <query>` | 사용자 검색 (이름, 이메일, 표시명) | `slack-cli users "john" --limit 5` |
+| `channels <query>` | 채널 검색 (공개/비공개/DM/그룹 DM) | `slack-cli channels "dev" --limit 10` |
+| `send <channel> <text>` | 메시지 전송 | `slack-cli send "#general" "Hello!"` |
+| `messages <channel>` | 채널 메시지 조회 | `slack-cli messages "#general" --limit 20` |
+| `thread <channel> <ts>` | 스레드 전체 조회 | `slack-cli thread "#dev" 1234567890.123456` |
+| `members <channel>` | 채널 멤버 목록 | `slack-cli members "#dev-team"` |
+| `search <query>` | 메시지 검색 (워크스페이스 전체) | `slack-cli search "deadline" --channel "#dev"` |
+| `cache stats` | 캐시 통계 (사용자/채널 개수) | `slack-cli cache stats` |
+| `cache refresh` | 캐시 새로고침 (전체/사용자/채널) | `slack-cli cache refresh users` |
+| `config init` | 설정 초기화 | `slack-cli config init --bot-token xoxb-...` |
+| `config show` | 설정 표시 (토큰 마스킹) | `slack-cli config show` |
 
 ### 공통 옵션
 
@@ -314,7 +314,7 @@ sqlite3 ~/.config/slack-cli/cache/slack.db
 
 **참고**:
 - `search` 명령어는 User token (`xoxp-`) + `search:read` scope 필요
-- `cache refresh`는 `users` 또는 `channels` 인자로 부분 갱신 가능 (예: `slack cache refresh users`)
+- `cache refresh`는 `users` 또는 `channels` 인자로 부분 갱신 가능 (예: `slack-cli cache refresh users`)
 - 타임스탬프 형식: `1234567890.123456` (Slack 메시지 ts 값)
 
 ---

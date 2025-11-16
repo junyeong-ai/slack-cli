@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-BINARY_NAME="slack"
+BINARY_NAME="slack-cli"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 REPO="junyeong-ai/slack-cli"
 SKILL_NAME="slack-workspace"
@@ -37,7 +37,7 @@ get_latest_version() {
 download_binary() {
     local version="$1"
     local target="$2"
-    local archive="slack-v${version}-${target}.tar.gz"
+    local archive="slack-cli-v${version}-${target}.tar.gz"
     local url="https://github.com/$REPO/releases/download/v${version}/${archive}"
     local checksum_url="${url}.sha256"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-BINARY_NAME="slack"
+BINARY_NAME="slack-cli"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 SKILL_NAME="slack-workspace"
 USER_SKILL_DIR="$HOME/.claude/skills/$SKILL_NAME"

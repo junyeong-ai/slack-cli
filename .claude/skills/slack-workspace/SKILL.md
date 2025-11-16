@@ -16,30 +16,30 @@ allowed-tools: Bash
 
 ```bash
 # Search users
-slack users <query> [--limit 10]
+slack-cli users <query> [--limit 10]
 
 # Search channels
-slack channels <query> [--limit 10]
+slack-cli channels <query> [--limit 10]
 
 # Get messages
-slack messages <channel> [--limit 100]
+slack-cli messages <channel> [--limit 100]
 
 # Read thread
-slack thread <channel> <timestamp>
+slack-cli thread <channel> <timestamp>
 
 # List members
-slack members <channel>
+slack-cli members <channel>
 
 # Search messages (requires user token)
-slack search <query> [--channel <name>] [--user <name>]
+slack-cli search <query> [--channel <name>] [--user <name>]
 
 # Cache management
-slack cache refresh [users|channels|all]
-slack cache stats
+slack-cli cache refresh [users|channels|all]
+slack-cli cache stats
 
 # Config
-slack config show
-slack config init --bot-token <token>
+slack-cli config show
+slack-cli config init --bot-token <token>
 ```
 
 ## Key Facts
@@ -47,20 +47,20 @@ slack config init --bot-token <token>
 **Channel formats**: `#channel-name`, `@username`, or IDs (`C123...`, `U456...`)
 **Cache**: Users/channels cached locally, messages fetched from API
 **Search command**: Requires user token (`xoxp-`), not bot token
-**Refresh**: `slack cache refresh` updates user/channel cache
+**Refresh**: `slack-cli cache refresh` updates user/channel cache
 
 ## Examples
 
 ```bash
 # Get recent messages
-slack messages "#team-tech" --limit 20
+slack-cli messages "#team-tech" --limit 20
 
 # Find colleague
-slack users "john"
+slack-cli users "john"
 
 # Search workspace (needs user token)
-slack search "bug" --channel "#dev"
+slack-cli search "bug" --channel "#dev"
 
 # Refresh stale cache
-slack cache refresh
+slack-cli cache refresh
 ```
