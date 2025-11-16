@@ -2,7 +2,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "slack-cli", version, about = "Slack CLI with FTS5 cache", author)]
+#[command(
+    name = "slack-cli",
+    version,
+    about = "Slack CLI with FTS5 cache",
+    author
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
