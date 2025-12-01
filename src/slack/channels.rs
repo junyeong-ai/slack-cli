@@ -51,25 +51,20 @@ impl SlackChannelClient {
             }
 
             // Use user token preference to get private channels
-            let response = self
+            let mut response = self
                 .core
                 .api_call("conversations.list", params, None, true)
                 .await?;
 
             // Parse channels from response
-            let mut page_channels = Vec::new();
-            if let Some(channels) = response["channels"].as_array() {
-                for channel in channels {
-                    match serde_json::from_value::<SlackChannel>(channel.clone()) {
-                        Ok(channel_obj) => {
-                            page_channels.push(channel_obj);
-                        }
-                        Err(_) => {
-                            // Skip malformed channel
-                        }
-                    }
-                }
-            }
+            let page_channels: Vec<SlackChannel> = response
+                .get_mut("channels")
+                .and_then(|v| v.as_array_mut())
+                .map(std::mem::take)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|channel| serde_json::from_value::<SlackChannel>(channel).ok())
+                .collect();
 
             // Process this page immediately via callback
             if !page_channels.is_empty() {

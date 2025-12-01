@@ -47,27 +47,21 @@ impl SlackUserClient {
                 params["cursor"] = json!(cursor_val);
             }
 
-            let response = self
+            let mut response = self
                 .core
                 .api_call("users.list", params, None, false)
                 .await?;
 
             // Parse users from response
-            let mut page_users = Vec::new();
-            if let Some(members) = response["members"].as_array() {
-                for member in members {
-                    match serde_json::from_value::<SlackUser>(member.clone()) {
-                        Ok(user) => {
-                            if !user.deleted {
-                                page_users.push(user);
-                            }
-                        }
-                        Err(_) => {
-                            // Skip malformed user
-                        }
-                    }
-                }
-            }
+            let page_users: Vec<SlackUser> = response
+                .get_mut("members")
+                .and_then(|v| v.as_array_mut())
+                .map(std::mem::take)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|member| serde_json::from_value::<SlackUser>(member).ok())
+                .filter(|user| !user.deleted)
+                .collect();
 
             // Process this page immediately via callback
             if !page_users.is_empty() {

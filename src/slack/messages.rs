@@ -115,16 +115,18 @@ impl SlackMessageClient {
             params["cursor"] = json!(cursor);
         }
 
-        let response = self
+        let mut response = self
             .core
             .api_call("conversations.history", params, None, false)
             .await?;
 
-        let messages: Vec<SlackMessage> = response["messages"]
-            .as_array()
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter_map(|m| serde_json::from_value(m.clone()).ok())
+        let messages: Vec<SlackMessage> = response
+            .get_mut("messages")
+            .and_then(|v| v.as_array_mut())
+            .map(std::mem::take)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|m| serde_json::from_value(m).ok())
             .collect();
 
         let next_cursor = response["response_metadata"]["next_cursor"]
@@ -148,16 +150,18 @@ impl SlackMessageClient {
             "limit": limit,
         });
 
-        let response = self
+        let mut response = self
             .core
             .api_call("conversations.replies", params, None, false)
             .await?;
 
-        let messages: Vec<SlackMessage> = response["messages"]
-            .as_array()
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter_map(|m| serde_json::from_value(m.clone()).ok())
+        let messages: Vec<SlackMessage> = response
+            .get_mut("messages")
+            .and_then(|v| v.as_array_mut())
+            .map(std::mem::take)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|m| serde_json::from_value(m).ok())
             .collect();
 
         let has_more = response["has_more"].as_bool().unwrap_or(false);
@@ -188,16 +192,19 @@ impl SlackMessageClient {
             "count": limit,
         });
 
-        let response = self
+        let mut response = self
             .core
             .api_call("search.messages", params, None, true)
             .await?;
 
-        let messages: Vec<SlackMessage> = response["messages"]["matches"]
-            .as_array()
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter_map(|m| serde_json::from_value(m.clone()).ok())
+        let messages: Vec<SlackMessage> = response
+            .get_mut("messages")
+            .and_then(|v| v.get_mut("matches"))
+            .and_then(|v| v.as_array_mut())
+            .map(std::mem::take)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|m| serde_json::from_value(m).ok())
             .collect();
 
         Ok(messages)
