@@ -2,78 +2,52 @@
 name: slack-workspace
 version: 0.1.0
 description: |
-  Search Slack workspace data using the slack-cli tool. Find team members by name/email,
-  search channels, read message history, check threads, send messages, and list channel members.
-  Use this when the user asks to find colleagues, check Slack conversations, search messages,
-  view channel info, send Slack messages, or mentions: Slack, workspace, teammates, channels,
-  DMs, threads, message history, team communication.
+  Execute Slack workspace queries via slack-cli. Search users/channels, read messages,
+  send messages, manage threads. Use when working with Slack data or team communication.
 allowed-tools: Bash
 ---
 
-# Slack Workspace Query
-
-## Commands
+# slack-cli Command Reference
 
 ```bash
-# Search
-slack-cli users <query> [--limit 10]
-slack-cli channels <query> [--limit 10]
+# Query (add -j for JSON output)
+slack-cli users <query> [--limit N] [-j]
+slack-cli channels <query> [--limit N] [-j]
+slack-cli messages <channel> [--limit N] [--cursor <cursor>] [-j]
+slack-cli thread <channel> <ts> [--limit N] [-j]
+slack-cli search <query> [--channel <name>] [--user <name>] [--limit N] [-j]
+slack-cli members <channel> [-j]
 
-# Messages
-slack-cli messages <channel> [--limit 100] [--cursor <cursor>]
-slack-cli thread <channel> <ts> [--limit 100]
-slack-cli search <query> [--channel <name>] [--user <name>] [--limit 10]
-
-# Actions
+# Action
 slack-cli send <channel> <text> [--thread <ts>]
-slack-cli members <channel>
 
-# Setup
-slack-cli config init --bot-token xoxb-... [--user-token xoxp-...]
+# Management
 slack-cli cache refresh [users|channels|all]
+slack-cli config show|init|path|edit
 ```
 
-## Identifiers
+## Channel Identifiers
 
-- `#general`, `general` → channel name
-- `@alice`, `alice` → user mention
-- `C0123...`, `D0123...`, `G0123...` → channel/DM/group ID
+`#general`, `general`, `C0123...`, `D0123...`, `G0123...` → valid
+`U0123...` (user ID) → invalid for channel commands
 
-**Note**: `U0123...` (user IDs) invalid for channel commands.
+## Token Scope
 
-## Token Requirements
+- `search` → requires user token (`xoxp-`)
+- All others → bot token (`xoxb-`)
 
-- **Bot token** (`xoxb-`): users, channels, send, messages, thread, members
-- **User token** (`xoxp-`): search
+## Output Format: Slack mrkdwn
 
-## Examples
+When sending messages via `slack-cli send`, use Slack mrkdwn syntax:
 
-```bash
-# Find user
-slack-cli users alice
+| Element | Syntax |
+|---------|--------|
+| Bold | `*text*` |
+| Italic | `_text_` |
+| Strike | `~text~` |
+| Link | `<url\|text>` |
+| List | `• item` (not `-`) |
+| Nested | `  ◦ child` |
+| Section | `*:emoji: Title*` |
 
-# Get messages
-slack-cli messages "#engineering" --limit 20
-
-# Send message
-slack-cli send "#ops" "Deploy complete"
-
-# Reply in thread
-slack-cli send "#dev" "Fixed!" --thread 1234567890.123456
-
-# List members
-slack-cli members "#leadership"
-
-# Search messages (user token required)
-slack-cli search "bug report" --channel "#dev"
-
-# Refresh cache
-slack-cli cache refresh
-```
-
-## Error Handling
-
-If command fails:
-- **Cache empty**: Run `slack-cli cache refresh`
-- **Token error**: Verify with `slack-cli config show`
-- **Search fails**: Requires user token (`xoxp-`), not bot token
+**Critical**: GitHub Markdown (`**bold**`, `[text](url)`, `- item`) renders literally in Slack.
