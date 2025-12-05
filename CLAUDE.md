@@ -26,6 +26,7 @@ src/
 └── cache/
     ├── sqlite_cache.rs  # r2d2 pool, WAL mode
     ├── schema.rs        # FTS5, generated columns
+    ├── helpers.rs       # FTS5 query sanitization, cache status
     ├── locks.rs         # Distributed locking
     ├── users.rs         # 2-phase search
     └── channels.rs      # 2-phase search
@@ -90,7 +91,8 @@ const SCHEMA_VERSION: i32 = 2;
 
 ### Rate Limiting
 ```rust
-// slack/core.rs - Global 20 req/min with jitter
+// slack/core.rs - Configurable rate limit with jitter
+// Default: 20 req/min, configurable via config.connection.rate_limit_per_minute
 governor::RateLimiter + Jitter::up_to(100ms)
 ```
 
@@ -129,7 +131,7 @@ sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
 | `cache/locks.rs` | LOCK_TIMEOUT | 60s |
 | `cache/locks.rs` | MAX_RETRIES | 3 |
 | `cache/schema.rs` | SCHEMA_VERSION | 2 |
-| `slack/core.rs` | Rate limit | 20/min |
+| `config.rs` | rate_limit_per_minute | 20/min (configurable) |
 | `config.rs` | Cache TTL | 24h |
 
 ---
@@ -137,7 +139,7 @@ sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
 ## Test Commands
 
 ```bash
-cargo test                    # 65 tests
+cargo test                    # 88 tests
 cargo clippy -- -D warnings   # Lint
 cargo fmt --check             # Format check
 ```

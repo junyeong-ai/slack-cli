@@ -145,6 +145,10 @@ bot_token = "xoxb-..."
 [cache]
 ttl_users_hours = 24
 ttl_channels_hours = 24
+
+[connection]
+rate_limit_per_minute = 20
+timeout_seconds = 30
 ```
 
 **Priority**: CLI options > Environment variables > Config file
