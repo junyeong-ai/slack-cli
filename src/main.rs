@@ -72,6 +72,28 @@ async fn main() -> Result<()> {
             }
         }
 
+        Command::Update { channel, ts, text } => {
+            let id = resolve_channel(&channel, &cache)?;
+            let result = slack.messages.update_message(&id, &ts, &text).await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✓ Updated: {}", result.ts);
+            }
+        }
+
+        Command::Delete { channel, ts } => {
+            let id = resolve_channel(&channel, &cache)?;
+            let result = slack.messages.delete_message(&id, &ts).await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("✓ Deleted: {}", result.ts);
+            }
+        }
+
         Command::Messages {
             channel,
             limit,
@@ -110,6 +132,110 @@ async fn main() -> Result<()> {
                 .await?;
 
             format::print_messages(&messages, cli.json);
+        }
+
+        Command::React { channel, ts, emoji } => {
+            let id = resolve_channel(&channel, &cache)?;
+            slack.reactions.add(&id, &ts, &emoji).await?;
+
+            if cli.json {
+                println!("{{\"ok\": true}}");
+            } else {
+                println!("✓ Added :{}: reaction", emoji.trim_matches(':'));
+            }
+        }
+
+        Command::Unreact { channel, ts, emoji } => {
+            let id = resolve_channel(&channel, &cache)?;
+            slack.reactions.remove(&id, &ts, &emoji).await?;
+
+            if cli.json {
+                println!("{{\"ok\": true}}");
+            } else {
+                println!("✓ Removed :{}: reaction", emoji.trim_matches(':'));
+            }
+        }
+
+        Command::Reactions { channel, ts } => {
+            let id = resolve_channel(&channel, &cache)?;
+            let reactions = slack.reactions.get(&id, &ts).await?;
+            format::print_reactions(&reactions, cli.json);
+        }
+
+        Command::Emoji { query } => {
+            let emoji = if let Some(q) = query {
+                slack.emoji.search(&q).await?
+            } else {
+                slack.emoji.list().await?
+            };
+            format::print_emoji(&emoji, cli.json);
+        }
+
+        Command::Pin { channel, ts } => {
+            let id = resolve_channel(&channel, &cache)?;
+            slack.pins.add(&id, &ts).await?;
+
+            if cli.json {
+                println!("{{\"ok\": true}}");
+            } else {
+                println!("✓ Pinned message");
+            }
+        }
+
+        Command::Unpin { channel, ts } => {
+            let id = resolve_channel(&channel, &cache)?;
+            slack.pins.remove(&id, &ts).await?;
+
+            if cli.json {
+                println!("{{\"ok\": true}}");
+            } else {
+                println!("✓ Unpinned message");
+            }
+        }
+
+        Command::Pins { channel } => {
+            let id = resolve_channel(&channel, &cache)?;
+            let pins = slack.pins.list(&id).await?;
+            format::print_pins(&pins, cli.json);
+        }
+
+        Command::Bookmark {
+            channel,
+            title,
+            url,
+            emoji,
+        } => {
+            let id = resolve_channel(&channel, &cache)?;
+            let bookmark = slack
+                .bookmarks
+                .add(&id, &title, &url, emoji.as_deref())
+                .await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&bookmark)?);
+            } else {
+                println!("✓ Added bookmark: {} (id: {})", bookmark.title, bookmark.id);
+            }
+        }
+
+        Command::Unbookmark {
+            channel,
+            bookmark_id,
+        } => {
+            let id = resolve_channel(&channel, &cache)?;
+            slack.bookmarks.remove(&id, &bookmark_id).await?;
+
+            if cli.json {
+                println!("{{\"ok\": true}}");
+            } else {
+                println!("✓ Removed bookmark");
+            }
+        }
+
+        Command::Bookmarks { channel } => {
+            let id = resolve_channel(&channel, &cache)?;
+            let bookmarks = slack.bookmarks.list(&id).await?;
+            format::print_bookmarks(&bookmarks, cli.json);
         }
 
         Command::Cache { action } => match action {

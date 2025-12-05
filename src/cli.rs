@@ -55,6 +55,16 @@ pub enum Command {
         thread: Option<String>,
     },
 
+    #[command(about = "Update a message")]
+    Update {
+        channel: String,
+        ts: String,
+        text: String,
+    },
+
+    #[command(about = "Delete a message")]
+    Delete { channel: String, ts: String },
+
     #[command(about = "Get channel messages")]
     Messages {
         channel: String,
@@ -85,6 +95,56 @@ pub enum Command {
         #[arg(long, default_value = "10")]
         limit: usize,
     },
+
+    #[command(about = "Add reaction to a message")]
+    React {
+        channel: String,
+        ts: String,
+        emoji: String,
+    },
+
+    #[command(about = "Remove reaction from a message")]
+    Unreact {
+        channel: String,
+        ts: String,
+        emoji: String,
+    },
+
+    #[command(about = "Get reactions on a message")]
+    Reactions { channel: String, ts: String },
+
+    #[command(about = "List custom emoji")]
+    Emoji {
+        #[arg(long)]
+        query: Option<String>,
+    },
+
+    #[command(about = "Pin a message")]
+    Pin { channel: String, ts: String },
+
+    #[command(about = "Unpin a message")]
+    Unpin { channel: String, ts: String },
+
+    #[command(about = "List pinned messages")]
+    Pins { channel: String },
+
+    #[command(about = "Add a bookmark")]
+    Bookmark {
+        channel: String,
+        title: String,
+        url: String,
+        #[arg(long)]
+        emoji: Option<String>,
+    },
+
+    #[command(about = "Remove a bookmark")]
+    Unbookmark {
+        channel: String,
+        bookmark_id: String,
+    },
+
+    #[command(about = "List bookmarks")]
+    Bookmarks { channel: String },
 
     #[command(about = "Configuration management")]
     Config {

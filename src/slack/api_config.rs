@@ -42,11 +42,13 @@ pub static API_CONFIGS: LazyLock<HashMap<&'static str, ApiConfig>> = LazyLock::n
     m.insert("users.list", ApiConfig::new(ApiMethod::Get, false));
     m.insert("conversations.list", ApiConfig::new(ApiMethod::Get, true)); // Prefer user token for private channels
 
-    // POST JSON methods
+    // POST JSON methods - Chat
     m.insert(
         "chat.postMessage",
         ApiConfig::new(ApiMethod::PostJson, false),
     );
+    m.insert("chat.update", ApiConfig::new(ApiMethod::PostJson, false));
+    m.insert("chat.delete", ApiConfig::new(ApiMethod::PostJson, false));
     m.insert(
         "chat.scheduleMessage",
         ApiConfig::new(ApiMethod::PostJson, false),
@@ -55,15 +57,36 @@ pub static API_CONFIGS: LazyLock<HashMap<&'static str, ApiConfig>> = LazyLock::n
         "conversations.open",
         ApiConfig::new(ApiMethod::PostJson, false),
     );
+
+    // POST JSON methods - Reactions
     m.insert("reactions.add", ApiConfig::new(ApiMethod::PostJson, false));
     m.insert(
         "reactions.remove",
         ApiConfig::new(ApiMethod::PostJson, false),
     );
+    m.insert("reactions.get", ApiConfig::new(ApiMethod::Get, false));
+
+    // POST JSON methods - Pins
+    m.insert("pins.add", ApiConfig::new(ApiMethod::PostJson, false));
+    m.insert("pins.remove", ApiConfig::new(ApiMethod::PostJson, false));
+    m.insert("pins.list", ApiConfig::new(ApiMethod::Get, false));
+
+    // POST JSON methods - Bookmarks
+    m.insert("bookmarks.add", ApiConfig::new(ApiMethod::PostJson, false));
+    m.insert(
+        "bookmarks.remove",
+        ApiConfig::new(ApiMethod::PostJson, false),
+    );
+    m.insert("bookmarks.list", ApiConfig::new(ApiMethod::Get, false));
+
+    // GET methods - Emoji
+    m.insert("emoji.list", ApiConfig::new(ApiMethod::Get, false));
+
+    // User profile
     m.insert(
         "users.profile.set",
         ApiConfig::new(ApiMethod::PostJson, true),
-    ); // Requires user token
+    );
 
     // POST Form methods
     m.insert("search.messages", ApiConfig::new(ApiMethod::PostForm, true));

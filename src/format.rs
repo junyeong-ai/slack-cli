@@ -1,4 +1,5 @@
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
+use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage};
 
 pub fn print_users(users: &[SlackUser], as_json: bool) {
     if as_json {
@@ -126,5 +127,96 @@ pub fn print_members(member_ids: &[String], cache: &crate::cache::SqliteCache, a
         } else {
             println!("{}", id);
         }
+    }
+}
+
+pub fn print_reactions(reactions: &MessageReactions, as_json: bool) {
+    if as_json {
+        match serde_json::to_string_pretty(reactions) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing reactions: {}", e),
+        }
+        return;
+    }
+
+    if reactions.reactions.is_empty() {
+        println!("No reactions");
+        return;
+    }
+
+    for r in &reactions.reactions {
+        println!(":{}: ({})", r.name, r.count);
+    }
+}
+
+pub fn print_emoji(emoji: &[CustomEmoji], as_json: bool) {
+    if as_json {
+        match serde_json::to_string_pretty(emoji) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing emoji: {}", e),
+        }
+        return;
+    }
+
+    if emoji.is_empty() {
+        println!("No custom emoji found");
+        return;
+    }
+
+    for e in emoji {
+        if e.is_alias {
+            println!(
+                ":{}: -> :{}: (alias)",
+                e.name,
+                e.alias_for.as_deref().unwrap_or("?")
+            );
+        } else {
+            println!(":{}: {}", e.name, e.url);
+        }
+    }
+}
+
+pub fn print_pins(pins: &[PinnedMessage], as_json: bool) {
+    if as_json {
+        match serde_json::to_string_pretty(pins) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing pins: {}", e),
+        }
+        return;
+    }
+
+    if pins.is_empty() {
+        println!("No pinned messages");
+        return;
+    }
+
+    for pin in pins {
+        let text = pin.text.as_deref().unwrap_or("[no text]");
+        let preview = if text.len() > 60 {
+            format!("{}...", &text[..60])
+        } else {
+            text.to_string()
+        };
+        println!("[{}] {}", pin.ts, preview);
+    }
+}
+
+pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) {
+    if as_json {
+        match serde_json::to_string_pretty(bookmarks) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing bookmarks: {}", e),
+        }
+        return;
+    }
+
+    if bookmarks.is_empty() {
+        println!("No bookmarks");
+        return;
+    }
+
+    for b in bookmarks {
+        let emoji = b.emoji.as_deref().unwrap_or("");
+        println!("{} {} - {} (id: {})", emoji, b.title, b.link, b.id);
     }
 }
