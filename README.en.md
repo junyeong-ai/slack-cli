@@ -1,343 +1,217 @@
 # Slack CLI
 
 [![CI](https://github.com/junyeong-ai/slack-cli/workflows/CI/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
-[![Lint](https://github.com/junyeong-ai/slack-cli/workflows/Lint/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
-[![Rust](https://img.shields.io/badge/rust-1.91.1%2B%20(2024%20edition)-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)](https://github.com/junyeong-ai/slack-cli/releases)
+[![Rust](https://img.shields.io/badge/rust-1.91.1%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 
-> **🌐 [한국어](README.md)** | **English**
+> **English** | **[한국어](README.md)**
 
----
-
-> **⚡ Fast and Powerful Slack Command-Line Tool**
->
-> - 🚀 **Millisecond searches** (SQLite FTS5 full-text search)
-> - 💾 **Local cache** (instant user/channel queries)
-> - 🔍 **Fuzzy matching** (typo-tolerant search)
-> - 🛠️ **9 commands** (search, messaging, config management)
+**Take full control of Slack from your terminal.** From messaging to reactions, pins, and bookmarks — do everything without opening a browser.
 
 ---
 
-## ⚡ Quick Start (1 minute)
+## Why Slack CLI?
+
+- **Fast** — Millisecond searches powered by SQLite FTS5
+- **Complete** — 21 commands covering all Slack features
+- **Automatable** — Integrates with scripts, CI/CD, and AI agents
+
+---
+
+## Quick Start
 
 ```bash
-# 1. Install
-git clone https://github.com/junyeong-ai/slack-cli
-cd slack-cli
-cargo build --release
+# Install
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 
-# 2. Global install (optional)
-./scripts/install.sh
-
-# 3. Initialize config
+# Configure
 slack-cli config init --bot-token xoxb-your-token
-
-# 4. Refresh cache
 slack-cli cache refresh
 
-# 5. Start using! 🎉
+# Use
 slack-cli users "john"
-slack-cli channels "general"
-slack-cli send "#general" "Hello team!"
+slack-cli send "#general" "Hello!"
 ```
-
-**Tip**: Using a user token (`xoxp-`) provides more features.
 
 ---
 
-## 🎯 Key Features
+## Key Features
 
-### Powerful Search
+### Messages
 ```bash
-# Search users (name, email, display name)
-slack-cli users "john" --limit 5
-
-# Search channels (name, topic, description)
-slack-cli channels "dev" --limit 10
-
-# Search messages (workspace-wide)
-slack-cli search "deadline" --channel "#dev-team"
+slack-cli send "#general" "Announcement"          # Send
+slack-cli update "#general" 1234.5678 "Edited"    # Update
+slack-cli delete "#general" 1234.5678             # Delete
+slack-cli messages "#general" --limit 20          # List
+slack-cli thread "#general" 1234.5678             # Thread
+slack-cli search "keyword" --channel "#dev"       # Search
 ```
 
-### Message Management
+### Reactions
 ```bash
-# Send message to channel
-slack-cli send "#general" "Meeting in 10 minutes"
-
-# Send DM
-slack-cli send "@john.doe" "Hello!"
-
-# Reply to thread
-slack-cli send "#dev-team" "Done!" --thread 1234567890.123456
-
-# Get channel messages
-slack-cli messages "#general" --limit 20
-
-# Get full thread
-slack-cli thread "#dev-team" 1234567890.123456
+slack-cli react "#general" 1234.5678 thumbsup     # Add
+slack-cli unreact "#general" 1234.5678 thumbsup   # Remove
+slack-cli reactions "#general" 1234.5678          # List
 ```
 
-### Channel Management
+### Pins & Bookmarks
 ```bash
-# List channel members
-slack-cli members "#dev-team"
+slack-cli pin "#general" 1234.5678                # Pin
+slack-cli unpin "#general" 1234.5678              # Unpin
+slack-cli pins "#general"                         # List pins
 
-# JSON output
-slack-cli channels "general" --json | jq
+slack-cli bookmark "#general" "Wiki" "https://..."  # Add bookmark
+slack-cli bookmarks "#general"                      # List bookmarks
+```
+
+### Search & Query
+```bash
+slack-cli users "john" --limit 10                 # Search users
+slack-cli channels "dev"                          # Search channels
+slack-cli members "#dev-team"                     # List members
+slack-cli emoji --query "party"                   # Search emoji
 ```
 
 ### Cache & Config
 ```bash
-# Check cache status
-slack-cli cache stats
-
-# Refresh cache
-slack-cli cache refresh           # all
-slack-cli cache refresh users     # users only
-slack-cli cache refresh channels  # channels only
-
-# Config management
-slack-cli config show            # show config (masked tokens)
-slack-cli config path            # config file path
-slack-cli config edit            # edit with default editor
+slack-cli cache stats                             # Check status
+slack-cli cache refresh                           # Refresh
+slack-cli config show                             # Show config
 ```
-
-**Important Notes**:
-- Stale cache (>24h): Search returns stale data. Run `slack-cli cache refresh` to update
-- `search` command: Not cached, queries API directly. Requires user token + `search:read` scope
-- Channel formats: `#channel-name`, `@username`, or IDs (`C123...`, `U456...`). Prefix optional for IDs
 
 ---
 
-## 📦 Installation
+## Installation
 
-### Method 1: Prebuilt Binary (Recommended) ⭐
-
-**Automated install**:
+### Automated Install (Recommended)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-**Manual install**:
-1. Download binary from [Releases](https://github.com/junyeong-ai/slack-cli/releases)
-2. Extract: `tar -xzf slack-*.tar.gz`
-3. Move to PATH: `mv slack-cli ~/.local/bin/`
-
-### Method 2: Cargo
-
+### Cargo
 ```bash
 cargo install slack-cli
 ```
 
-### Method 3: Build from Source
-
+### Build from Source
 ```bash
-git clone https://github.com/junyeong-ai/slack-cli
-cd slack-cli
-./scripts/install.sh
+git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
+cargo build --release
 ```
 
 **Requirements**: Rust 1.91.1+
 
-### 🤖 Claude Code Skill (Optional)
+---
 
-When running `./scripts/install.sh`, you can choose to install the Claude Code skill:
+## Slack Token Setup
 
-- **User-level** (recommended): Available in all projects
-- **Project-level**: Auto-distributed to team via git
-- **Skip**: Manual installation later
+### 1. Create App
+[api.slack.com/apps](https://api.slack.com/apps) → Create New App → From scratch
 
-The skill enables natural language Slack data queries in Claude Code.
+### 2. Add Permissions
+
+**User Token Scopes** (recommended):
+```
+channels:read  channels:history  groups:read  groups:history
+im:read  im:history  mpim:read  mpim:history
+users:read  users:read.email  chat:write  search:read
+reactions:read  reactions:write  pins:read  pins:write
+bookmarks:read  bookmarks:write  emoji:read
+```
+
+### 3. Install and Copy Token
+Install to Workspace → Copy `xoxp-...` token
+
+### 4. Configure CLI
+```bash
+slack-cli config init --user-token xoxp-your-token
+```
 
 ---
 
-## 🔑 Generate Slack Token
-
-### User Token (Recommended) ⭐
-
-1. Visit [api.slack.com/apps](https://api.slack.com/apps)
-2. "Create New App" → "From scratch"
-3. Add **User Token Scopes**:
-   ```
-   channels:read channels:history groups:read groups:history
-   im:read im:history mpim:read mpim:history
-   users:read users:read.email chat:write search:read
-   ```
-4. "Install to Workspace" → Copy token (starts with `xoxp-`)
-
-### Bot Token (Alternative)
-
-1. Same app creation as above
-2. Add **Bot Token Scopes**:
-   ```
-   channels:read channels:history groups:read groups:history
-   im:read im:history mpim:read mpim:history
-   users:read users:read.email chat:write
-   ```
-3. "Install to Workspace" → Copy token (starts with `xoxb-`)
-
-### Token Comparison
-
-| Feature | User Token ⭐ | Bot Token |
-|---------|--------------|-----------|
-| Channel Access | ✅ Automatic | ⚠️ Requires invitation |
-| Message Search | ✅ Available | ❌ Unavailable |
-| Sender | You | Bot account |
-
----
-
-## ⚙️ Configuration
+## Configuration
 
 ### Environment Variables
-
 ```bash
-export SLACK_BOT_TOKEN="xoxb-..."      # Bot token
-export SLACK_USER_TOKEN="xoxp-..."    # User token (recommended)
+export SLACK_USER_TOKEN="xoxp-..."
+export SLACK_BOT_TOKEN="xoxb-..."
 ```
 
 ### Config File
-
-**Location**:
-- macOS: `~/.config/slack-cli/config.toml`
-- Linux: `~/.config/slack-cli/config.toml`
-- Windows: `%APPDATA%\slack-cli\config.toml`
-
-**Default config** (generated by `slack-cli config init`):
+`~/.config/slack-cli/config.toml`:
 ```toml
-bot_token = "xoxb-..."
 user_token = "xoxp-..."
+bot_token = "xoxb-..."
 
 [cache]
 ttl_users_hours = 24
 ttl_channels_hours = 24
-data_path = "~/.config/slack-cli/cache"  # Same for all platforms
-
-[retry]
-max_attempts = 3
-initial_delay_ms = 1000
-max_delay_ms = 60000
-
-[connection]
-timeout_seconds = 30
-max_idle_per_host = 10
 ```
 
-### Config Priority
-
-```
-CLI flags > Environment variables > Config file > Defaults
-```
-
-**Example**:
-```bash
-# Override config file token
-slack-cli users "john" --token xoxp-temporary-token
-```
+**Priority**: CLI options > Environment variables > Config file
 
 ---
 
-## 🏗️ Core Architecture
+## Command Reference
 
-Fast local search with SQLite FTS5 (<10ms), 24-hour cache for users/channels, API rate limiting.
-For detailed architecture, see [CLAUDE.md](CLAUDE.md).
-
----
-
-## 🔧 Troubleshooting
-
-### Cache Not Refreshing
-
-```bash
-# Delete and recreate cache
-rm -rf ~/.config/slack-cli/cache
-
-# Run again
-slack-cli cache refresh
-```
-
-### "Unauthorized" Error
-
-**Checklist**:
-- [ ] Check token format (`xoxp-` or `xoxb-`)
-- [ ] Verify required scopes added
-- [ ] Confirm workspace reinstall
-
-**Test token**: Verify using Slack API `auth.test` endpoint
-
-### Message Search Not Working
-
-**Cause**: Missing user token or `search:read` scope
-
-**Solution**:
-1. Set `SLACK_USER_TOKEN` (`xoxp-`)
-2. Add `search:read` scope
-3. Reinstall to workspace
-
-### Debug Logging
-
-Use `RUST_LOG` environment variable for debug logging (e.g., `RUST_LOG=debug slack-cli users "john"`)
-
-### Inspect Cache Data
-
-```bash
-# Inspect cache directly with SQLite
-sqlite3 ~/.config/slack-cli/cache/slack.db
-```
-
----
-
-## 📚 Command Reference
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `users <query>` | Search users (name, email, display name) | `slack-cli users "john" --limit 5` |
-| `channels <query>` | Search channels (public/private/DM/group DM) | `slack-cli channels "dev" --limit 10` |
-| `send <channel> <text>` | Send message | `slack-cli send "#general" "Hello!"` |
-| `messages <channel>` | Get channel messages | `slack-cli messages "#general" --limit 20` |
-| `thread <channel> <ts>` | Get full thread | `slack-cli thread "#dev" 1234567890.123456` |
-| `members <channel>` | List channel members | `slack-cli members "#dev-team"` |
-| `search <query>` | Search messages (workspace-wide) | `slack-cli search "deadline" --channel "#dev"` |
-| `cache stats` | Show cache statistics (user/channel counts) | `slack-cli cache stats` |
-| `cache refresh` | Refresh cache (all/users/channels) | `slack-cli cache refresh users` |
-| `config init` | Initialize config | `slack-cli config init --bot-token xoxb-...` |
-| `config show` | Show config (masked tokens) | `slack-cli config show` |
+| Command | Description |
+|---------|-------------|
+| `users <query>` | Search users |
+| `channels <query>` | Search channels |
+| `send <ch> <text>` | Send message |
+| `update <ch> <ts> <text>` | Update message |
+| `delete <ch> <ts>` | Delete message |
+| `messages <ch>` | List messages |
+| `thread <ch> <ts>` | List thread |
+| `members <ch>` | List members |
+| `search <query>` | Search messages |
+| `react <ch> <ts> <emoji>` | Add reaction |
+| `unreact <ch> <ts> <emoji>` | Remove reaction |
+| `reactions <ch> <ts>` | List reactions |
+| `emoji` | List emoji |
+| `pin <ch> <ts>` | Pin message |
+| `unpin <ch> <ts>` | Unpin message |
+| `pins <ch>` | List pins |
+| `bookmark <ch> <title> <url>` | Add bookmark |
+| `unbookmark <ch> <id>` | Remove bookmark |
+| `bookmarks <ch>` | List bookmarks |
+| `cache stats/refresh` | Cache management |
+| `config init/show` | Config management |
 
 ### Common Options
-
-| Option | Description | Applies To |
-|--------|-------------|------------|
-| `--json` | JSON output format | All commands |
-| `--token <TOKEN>` | Override token temporarily | All commands |
-| `--limit <N>` | Limit results | users, channels, messages, thread, search |
-| `--thread <TS>` | Thread timestamp (for replies) | send |
-| `--channel <CH>` | Limit to specific channel | search |
-
-**Notes**:
-- `search` command requires User token (`xoxp-`) + `search:read` scope
-- `cache refresh` supports `users` or `channels` argument for partial refresh (e.g., `slack-cli cache refresh users`)
-- Timestamp format: `1234567890.123456` (Slack message ts value)
+- `--json` — JSON output
+- `--limit <N>` — Limit results
+- `--thread <ts>` — Thread reply (send)
 
 ---
 
-## 🚀 Developer Guide
+## Troubleshooting
 
-**Architecture, debugging, contribution guide**: See [CLAUDE.md](CLAUDE.md)
+### Reset Cache
+```bash
+rm -rf ~/.config/slack-cli/cache && slack-cli cache refresh
+```
+
+### Permission Errors
+Check token scopes → Reinstall to Workspace
+
+### Debug
+```bash
+RUST_LOG=debug slack-cli users "john"
+```
 
 ---
 
-## 💬 Support
+## Support
 
-- **GitHub Issues**: [Report issues](https://github.com/junyeong-ai/slack-cli/issues)
-- **Developer Docs**: [CLAUDE.md](CLAUDE.md)
+- [GitHub Issues](https://github.com/junyeong-ai/slack-cli/issues)
+- [Developer Guide](CLAUDE.md)
 
 ---
 
 <div align="center">
 
-**🌐 [한국어](README.md)** | **English**
+**English** | **[한국어](README.md)**
 
-**Version 0.1.0** • Rust 2024 Edition
-
-Made with ❤️ for productivity
+Made with Rust
 
 </div>
