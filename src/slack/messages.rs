@@ -1,12 +1,14 @@
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::core::SlackCore;
 use crate::slack::SlackMessage;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct SendMessageResponse {
+#[derive(Debug, serde::Serialize, Deserialize)]
+pub struct MessageResponse {
+    pub channel: String,
     pub ts: String,
 }
 
@@ -24,11 +26,54 @@ impl SlackMessageClient {
         channel: &str,
         text: &str,
         thread_ts: Option<&str>,
-    ) -> Result<SendMessageResponse> {
-        let response_ts = self
+    ) -> Result<MessageResponse> {
+        let ts = self
             .post_message(channel, Some(text), None, thread_ts, false)
             .await?;
-        Ok(SendMessageResponse { ts: response_ts })
+        Ok(MessageResponse {
+            channel: channel.to_string(),
+            ts,
+        })
+    }
+
+    pub async fn update_message(
+        &self,
+        channel: &str,
+        ts: &str,
+        text: &str,
+    ) -> Result<MessageResponse> {
+        let params = json!({
+            "channel": channel,
+            "ts": ts,
+            "text": text,
+        });
+
+        let response = self
+            .core
+            .api_call("chat.update", params, None, false)
+            .await?;
+
+        Ok(MessageResponse {
+            channel: response["channel"].as_str().unwrap_or(channel).to_string(),
+            ts: response["ts"].as_str().unwrap_or(ts).to_string(),
+        })
+    }
+
+    pub async fn delete_message(&self, channel: &str, ts: &str) -> Result<MessageResponse> {
+        let params = json!({
+            "channel": channel,
+            "ts": ts,
+        });
+
+        let response = self
+            .core
+            .api_call("chat.delete", params, None, false)
+            .await?;
+
+        Ok(MessageResponse {
+            channel: response["channel"].as_str().unwrap_or(channel).to_string(),
+            ts: response["ts"].as_str().unwrap_or(ts).to_string(),
+        })
     }
 
     pub async fn get_thread_messages(
