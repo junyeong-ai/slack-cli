@@ -17,16 +17,29 @@ impl SqliteCache {
     pub async fn new(path: impl AsRef<Path>) -> CacheResult<Self> {
         let path = path.as_ref();
 
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
+        // Ensure parent directory exists (skip for in-memory databases)
+        let is_memory = path == Path::new(":memory:");
+        if !is_memory && let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            // Enable WAL mode for better concurrency
+        let instance_id = uuid::Uuid::new_v4().to_string();
+
+        // For in-memory databases with connection pooling, use shared cache mode
+        // with a unique name so all connections in the pool share the same database instance,
+        // but different SqliteCache instances get separate databases
+        let manager = if is_memory {
+            SqliteConnectionManager::file(format!("file:{}?mode=memory&cache=shared", instance_id))
+        } else {
+            SqliteConnectionManager::file(path)
+        }
+        .with_init(move |conn| {
+            // Enable WAL mode for better concurrency (skip for in-memory)
+            if !is_memory {
+                conn.execute_batch("PRAGMA journal_mode = WAL;")?;
+            }
             conn.execute_batch(
-                "PRAGMA journal_mode = WAL;
-                     PRAGMA synchronous = NORMAL;
+                "PRAGMA synchronous = NORMAL;
                      PRAGMA foreign_keys = ON;
                      PRAGMA busy_timeout = 5000;
                      PRAGMA cache_size = -64000;", // 64MB cache
@@ -39,8 +52,6 @@ impl SqliteCache {
             .min_idle(Some(2))
             .connection_timeout(Duration::from_secs(5))
             .build(manager)?;
-
-        let instance_id = uuid::Uuid::new_v4().to_string();
 
         let cache = Self { pool, instance_id };
 
