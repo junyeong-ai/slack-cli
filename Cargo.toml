@@ -21,33 +21,33 @@ name = "slack-cli"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+clap = { version = "4.5.53", features = ["derive", "cargo", "env"] }
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "sync", "time"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
 serde_urlencoded = "0.7"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"], default-features = false }
+reqwest = { version = "0.12.24", features = ["json", "rustls-tls", "multipart"], default-features = false }
 rusqlite = { version = "0.37", features = ["bundled", "chrono", "serde_json"] }
-r2d2 = "0.8"
+r2d2 = "0.8.10"
 r2d2_sqlite = "0.31"
-anyhow = "1.0"
-thiserror = "2.0"
-governor = "0.10"
-chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0.100"
+thiserror = "2.0.17"
+governor = "0.10.2"
+chrono = { version = "0.4.42", features = ["serde"] }
 dotenvy = "0.15"
 dirs = "6.0"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { version = "1.19", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tokio = { version = "1.48", features = ["full", "test-util"] }
-wiremock = "0.6"
+wiremock = "0.6.5"
 pretty_assertions = "1.4"
-rstest = "0.23"
+rstest = "0.26"
 serial_test = "3.2"
-tempfile = "3.13"
+tempfile = "3.23"
 
 [profile.release]
 opt-level = 3
