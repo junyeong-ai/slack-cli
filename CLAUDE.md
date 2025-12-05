@@ -1,205 +1,143 @@
 # Slack CLI - AI Agent Developer Guide
 
-Essential knowledge for implementing features and debugging this Rust CLI tool.
+Rust CLI for Slack API. SQLite FTS5 cache, async/await, facade pattern.
 
 ---
 
-## Core Patterns
+## Architecture
 
-### Atomic Swap Pattern
-
-**Implementation**:
-```rust
-pub async fn save_users(&self, users: Vec<SlackUser>) -> CacheResult<()> {
-    self.with_lock("users_update", || {
-        let tx = conn.transaction()?;
-        tx.execute("CREATE TEMP TABLE temp_users (...)", [])?;
-        // Batch insert to temp
-        tx.execute("DELETE FROM users", [])?;
-        tx.execute("INSERT INTO users SELECT * FROM temp_users", [])?;
-        tx.execute("UPDATE metadata SET value = ? WHERE key = 'last_user_sync'", [now])?;
-        tx.commit()?;
-        Ok(())
-    }).await
-}
+```
+src/
+├── main.rs              # CLI entry, command dispatch
+├── cli.rs               # Clap command definitions
+├── config.rs            # TOML config, env vars
+├── format.rs            # Output formatting (table/JSON)
+├── slack/
+│   ├── core.rs          # HTTP client, rate limiting, retry
+│   ├── client.rs        # Facade: 7 specialized clients
+│   ├── api_config.rs    # API method configs (18 methods)
+│   ├── messages.rs      # send, update, delete, search
+│   ├── reactions.rs     # add, remove, get
+│   ├── pins.rs          # add, remove, list
+│   ├── bookmarks.rs     # add, remove, list
+│   ├── emoji.rs         # list, search
+│   ├── users.rs         # list (streaming pagination)
+│   └── channels.rs      # list (streaming pagination)
+└── cache/
+    ├── sqlite_cache.rs  # r2d2 pool, WAL mode
+    ├── schema.rs        # FTS5, generated columns
+    ├── locks.rs         # Distributed locking
+    ├── users.rs         # 2-phase search
+    └── channels.rs      # 2-phase search
 ```
 
-**Why**: Zero downtime, no partial reads, safe for concurrent CLI invocations.
-
-**Failure Handling**: Atomic per resource type. If refresh fails, old cache remains valid until TTL expires (24h). No partial updates.
-
 ---
 
-### Distributed Locking
+## Key Patterns
 
-**Mechanism**:
-- `locks` table: key, instance_id, acquired_at, expires_at
-- 3 retries + exponential backoff (500ms, 1s, 1s)
-- Stale lock cleanup (expires_at < now)
-- Lock timeout: 60 seconds
-
-**Why**: Multi-process safe for concurrent `slack cache refresh` invocations.
-
-**Pattern**:
+### API Call Flow
 ```rust
-self.with_lock("key", || {
-    // Critical section - auto-releases even on error
+// slack/core.rs - All API calls go through this
+SlackCore::api_call(method, params, files, prefer_user_token)
+  → rate_limiter.until_ready()
+  → get_api_config(method) // api_config.rs
+  → HTTP request (GET/POST JSON/POST Form)
+  → retry on 429 with Retry-After
+  → parse JSON, check "ok" field
+```
+
+### Adding New API Method
+1. `api_config.rs`: Add to `API_CONFIGS` map
+2. `slack/{module}.rs`: Add method to appropriate client
+3. `cli.rs`: Add Command variant
+4. `main.rs`: Add match arm
+5. `format.rs`: Add print function (if new type)
+
+### Cache Search (2-Phase)
+```rust
+// Phase 1: LIKE with priority (exact match = 0)
+SELECT data FROM users WHERE name LIKE ?
+// Phase 2: FTS5 only if Phase 1 empty
+SELECT data FROM users JOIN users_fts WHERE MATCH ?
+```
+
+### Distributed Locking
+```rust
+// cache/locks.rs - For concurrent cache refresh
+self.with_lock("users_update", || {
+    // Atomic swap via temp table
+    // Auto-releases on success or error
 }).await
 ```
 
 ---
 
-### 2-Phase Search Algorithm
-
-**Phase 1**: LIKE with priority (exact=0, name LIKE=1, email LIKE=2)
-**Phase 2**: FTS5 if Phase 1 empty (handles typos/fuzzy)
-
-**Why**: Avoids FTS5 overhead for simple exact/substring matches.
-
----
+## Critical Implementation Details
 
 ### FTS5 Query Sanitization
-
 ```rust
-pub(super) fn process_fts_query(&self, query: &str) -> String {
-    let cleaned = query.trim()
-        .replace("\"", "\"\"")  // Escape quotes
-        .replace("*", "")        // Remove wildcards
-        .replace("%", "")        // Remove SQL wildcards
-        .trim()
-        .to_string();
-
-    if cleaned.is_empty() { return String::new(); }
-    format!("\"{}\"", cleaned)  // Wrap in quotes for phrase search
-}
+// cache/helpers.rs - MUST call before FTS5 MATCH
+process_fts_query(query) → "\"escaped query\""
+// Empty result → skip FTS5, use LIKE fallback
 ```
 
-**CRITICAL**: Empty FTS5 query → skip FTS5, use LIKE fallback. Otherwise syntax errors.
-
-**Usage**:
+### Schema Version
 ```rust
-let fts_query = self.process_fts_query(query);
-if fts_query.is_empty() {
-    // Fall back to LIKE
-}
+// cache/schema.rs
+const SCHEMA_VERSION: i32 = 2;
+// Bump triggers full table recreation
+```
+
+### Rate Limiting
+```rust
+// slack/core.rs - Global 20 req/min with jitter
+governor::RateLimiter + Jitter::up_to(100ms)
+```
+
+### Token Priority
+```rust
+// api_config.rs
+prefer_user_token: bool // true = user token for private channels
+// core.rs: actual = param || config.prefer_user_token
 ```
 
 ---
 
-## Development Tasks
+## Common Tasks
 
 ### Add Cache Field
+1. `slack/types.rs`: Add to struct
+2. `cache/schema.rs`: Add generated column + bump SCHEMA_VERSION
+3. Update FTS5 table if searchable
 
-1. **slack/types.rs**: Update struct
-   ```rust
-   pub struct SlackUser {
-       pub id: String,
-       pub name: String,
-       pub new_field: Option<String>,  // ADD
-   }
-   ```
-
-2. **cache/schema.rs**: Add generated column
-   ```rust
-   new_field TEXT GENERATED ALWAYS AS (json_extract(data, '$.new_field'))
-   ```
-
-3. **Bump SCHEMA_VERSION**: `const SCHEMA_VERSION: i32 = 3;`
-
-4. **Update FTS5** (if searchable):
-   ```rust
-   CREATE VIRTUAL TABLE users_fts USING fts5(name, email, new_field, ...);
-   ```
-
-**Note**: Schema version bump triggers full cache rebuild.
-
----
-
-### Schema Migrations
-
-**Policy**: On SCHEMA_VERSION bump, `initialize_schema()` drops and recreates all tables.
-
-**No migrations** - full rebuild from Slack API.
-
-**Reason**: Cache is ephemeral (24h TTL), simpler than maintaining migration scripts.
-
----
-
-### Add Slack API Method
-
-1. Add method to appropriate client (`slack/users.rs`, `slack/channels.rs`, etc.)
-2. Define rate limit in `slack/api_config.rs`
-3. Add response type to `slack/types.rs`
-
----
-
-## Common Issues
-
-### Cache Staleness
-
-**Symptom**: Outdated user/channel data in search results.
-
-**Check**:
+### Debug API Calls
 ```bash
-slack cache stats
+RUST_LOG=debug cargo run -- users "john"
 ```
 
-**Fix**:
+### Inspect Cache
 ```bash
-slack cache refresh
+sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
 ```
 
-**Note**: Cache has 24h TTL. After expiration, stale data returned until refresh.
+---
+
+## Constants
+
+| Location | Constant | Value |
+|----------|----------|-------|
+| `cache/locks.rs` | LOCK_TIMEOUT | 60s |
+| `cache/locks.rs` | MAX_RETRIES | 3 |
+| `cache/schema.rs` | SCHEMA_VERSION | 2 |
+| `slack/core.rs` | Rate limit | 20/min |
+| `config.rs` | Cache TTL | 24h |
 
 ---
 
-### Lock Contention
+## Test Commands
 
-**Symptom**: `LockAcquisitionFailed` after 3 retries
-
-**Cause**: Multiple `slack cache refresh` processes running concurrently
-
-**Solutions**:
-1. Wait for other process to finish
-2. Increase retries (edit `cache/locks.rs`):
-   ```rust
-   const MAX_RETRIES: u32 = 5;  // Increase from 3
-   ```
-
-**Lock cleanup**: Stale locks (>60s) auto-cleaned on next acquisition attempt.
-
----
-
-### FTS5 Syntax Errors
-
-**Symptom**: `sqlite3_prepare_v2` errors during search
-
-**Cause**: Special characters not sanitized before FTS5 MATCH query
-
-**Fix**: Always call `process_fts_query()` before FTS5:
-```rust
-let fts_query = self.process_fts_query(user_input);
-if fts_query.is_empty() {
-    // Use LIKE fallback
-} else {
-    // Safe to use FTS5 MATCH
-}
+```bash
+cargo test                    # 65 tests
+cargo clippy -- -D warnings   # Lint
+cargo fmt --check             # Format check
 ```
-
-**Critical chars**: `"`, `*`, `%`
-
----
-
-## Key Constants
-
-**Locations**:
-- `cache/locks.rs`: Lock timeout (60s), max retries (3), backoff timing
-- `cache/schema.rs`: Schema version (2)
-- `slack/users.rs`: API pagination limit (200)
-- `config.rs`: Cache TTL (24h), retry config, connection timeouts
-
-**To modify**: Edit constant in source, or add to `Config` struct + `config.toml` for user configuration.
-
----
-
-This guide contains only implementation-critical knowledge. For user documentation, see [README.md](README.md).
