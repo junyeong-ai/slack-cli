@@ -1,7 +1,7 @@
 use anyhow::Result;
 use governor::{
     Jitter, Quota, RateLimiter, clock::DefaultClock, middleware::NoOpMiddleware,
-    state::InMemoryState,
+    state::{InMemoryState, NotKeyed},
 };
 use reqwest::{Client as HttpClient, StatusCode};
 use serde_json::Value;
@@ -14,7 +14,6 @@ use crate::config::Config;
 use crate::slack::api_config::{ApiMethod, get_api_config};
 
 type SimpleRateLimiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
-use governor::state::NotKeyed;
 
 /// Core Slack API client with shared functionality
 pub struct SlackCore {
@@ -30,9 +29,8 @@ impl SlackCore {
             .build()
             .expect("Failed to create HTTP client");
 
-        // Create rate limiter with conservative limits
-        // Safe because 20 is non-zero
-        let quota = Quota::per_minute(NonZeroU32::new(20).expect("20 is non-zero"));
+        let rate_limit = config.connection.rate_limit_per_minute.max(1);
+        let quota = Quota::per_minute(NonZeroU32::new(rate_limit).expect("rate_limit >= 1"));
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
         Self {
@@ -215,15 +213,11 @@ impl SlackCore {
             let json_response: Value = serde_json::from_str(&response_text)
                 .map_err(|e| anyhow::anyhow!("Failed to parse JSON response: {}", e))?;
 
-            // Check for Slack API errors
-            if let Some(ok) = json_response.get("ok").and_then(|v| v.as_bool())
-                && !ok
-            {
+            if let Some(false) = json_response.get("ok").and_then(|v| v.as_bool()) {
                 let error = json_response
                     .get("error")
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown_error");
-
                 return Err(anyhow::anyhow!("Slack API error: {}", error));
             }
 

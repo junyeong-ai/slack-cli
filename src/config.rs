@@ -1,6 +1,20 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Expand tilde (~) to home directory in path
+fn expand_tilde(path: &Path) -> PathBuf {
+    if let Some(path_str) = path.to_str() {
+        if let Some(stripped) = path_str.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                return PathBuf::from(home).join(stripped);
+            }
+        } else if path_str == "~" && let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home);
+        }
+    }
+    path.to_path_buf()
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
@@ -53,6 +67,9 @@ pub struct ConnectionConfig {
 
     #[serde(default = "default_pool_idle_timeout_seconds")]
     pub pool_idle_timeout_seconds: u64,
+
+    #[serde(default = "default_rate_limit_per_minute")]
+    pub rate_limit_per_minute: u32,
 }
 
 fn default_ttl_hours() -> u64 {
@@ -78,6 +95,9 @@ fn default_max_idle_per_host() -> i32 {
 }
 fn default_pool_idle_timeout_seconds() -> u64 {
     90
+}
+fn default_rate_limit_per_minute() -> u32 {
+    20
 }
 
 impl Default for CacheConfig {
@@ -107,6 +127,7 @@ impl Default for ConnectionConfig {
             timeout_seconds: 30,
             max_idle_per_host: 10,
             pool_idle_timeout_seconds: 90,
+            rate_limit_per_minute: 20,
         }
     }
 }
@@ -199,6 +220,7 @@ impl Config {
             .cache
             .data_path
             .clone()
+            .map(|p| expand_tilde(&p))  // Expand ~ to home directory
             .or_else(Self::default_data_dir)
             .unwrap_or_else(|| {
                 #[cfg(target_os = "macos")]
@@ -266,14 +288,9 @@ impl Config {
             println!("  exponential_base: {}", masked.retry.exponential_base);
             println!("\nConnection:");
             println!("  timeout_seconds: {}", masked.connection.timeout_seconds);
-            println!(
-                "  max_idle_per_host: {}",
-                masked.connection.max_idle_per_host
-            );
-            println!(
-                "  pool_idle_timeout_seconds: {}",
-                masked.connection.pool_idle_timeout_seconds
-            );
+            println!("  max_idle_per_host: {}", masked.connection.max_idle_per_host);
+            println!("  pool_idle_timeout_seconds: {}", masked.connection.pool_idle_timeout_seconds);
+            println!("  rate_limit_per_minute: {}", masked.connection.rate_limit_per_minute);
         }
 
         Ok(())

@@ -192,12 +192,12 @@ pub fn print_pins(pins: &[PinnedMessage], as_json: bool) {
 
     for pin in pins {
         let text = pin.text.as_deref().unwrap_or("[no text]");
-        let preview = if text.len() > 60 {
-            format!("{}...", &text[..60])
+        let preview: String = text.chars().take(60).collect();
+        if text.chars().count() > 60 {
+            println!("[{}] {}...", pin.ts, preview);
         } else {
-            text.to_string()
-        };
-        println!("[{}] {}", pin.ts, preview);
+            println!("[{}] {}", pin.ts, preview);
+        }
     }
 }
 
