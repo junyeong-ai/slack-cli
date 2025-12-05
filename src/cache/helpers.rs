@@ -69,3 +69,93 @@ impl SqliteCache {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_cache() -> SqliteCache {
+        SqliteCache::new_sync(":memory:").unwrap()
+    }
+
+    mod process_fts_query_tests {
+        use super::*;
+
+        #[test]
+        fn quotes_simple_query() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query("test"), "\"test\"");
+        }
+
+        #[test]
+        fn trims_whitespace() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query("  test  "), "\"test\"");
+        }
+
+        #[test]
+        fn returns_empty_for_empty_input() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query(""), "");
+            assert_eq!(cache.process_fts_query("   "), "");
+        }
+
+        #[test]
+        fn returns_empty_for_wildcard_only() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query("*"), "");
+            assert_eq!(cache.process_fts_query("%"), "");
+        }
+
+        #[test]
+        fn strips_wildcards() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query("test*"), "\"test\"");
+            assert_eq!(cache.process_fts_query("*test*"), "\"test\"");
+            assert_eq!(cache.process_fts_query("te%st"), "\"test\"");
+        }
+
+        #[test]
+        fn escapes_quotes() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query("test\"query"), "\"test\"\"query\"");
+            assert_eq!(cache.process_fts_query("\"quoted\""), "\"\"\"quoted\"\"\"",);
+        }
+
+        #[test]
+        fn handles_special_chars() {
+            let cache = create_test_cache();
+            assert_eq!(
+                cache.process_fts_query("test@email.com"),
+                "\"test@email.com\""
+            );
+            assert_eq!(cache.process_fts_query("john.doe"), "\"john.doe\"");
+        }
+
+        #[test]
+        fn returns_empty_if_only_wildcards() {
+            let cache = create_test_cache();
+            assert_eq!(cache.process_fts_query("***"), "");
+            assert_eq!(cache.process_fts_query("%%%"), "");
+            assert_eq!(cache.process_fts_query("* % *"), "");
+        }
+    }
+
+    mod cache_status_tests {
+        use super::*;
+
+        #[test]
+        fn empty_cache_reports_empty() {
+            let cache = create_test_cache();
+            assert!(cache.is_cache_empty().unwrap());
+        }
+
+        #[test]
+        fn counts_are_zero_for_empty_cache() {
+            let cache = create_test_cache();
+            let (users, channels) = cache.get_counts().unwrap();
+            assert_eq!(users, 0);
+            assert_eq!(channels, 0);
+        }
+    }
+}

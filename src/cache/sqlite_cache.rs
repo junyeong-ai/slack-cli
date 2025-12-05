@@ -58,6 +58,37 @@ impl SqliteCache {
         schema::initialize_schema(&cache.pool).await?;
         Ok(cache)
     }
+
+    #[cfg(test)]
+    pub fn new_sync(path: impl AsRef<Path>) -> CacheResult<Self> {
+        let path = path.as_ref();
+        let is_memory = path == Path::new(":memory:");
+        let instance_id = uuid::Uuid::new_v4().to_string();
+
+        let manager = if is_memory {
+            SqliteConnectionManager::file(format!("file:{}?mode=memory&cache=shared", instance_id))
+        } else {
+            SqliteConnectionManager::file(path)
+        }
+        .with_init(move |conn| {
+            conn.execute_batch(
+                "PRAGMA synchronous = NORMAL;
+                 PRAGMA foreign_keys = ON;
+                 PRAGMA busy_timeout = 5000;",
+            )?;
+            Ok(())
+        });
+
+        let pool = Pool::builder()
+            .max_size(10)
+            .min_idle(Some(2))
+            .connection_timeout(Duration::from_secs(5))
+            .build(manager)?;
+
+        let cache = Self { pool, instance_id };
+        schema::initialize_schema_sync(&cache.pool)?;
+        Ok(cache)
+    }
 }
 
 #[cfg(test)]

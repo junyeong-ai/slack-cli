@@ -9,7 +9,9 @@ fn expand_tilde(path: &Path) -> PathBuf {
             if let Ok(home) = std::env::var("HOME") {
                 return PathBuf::from(home).join(stripped);
             }
-        } else if path_str == "~" && let Ok(home) = std::env::var("HOME") {
+        } else if path_str == "~"
+            && let Ok(home) = std::env::var("HOME")
+        {
             return PathBuf::from(home);
         }
     }
@@ -220,7 +222,7 @@ impl Config {
             .cache
             .data_path
             .clone()
-            .map(|p| expand_tilde(&p))  // Expand ~ to home directory
+            .map(|p| expand_tilde(&p)) // Expand ~ to home directory
             .or_else(Self::default_data_dir)
             .unwrap_or_else(|| {
                 #[cfg(target_os = "macos")]
@@ -288,9 +290,18 @@ impl Config {
             println!("  exponential_base: {}", masked.retry.exponential_base);
             println!("\nConnection:");
             println!("  timeout_seconds: {}", masked.connection.timeout_seconds);
-            println!("  max_idle_per_host: {}", masked.connection.max_idle_per_host);
-            println!("  pool_idle_timeout_seconds: {}", masked.connection.pool_idle_timeout_seconds);
-            println!("  rate_limit_per_minute: {}", masked.connection.rate_limit_per_minute);
+            println!(
+                "  max_idle_per_host: {}",
+                masked.connection.max_idle_per_host
+            );
+            println!(
+                "  pool_idle_timeout_seconds: {}",
+                masked.connection.pool_idle_timeout_seconds
+            );
+            println!(
+                "  rate_limit_per_minute: {}",
+                masked.connection.rate_limit_per_minute
+            );
         }
 
         Ok(())
@@ -337,5 +348,119 @@ fn mask_token(token: &str) -> String {
         let prefix = &token[..4];
         let suffix = &token[token.len() - 4..];
         format!("{}...{}", prefix, suffix)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    mod expand_tilde_tests {
+        use super::*;
+
+        #[test]
+        fn expands_tilde_prefix() {
+            let home = env::var("HOME").unwrap();
+            let path = Path::new("~/test/path");
+            let result = expand_tilde(path);
+            assert_eq!(result, PathBuf::from(home).join("test/path"));
+        }
+
+        #[test]
+        fn expands_tilde_only() {
+            let home = env::var("HOME").unwrap();
+            let path = Path::new("~");
+            let result = expand_tilde(path);
+            assert_eq!(result, PathBuf::from(home));
+        }
+
+        #[test]
+        fn preserves_absolute_path() {
+            let path = Path::new("/absolute/path");
+            let result = expand_tilde(path);
+            assert_eq!(result, PathBuf::from("/absolute/path"));
+        }
+
+        #[test]
+        fn preserves_relative_path() {
+            let path = Path::new("relative/path");
+            let result = expand_tilde(path);
+            assert_eq!(result, PathBuf::from("relative/path"));
+        }
+
+        #[test]
+        fn handles_tilde_in_middle() {
+            // Tilde in middle should NOT be expanded
+            let path = Path::new("/path/~user/test");
+            let result = expand_tilde(path);
+            assert_eq!(result, PathBuf::from("/path/~user/test"));
+        }
+
+        #[test]
+        fn handles_empty_path() {
+            let path = Path::new("");
+            let result = expand_tilde(path);
+            assert_eq!(result, PathBuf::from(""));
+        }
+    }
+
+    mod mask_token_tests {
+        use super::*;
+
+        #[test]
+        fn masks_short_token() {
+            assert_eq!(mask_token("abc"), "***");
+            assert_eq!(mask_token("12345678"), "********");
+        }
+
+        #[test]
+        fn masks_long_token_with_ellipsis() {
+            assert_eq!(mask_token("xoxb-123456789"), "xoxb...6789");
+            assert_eq!(mask_token("123456789"), "1234...6789");
+        }
+
+        #[test]
+        fn handles_empty_token() {
+            assert_eq!(mask_token(""), "");
+        }
+
+        #[test]
+        fn handles_exact_boundary() {
+            // 8 chars = fully masked
+            assert_eq!(mask_token("12345678"), "********");
+            // 9 chars = prefix...suffix
+            assert_eq!(mask_token("123456789"), "1234...6789");
+        }
+    }
+
+    mod config_defaults {
+        use super::*;
+
+        #[test]
+        fn cache_config_defaults() {
+            let config = CacheConfig::default();
+            assert_eq!(config.ttl_users_hours, 24);
+            assert_eq!(config.ttl_channels_hours, 24);
+            assert!(config.data_path.is_none());
+        }
+
+        #[test]
+        fn retry_config_defaults() {
+            let config = RetryConfig::default();
+            assert_eq!(config.max_attempts, 3);
+            assert_eq!(config.initial_delay_ms, 1000);
+            assert_eq!(config.max_delay_ms, 60000);
+            assert!((config.exponential_base - 2.0).abs() < f64::EPSILON);
+        }
+
+        #[test]
+        fn connection_config_defaults() {
+            let config = ConnectionConfig::default();
+            assert_eq!(config.timeout_seconds, 30);
+            assert_eq!(config.max_idle_per_host, 10);
+            assert_eq!(config.pool_idle_timeout_seconds, 90);
+            assert_eq!(config.rate_limit_per_minute, 20);
+        }
     }
 }

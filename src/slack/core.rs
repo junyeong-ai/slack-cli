@@ -1,6 +1,8 @@
 use anyhow::Result;
 use governor::{
-    Jitter, Quota, RateLimiter, clock::DefaultClock, middleware::NoOpMiddleware,
+    Jitter, Quota, RateLimiter,
+    clock::DefaultClock,
+    middleware::NoOpMiddleware,
     state::{InMemoryState, NotKeyed},
 };
 use reqwest::{Client as HttpClient, StatusCode};
