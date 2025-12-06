@@ -33,16 +33,26 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    #[command(about = "Search users by name or email")]
+    #[command(about = "Search users by name/email or get by IDs")]
     Users {
-        query: String,
+        #[arg(required_unless_present = "id")]
+        query: Option<String>,
+
+        #[arg(long, value_delimiter = ',', conflicts_with = "query")]
+        id: Option<Vec<String>>,
+
         #[arg(long, default_value = "10")]
         limit: usize,
     },
 
-    #[command(about = "Search channels by name")]
+    #[command(about = "Search channels by name or get by IDs")]
     Channels {
-        query: String,
+        #[arg(required_unless_present = "id")]
+        query: Option<String>,
+
+        #[arg(long, value_delimiter = ',', conflicts_with = "query")]
+        id: Option<Vec<String>>,
+
         #[arg(long, default_value = "10")]
         limit: usize,
     },

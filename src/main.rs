@@ -53,13 +53,21 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Command::Users { query, limit } => {
-            let users = cache.search_users(&query, limit, false)?;
+        Command::Users { query, id, limit } => {
+            let users = if let Some(ids) = id {
+                cache.get_users_by_ids(&ids)?
+            } else {
+                cache.search_users(query.as_deref().unwrap_or(""), limit, false)?
+            };
             format::print_users(&users, cli.json);
         }
 
-        Command::Channels { query, limit } => {
-            let channels = cache.search_channels(&query, limit)?;
+        Command::Channels { query, id, limit } => {
+            let channels = if let Some(ids) = id {
+                cache.get_channels_by_ids(&ids)?
+            } else {
+                cache.search_channels(query.as_deref().unwrap_or(""), limit)?
+            };
             format::print_channels(&channels, cli.json);
         }
 

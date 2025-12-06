@@ -97,6 +97,34 @@ impl SqliteCache {
         Ok(channels)
     }
 
+    pub fn get_channels_by_ids(&self, ids: &[String]) -> CacheResult<Vec<SlackChannel>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.pool.get()?;
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("SELECT data FROM channels WHERE id IN ({})", placeholders);
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+
+        let channels = stmt
+            .query_map(params.as_slice(), |row| {
+                let json: String = row.get(0)?;
+                serde_json::from_str(&json).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(channels)
+    }
+
     pub fn search_channels(&self, query: &str, limit: usize) -> CacheResult<Vec<SlackChannel>> {
         let conn = self.pool.get()?;
 
