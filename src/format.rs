@@ -1,79 +1,282 @@
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage};
+use serde_json::{json, Value};
 
-pub fn print_users(users: &[SlackUser], as_json: bool) {
-    if as_json {
-        match serde_json::to_string_pretty(users) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing users: {}", e),
+pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
+    if users.is_empty() {
+        if as_json {
+            println!("[]");
+        } else {
+            println!("No users found");
         }
         return;
     }
 
-    if users.is_empty() {
-        println!("No users found");
+    if as_json {
+        let filtered: Vec<Value> = users.iter().map(|u| filter_user_fields(u, fields)).collect();
+        println!("{}", serde_json::to_string_pretty(&filtered).unwrap_or_default());
         return;
     }
 
     for user in users {
-        let status = if user.deleted {
-            "deleted"
-        } else if user.is_bot {
-            "bot"
-        } else {
-            "active"
-        };
+        let mut parts: Vec<String> = Vec::new();
 
-        let email = user
-            .profile
-            .as_ref()
-            .and_then(|p| p.email.as_deref())
-            .unwrap_or("-");
+        for field in fields {
+            let value = get_user_field(user, field);
+            parts.push(value);
+        }
 
-        println!(
-            "{:<20} {:<30} {:<30} {}",
-            user.name,
-            user.real_name().unwrap_or("-"),
-            email,
-            status
-        );
+        println!("{}", parts.join("\t"));
     }
 }
 
-pub fn print_channels(channels: &[SlackChannel], as_json: bool) {
-    if as_json {
-        match serde_json::to_string_pretty(channels) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing channels: {}", e),
+fn filter_user_fields(user: &SlackUser, fields: &[String]) -> Value {
+    let mut obj = serde_json::Map::new();
+
+    for field in fields {
+        match field.as_str() {
+            "id" => {
+                obj.insert("id".to_string(), json!(user.id));
+            }
+            "name" => {
+                obj.insert("name".to_string(), json!(user.name));
+            }
+            "real_name" => {
+                let v = user.profile.as_ref().and_then(|p| p.real_name.as_ref());
+                obj.insert("real_name".to_string(), json!(v));
+            }
+            "display_name" => {
+                let v = user.profile.as_ref().and_then(|p| p.display_name.as_ref());
+                obj.insert("display_name".to_string(), json!(v));
+            }
+            "email" => {
+                let v = user.profile.as_ref().and_then(|p| p.email.as_ref());
+                obj.insert("email".to_string(), json!(v));
+            }
+            "status" => {
+                let text = user.profile.as_ref().and_then(|p| p.status_text.as_ref());
+                let emoji = user.profile.as_ref().and_then(|p| p.status_emoji.as_ref());
+                let status = match (text, emoji) {
+                    (Some(t), Some(e)) if !t.is_empty() => format!("{} {}", e, t),
+                    (Some(t), _) if !t.is_empty() => t.clone(),
+                    (_, Some(e)) if !e.is_empty() => e.clone(),
+                    _ => String::new(),
+                };
+                obj.insert("status".to_string(), json!(status));
+            }
+            "status_emoji" => {
+                let v = user.profile.as_ref().and_then(|p| p.status_emoji.as_ref());
+                obj.insert("status_emoji".to_string(), json!(v));
+            }
+            "avatar" => {
+                let v = user.profile.as_ref().and_then(|p| p.avatar.as_ref());
+                obj.insert("avatar".to_string(), json!(v));
+            }
+            "title" => {
+                let v = user.profile.as_ref().and_then(|p| p.title.as_ref());
+                obj.insert("title".to_string(), json!(v));
+            }
+            "timezone" => {
+                let v = user.profile.as_ref().and_then(|p| p.timezone.as_ref());
+                obj.insert("timezone".to_string(), json!(v));
+            }
+            "is_admin" => {
+                obj.insert("is_admin".to_string(), json!(user.is_admin));
+            }
+            "is_bot" => {
+                obj.insert("is_bot".to_string(), json!(user.is_bot));
+            }
+            "deleted" => {
+                obj.insert("deleted".to_string(), json!(user.deleted));
+            }
+            _ => {}
+        }
+    }
+
+    Value::Object(obj)
+}
+
+fn get_user_field(user: &SlackUser, field: &str) -> String {
+    match field {
+        "id" => user.id.clone(),
+        "name" => user.name.clone(),
+        "real_name" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.real_name.clone())
+            .unwrap_or_else(|| "-".to_string()),
+        "display_name" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.display_name.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "-".to_string()),
+        "email" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.email.clone())
+            .unwrap_or_else(|| "-".to_string()),
+        "status" => {
+            let text = user.profile.as_ref().and_then(|p| p.status_text.as_ref());
+            let emoji = user.profile.as_ref().and_then(|p| p.status_emoji.as_ref());
+            match (text, emoji) {
+                (Some(t), Some(e)) if !t.is_empty() => format!("{} {}", e, t),
+                (Some(t), _) if !t.is_empty() => t.clone(),
+                (_, Some(e)) if !e.is_empty() => e.clone(),
+                _ => "-".to_string(),
+            }
+        }
+        "status_emoji" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.status_emoji.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "-".to_string()),
+        "avatar" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.avatar.clone())
+            .unwrap_or_else(|| "-".to_string()),
+        "title" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.title.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "-".to_string()),
+        "timezone" => user
+            .profile
+            .as_ref()
+            .and_then(|p| p.timezone.clone())
+            .unwrap_or_else(|| "-".to_string()),
+        "is_admin" => if user.is_admin { "admin" } else { "-" }.to_string(),
+        "is_bot" => if user.is_bot { "bot" } else { "-" }.to_string(),
+        "deleted" => if user.deleted { "deleted" } else { "-" }.to_string(),
+        _ => "-".to_string(),
+    }
+}
+
+pub fn print_channels(channels: &[SlackChannel], fields: &[String], as_json: bool) {
+    if channels.is_empty() {
+        if as_json {
+            println!("[]");
+        } else {
+            println!("No channels found");
         }
         return;
     }
 
-    if channels.is_empty() {
-        println!("No channels found");
+    if as_json {
+        let filtered: Vec<Value> = channels
+            .iter()
+            .map(|c| filter_channel_fields(c, fields))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&filtered).unwrap_or_default());
         return;
     }
 
     for ch in channels {
-        let typ = if ch.is_im {
-            "DM"
-        } else if ch.is_mpim {
-            "Group"
-        } else if ch.is_private {
-            "Private"
-        } else {
-            "Public"
-        };
+        let mut parts: Vec<String> = Vec::new();
 
-        let topic = ch.topic.as_ref().map(|t| t.value.as_str()).unwrap_or("");
+        for field in fields {
+            let value = get_channel_field(ch, field);
+            parts.push(value);
+        }
 
-        println!(
-            "{:<20} {:<8} {:>4} members  {}",
-            ch.name,
-            typ,
-            ch.num_members.unwrap_or(0),
-            topic
-        );
+        println!("{}", parts.join("\t"));
+    }
+}
+
+fn filter_channel_fields(ch: &SlackChannel, fields: &[String]) -> Value {
+    let mut obj = serde_json::Map::new();
+
+    for field in fields {
+        match field.as_str() {
+            "id" => {
+                obj.insert("id".to_string(), json!(ch.id));
+            }
+            "name" => {
+                obj.insert("name".to_string(), json!(ch.name));
+            }
+            "type" => {
+                let typ = get_channel_type(ch);
+                obj.insert("type".to_string(), json!(typ));
+            }
+            "members" => {
+                obj.insert("members".to_string(), json!(ch.num_members));
+            }
+            "topic" => {
+                let v = ch.topic.as_ref().map(|t| &t.value);
+                obj.insert("topic".to_string(), json!(v));
+            }
+            "purpose" => {
+                let v = ch.purpose.as_ref().map(|p| &p.value);
+                obj.insert("purpose".to_string(), json!(v));
+            }
+            "created" => {
+                obj.insert("created".to_string(), json!(ch.created));
+            }
+            "creator" => {
+                obj.insert("creator".to_string(), json!(ch.creator));
+            }
+            "is_member" => {
+                obj.insert("is_member".to_string(), json!(ch.is_member));
+            }
+            "is_archived" => {
+                obj.insert("is_archived".to_string(), json!(ch.is_archived));
+            }
+            "is_private" => {
+                obj.insert("is_private".to_string(), json!(ch.is_private));
+            }
+            _ => {}
+        }
+    }
+
+    Value::Object(obj)
+}
+
+fn get_channel_type(ch: &SlackChannel) -> &'static str {
+    if ch.is_im {
+        "DM"
+    } else if ch.is_mpim {
+        "Group"
+    } else if ch.is_private {
+        "Private"
+    } else {
+        "Public"
+    }
+}
+
+fn get_channel_field(ch: &SlackChannel, field: &str) -> String {
+    match field {
+        "id" => ch.id.clone(),
+        "name" => ch.name.clone(),
+        "type" => get_channel_type(ch).to_string(),
+        "members" => ch.num_members.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string()),
+        "topic" => ch
+            .topic
+            .as_ref()
+            .map(|t| t.value.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "-".to_string()),
+        "purpose" => ch
+            .purpose
+            .as_ref()
+            .map(|p| p.value.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "-".to_string()),
+        "created" => ch
+            .created
+            .map(|ts| {
+                chrono::DateTime::from_timestamp(ts, 0)
+                    .map(|dt| dt.format("%Y-%m-%d").to_string())
+                    .unwrap_or_else(|| ts.to_string())
+            })
+            .unwrap_or_else(|| "-".to_string()),
+        "creator" => ch.creator.clone().unwrap_or_else(|| "-".to_string()),
+        "is_member" => if ch.is_member { "member" } else { "-" }.to_string(),
+        "is_archived" => if ch.is_archived { "archived" } else { "-" }.to_string(),
+        "is_private" => if ch.is_private { "private" } else { "public" }.to_string(),
+        _ => "-".to_string(),
     }
 }
 

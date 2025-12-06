@@ -53,22 +53,34 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Command::Users { query, id, limit } => {
+        Command::Users {
+            query,
+            id,
+            limit,
+            expand,
+        } => {
             let users = if let Some(ids) = id {
                 cache.get_users_by_ids(&ids)?
             } else {
                 cache.search_users(query.as_deref().unwrap_or(""), limit, false)?
             };
-            format::print_users(&users, cli.json);
+            let fields = merge_fields(&config.output.users_fields, expand.as_deref());
+            format::print_users(&users, &fields, cli.json);
         }
 
-        Command::Channels { query, id, limit } => {
+        Command::Channels {
+            query,
+            id,
+            limit,
+            expand,
+        } => {
             let channels = if let Some(ids) = id {
                 cache.get_channels_by_ids(&ids)?
             } else {
                 cache.search_channels(query.as_deref().unwrap_or(""), limit)?
             };
-            format::print_channels(&channels, cli.json);
+            let fields = merge_fields(&config.output.channels_fields, expand.as_deref());
+            format::print_channels(&channels, &fields, cli.json);
         }
 
         Command::Send {
@@ -319,6 +331,18 @@ fn handle_config_action(action: &ConfigAction, as_json: bool) -> Result<()> {
 
         ConfigAction::Edit => config::Config::edit_config(),
     }
+}
+
+fn merge_fields(defaults: &[String], expand: Option<&[String]>) -> Vec<String> {
+    let mut fields = defaults.to_vec();
+    if let Some(extra) = expand {
+        for f in extra {
+            if !fields.contains(f) {
+                fields.push(f.clone());
+            }
+        }
+    }
+    fields
 }
 
 fn resolve_channel(input: &str, cache: &cache::SqliteCache) -> Result<String> {

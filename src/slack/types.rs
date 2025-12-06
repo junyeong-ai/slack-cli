@@ -12,6 +12,12 @@ pub struct SlackUserProfile {
     pub status_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_emoji: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "image_72")]
+    pub avatar: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "tz")]
+    pub timezone: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,11 +33,6 @@ pub struct SlackUser {
     pub profile: Option<SlackUserProfile>,
 }
 
-impl SlackUser {
-    pub fn real_name(&self) -> Option<&str> {
-        self.profile.as_ref()?.real_name.as_deref()
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlackChannel {

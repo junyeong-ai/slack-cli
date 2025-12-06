@@ -27,6 +27,9 @@ pub struct Config {
     pub cache: CacheConfig,
 
     #[serde(default)]
+    pub output: OutputConfig,
+
+    #[serde(default)]
     pub retry: RetryConfig,
 
     #[serde(default)]
@@ -45,6 +48,38 @@ pub struct CacheConfig {
     pub refresh_threshold_percent: u64,
 
     pub data_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OutputConfig {
+    #[serde(default = "default_users_fields")]
+    pub users_fields: Vec<String>,
+
+    #[serde(default = "default_channels_fields")]
+    pub channels_fields: Vec<String>,
+}
+
+fn default_users_fields() -> Vec<String> {
+    vec!["id", "name", "real_name", "email"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
+fn default_channels_fields() -> Vec<String> {
+    vec!["id", "name", "type", "members"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
+impl Default for OutputConfig {
+    fn default() -> Self {
+        Self {
+            users_fields: default_users_fields(),
+            channels_fields: default_channels_fields(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -294,6 +329,9 @@ impl Config {
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| "-".to_string()))
             );
+            println!("\nOutput:");
+            println!("  users_fields: {:?}", masked.output.users_fields);
+            println!("  channels_fields: {:?}", masked.output.channels_fields);
             println!("\nRetry:");
             println!("  max_attempts: {}", masked.retry.max_attempts);
             println!("  initial_delay_ms: {}", masked.retry.initial_delay_ms);

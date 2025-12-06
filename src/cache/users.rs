@@ -275,6 +275,9 @@ mod tests {
                 email: email.map(std::string::ToString::to_string),
                 status_text: None,
                 status_emoji: None,
+                title: None,
+                avatar: None,
+                timezone: None,
             }),
         }
     }
