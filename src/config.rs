@@ -41,6 +41,9 @@ pub struct CacheConfig {
     #[serde(default = "default_ttl_hours")]
     pub ttl_channels_hours: u64,
 
+    #[serde(default = "default_refresh_threshold_percent")]
+    pub refresh_threshold_percent: u64,
+
     pub data_path: Option<PathBuf>,
 }
 
@@ -75,7 +78,10 @@ pub struct ConnectionConfig {
 }
 
 fn default_ttl_hours() -> u64 {
-    168 // 1 week
+    168
+}
+fn default_refresh_threshold_percent() -> u64 {
+    10
 }
 fn default_max_attempts() -> u32 {
     3
@@ -107,6 +113,7 @@ impl Default for CacheConfig {
         Self {
             ttl_users_hours: 168,
             ttl_channels_hours: 168,
+            refresh_threshold_percent: 10,
             data_path: None,
         }
     }
@@ -273,6 +280,10 @@ impl Config {
             println!("\nCache:");
             println!("  ttl_users_hours: {}", masked.cache.ttl_users_hours);
             println!("  ttl_channels_hours: {}", masked.cache.ttl_channels_hours);
+            println!(
+                "  refresh_threshold_percent: {}",
+                masked.cache.refresh_threshold_percent
+            );
             println!(
                 "  data_path: {}",
                 masked
@@ -442,6 +453,7 @@ mod tests {
             let config = CacheConfig::default();
             assert_eq!(config.ttl_users_hours, 168);
             assert_eq!(config.ttl_channels_hours, 168);
+            assert_eq!(config.refresh_threshold_percent, 10);
             assert!(config.data_path.is_none());
         }
 

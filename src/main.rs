@@ -6,7 +6,6 @@ mod slack;
 
 use anyhow::{Context, Result};
 use cache::CacheStatus;
-use cache::constants::CACHE_TTL_HOURS;
 use clap::Parser;
 use cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget};
 use std::io::{self, Write};
@@ -44,7 +43,9 @@ async fn main() -> Result<()> {
     let cache = Arc::new(cache::SqliteCache::new(db_path_str).await?);
     let slack = Arc::new(slack::SlackClient::new(config.clone()));
 
-    let cache_status = cache.get_cache_status(CACHE_TTL_HOURS)?;
+    let ttl = config.cache.ttl_users_hours;
+    let threshold = config.cache.refresh_threshold_percent;
+    let cache_status = cache.get_cache_status(ttl, threshold)?;
 
     if cache_status == CacheStatus::Empty {
         eprintln!("⚠ Cache is empty. Refreshing...");
@@ -271,7 +272,10 @@ async fn main() -> Result<()> {
         Command::Config { .. } => unreachable!(),
     }
 
-    if cache.should_trigger_background_refresh() {
+    let should_refresh = cache_status == CacheStatus::NeedsRefresh
+        && !cache.is_within_refresh_cooldown().unwrap_or(true);
+
+    if should_refresh {
         let cache_clone = cache.clone();
         let slack_clone = slack.clone();
 

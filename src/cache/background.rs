@@ -1,21 +1,8 @@
-use super::constants::CACHE_TTL_HOURS;
-use super::helpers::CacheStatus;
 use super::sqlite_cache::SqliteCache;
 use crate::slack::SlackClient;
 use tracing::{debug, warn};
 
 impl SqliteCache {
-    pub fn should_trigger_background_refresh(&self) -> bool {
-        if self.is_within_refresh_cooldown().unwrap_or(true) {
-            return false;
-        }
-
-        matches!(
-            self.get_cache_status(CACHE_TTL_HOURS),
-            Ok(CacheStatus::NeedsRefresh)
-        )
-    }
-
     pub async fn try_background_refresh(&self, slack: &SlackClient) {
         let _ = self.mark_refresh_attempted();
 

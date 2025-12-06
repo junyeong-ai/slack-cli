@@ -1,4 +1,4 @@
-use super::constants::{MIN_REFRESH_INTERVAL_SECS, REFRESH_THRESHOLD_PERCENT};
+use super::constants::MIN_REFRESH_INTERVAL_SECS;
 use super::error::{CacheError, CacheResult};
 use super::sqlite_cache::SqliteCache;
 use rusqlite::params;
@@ -46,13 +46,17 @@ impl SqliteCache {
         Ok(users == 0 && channels == 0)
     }
 
-    pub fn get_cache_status(&self, ttl_hours: u64) -> CacheResult<CacheStatus> {
+    pub fn get_cache_status(
+        &self,
+        ttl_hours: u64,
+        threshold_percent: u64,
+    ) -> CacheResult<CacheStatus> {
         if self.is_cache_empty()? {
             return Ok(CacheStatus::Empty);
         }
 
         let age_hours = self.get_cache_age_hours()?;
-        let threshold_hours = (ttl_hours * REFRESH_THRESHOLD_PERCENT / 100) as f64;
+        let threshold_hours = (ttl_hours * threshold_percent / 100) as f64;
 
         if age_hours >= threshold_hours {
             Ok(CacheStatus::NeedsRefresh)
@@ -213,7 +217,7 @@ mod tests {
         #[test]
         fn empty_cache_status() {
             let cache = create_test_cache();
-            assert_eq!(cache.get_cache_status(168).unwrap(), CacheStatus::Empty);
+            assert_eq!(cache.get_cache_status(168, 10).unwrap(), CacheStatus::Empty);
         }
 
         #[test]
