@@ -5,10 +5,13 @@ mod format;
 mod slack;
 
 use anyhow::{Context, Result};
+use cache::CacheStatus;
+use cache::constants::CACHE_TTL_HOURS;
 use clap::Parser;
 use cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget};
 use std::io::{self, Write};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,7 +44,12 @@ async fn main() -> Result<()> {
     let cache = Arc::new(cache::SqliteCache::new(db_path_str).await?);
     let slack = Arc::new(slack::SlackClient::new(config.clone()));
 
-    check_cache_status(&cache, &config)?;
+    let cache_status = cache.get_cache_status(CACHE_TTL_HOURS)?;
+
+    if cache_status == CacheStatus::Empty {
+        eprintln!("⚠ Cache is empty. Refreshing...");
+        refresh_cache(&slack, &cache, RefreshTarget::All, cli.json).await?;
+    }
 
     match cli.command {
         Command::Users { query, limit } => {
@@ -263,6 +271,17 @@ async fn main() -> Result<()> {
         Command::Config { .. } => unreachable!(),
     }
 
+    if cache.should_trigger_background_refresh() {
+        let cache_clone = cache.clone();
+        let slack_clone = slack.clone();
+
+        tokio::spawn(async move {
+            cache_clone.try_background_refresh(&slack_clone).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     Ok(())
 }
 
@@ -288,20 +307,6 @@ fn handle_config_action(action: &ConfigAction, as_json: bool) -> Result<()> {
 
         ConfigAction::Edit => config::Config::edit_config(),
     }
-}
-
-fn check_cache_status(cache: &cache::SqliteCache, config: &config::Config) -> Result<()> {
-    if cache.is_cache_empty()? {
-        eprintln!("⚠ Cache is empty. Run: slack-cli cache refresh");
-        return Ok(());
-    }
-
-    let ttl = config.cache.ttl_users_hours;
-    if cache.is_cache_stale(ttl)? {
-        eprintln!("⚠ Cache is outdated. Consider running: slack-cli cache refresh");
-    }
-
-    Ok(())
 }
 
 fn resolve_channel(input: &str, cache: &cache::SqliteCache) -> Result<String> {

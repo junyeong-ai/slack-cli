@@ -1,70 +1,77 @@
 use super::error::{CacheError, CacheResult};
+use super::sqlite_cache::SqliteCache;
+use crate::slack::types::SlackUser;
 use chrono::Utc;
 use rusqlite::params;
 
 #[allow(unused_imports)]
 use rusqlite::OptionalExtension;
 
-use crate::slack::types::SlackUser;
-
-use super::sqlite_cache::SqliteCache;
-
 impl SqliteCache {
-    // User operations
     pub async fn save_users(&self, users: Vec<SlackUser>) -> CacheResult<()> {
         if users.is_empty() {
             return Err(CacheError::InvalidInput("No users to save".to_string()));
         }
 
-        self.with_lock("users_update", || {
-            let conn = self.pool.get()?;
+        self.with_lock("users_update", || self.save_users_internal(users))
+            .await
+    }
 
-            // Use temporary table for atomic swap
-            conn.execute(
-                "CREATE TEMP TABLE IF NOT EXISTS users_new (
-                    id TEXT PRIMARY KEY,
-                    data TEXT NOT NULL,
-                    updated_at INTEGER DEFAULT (unixepoch())
-                )",
-                [],
-            )?;
+    pub(super) fn save_users_internal(&self, users: Vec<SlackUser>) -> CacheResult<()> {
+        if users.is_empty() {
+            return Err(CacheError::InvalidInput("No users to save".to_string()));
+        }
 
-            // Clear temp table
-            conn.execute("DELETE FROM users_new", [])?;
+        let conn = self.pool.get()?;
 
-            // Insert new data into temp table
-            let tx = conn.unchecked_transaction()?;
-            let mut successful_count = 0;
+        conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS users_new (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                updated_at INTEGER DEFAULT (unixepoch())
+            )",
+            [],
+        )?;
 
-            for user in users {
-                if let Ok(json) = serde_json::to_string(&user)
-                    && tx.execute(
+        conn.execute("DELETE FROM users_new", [])?;
+
+        let tx = conn.unchecked_transaction()?;
+        let mut successful_count = 0;
+
+        for user in users {
+            if let Ok(json) = serde_json::to_string(&user)
+                && tx
+                    .execute(
                         "INSERT INTO users_new (id, data) VALUES (?, ?)",
                         params![&user.id, json],
-                    ).is_ok() {
-                        successful_count += 1;
-                    }
+                    )
+                    .is_ok()
+            {
+                successful_count += 1;
             }
+        }
 
-            if successful_count == 0 {
-                return Err(CacheError::InvalidInput("Failed to save any users".to_string()));
-            }
+        if successful_count == 0 {
+            return Err(CacheError::InvalidInput(
+                "Failed to save any users".to_string(),
+            ));
+        }
 
-            // Atomic swap: delete old and insert from new
-            tx.execute("DELETE FROM users", [])?;
-            tx.execute("INSERT INTO users (id, data, updated_at) SELECT id, data, updated_at FROM users_new", [])?;
-            tx.execute("DELETE FROM users_new", [])?;
+        tx.execute("DELETE FROM users", [])?;
+        tx.execute(
+            "INSERT INTO users (id, data, updated_at) SELECT id, data, updated_at FROM users_new",
+            [],
+        )?;
+        tx.execute("DELETE FROM users_new", [])?;
 
-            // Update sync timestamp
-            let now = Utc::now().timestamp();
-            tx.execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_user_sync', ?)",
-                params![now.to_string()],
-            )?;
+        let now = Utc::now().timestamp();
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_user_sync', ?)",
+            params![now.to_string()],
+        )?;
 
-            tx.commit()?;
-            Ok(())
-        }).await
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn get_users(&self) -> CacheResult<Vec<SlackUser>> {
@@ -118,9 +125,7 @@ impl SqliteCache {
     ) -> CacheResult<Vec<SlackUser>> {
         let conn = self.pool.get()?;
 
-        // Handle empty or special queries
         if query.trim().is_empty() {
-            // Return all users for empty query
             let bot_filter = if include_bots {
                 ""
             } else {
@@ -148,7 +153,6 @@ impl SqliteCache {
             return Ok(users);
         }
 
-        // Phase 1: LIKE substring match with exact match priority
         let bot_filter = if include_bots {
             ""
         } else {
@@ -190,7 +194,6 @@ impl SqliteCache {
             return Ok(like_result);
         }
 
-        // Phase 2: FTS5 fuzzy match (only if no LIKE results)
         let processed_query = self.process_fts_query(query);
         if processed_query.is_empty() {
             return Ok(vec![]);
@@ -231,7 +234,6 @@ mod tests {
     use crate::slack::types::SlackUserProfile;
     use rstest::rstest;
 
-    // Test fixtures
     fn create_test_user(id: &str, name: &str, email: Option<&str>, is_bot: bool) -> SlackUser {
         SlackUser {
             id: id.to_string(),
@@ -275,7 +277,6 @@ mod tests {
         let result = cache.save_users(vec![user.clone()]).await;
         assert!(result.is_ok());
 
-        // Verify user was saved
         let retrieved = cache.get_user_by_id("U123").unwrap();
         assert!(retrieved.is_some());
         let retrieved_user = retrieved.unwrap();
@@ -295,7 +296,6 @@ mod tests {
         let result = cache.save_users(users).await;
         assert!(result.is_ok());
 
-        // Verify all users were saved
         let all_users = cache.get_users().unwrap();
         assert_eq!(all_users.len(), 3);
     }
@@ -304,14 +304,12 @@ mod tests {
     async fn test_save_users_replaces_existing() {
         let cache = setup_cache().await;
 
-        // Save initial users
         let users_v1 = vec![
             create_test_user("U123", "alice", Some("alice@example.com"), false),
             create_test_user("U456", "bob", Some("bob@example.com"), false),
         ];
         cache.save_users(users_v1).await.unwrap();
 
-        // Save new set of users (atomic swap)
         let users_v2 = vec![
             create_test_user(
                 "U123",
@@ -323,7 +321,6 @@ mod tests {
         ];
         cache.save_users(users_v2).await.unwrap();
 
-        // Verify old data replaced
         let all_users = cache.get_users().unwrap();
         assert_eq!(all_users.len(), 2);
 
@@ -331,7 +328,7 @@ mod tests {
         assert_eq!(alice.name, "alice_updated");
 
         let bob = cache.get_user_by_id("U456").unwrap();
-        assert!(bob.is_none()); // Bob should be removed
+        assert!(bob.is_none());
     }
 
     #[tokio::test]
@@ -392,7 +389,6 @@ mod tests {
         let bot = create_test_user("B123", "slackbot", None, true);
         cache.save_users(vec![bot]).await.unwrap();
 
-        // get_user_by_id should return bots (no filtering)
         let result = cache.get_user_by_id("B123").unwrap();
         assert!(result.is_some());
         assert!(result.unwrap().is_bot);
@@ -438,7 +434,6 @@ mod tests {
         ];
         cache.save_users(users).await.unwrap();
 
-        // Empty query should return all non-bot users
         let results = cache.search_users("", 10, false).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -466,7 +461,6 @@ mod tests {
         ];
         cache.save_users(users).await.unwrap();
 
-        // Search should not return bots by default
         let results = cache.search_users("test", 10, false).unwrap();
         assert_eq!(results.len(), 0);
     }
@@ -482,9 +476,7 @@ mod tests {
         )];
         cache.save_users(users).await.unwrap();
 
-        // Special characters are stripped by process_fts_query, so "alice*@#$" becomes "alice"
         let results = cache.search_users("alice*@#$", 10, false).unwrap();
-        // Should find alice since special chars are stripped
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "alice");
     }
@@ -498,7 +490,6 @@ mod tests {
         ];
         cache.save_users(users).await.unwrap();
 
-        // LIKE search should be case-insensitive
         let results = cache.search_users("alice", 10, false).unwrap();
         assert_eq!(results.len(), 1);
 
@@ -506,7 +497,6 @@ mod tests {
         assert_eq!(results.len(), 1);
     }
 
-    // New test: Exact match priority
     #[tokio::test]
     async fn test_search_users_exact_match_priority() {
         let cache = setup_cache().await;
@@ -518,12 +508,10 @@ mod tests {
         cache.save_users(users).await.unwrap();
 
         let results = cache.search_users("john", 10, false).unwrap();
-        // Exact match "john" should be first
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].name, "john");
     }
 
-    // New test: Include bots option
     #[tokio::test]
     async fn test_search_users_with_include_bots() {
         let cache = setup_cache().await;
@@ -533,14 +521,12 @@ mod tests {
         ];
         cache.save_users(users).await.unwrap();
 
-        // With include_bots=true, should return bots
         let results = cache.search_users("test", 10, true).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "testbot");
         assert!(results[0].is_bot);
     }
 
-    // New test: Substring before FTS5
     #[tokio::test]
     async fn test_search_users_substring_before_fuzzy() {
         let cache = setup_cache().await;
@@ -555,14 +541,11 @@ mod tests {
         ];
         cache.save_users(users).await.unwrap();
 
-        // "junyeong" should match "junyeong.eom" via LIKE, not FTS5
-        // so "seungryoung.lee" should not appear
         let results = cache.search_users("junyeong", 10, false).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "junyeong.eom");
     }
 
-    // New test: FTS5 fallback when no LIKE results
     #[tokio::test]
     async fn test_search_users_fallback_to_fts5() {
         let cache = setup_cache().await;
@@ -572,7 +555,6 @@ mod tests {
         ];
         cache.save_users(users).await.unwrap();
 
-        // "xyz" has no LIKE match, should fall back to FTS5 and return empty
         let results = cache.search_users("xyz", 10, false).unwrap();
         assert_eq!(results.len(), 0);
     }
@@ -581,7 +563,6 @@ mod tests {
     async fn test_concurrent_save_users() {
         let cache = setup_cache().await;
 
-        // Spawn multiple concurrent save operations
         let cache1 = cache.clone();
         let cache2 = cache.clone();
 
@@ -608,7 +589,6 @@ mod tests {
         let result1 = handle1.await.unwrap();
         let result2 = handle2.await.unwrap();
 
-        // Both should succeed (locking prevents conflicts)
         assert!(result1.is_ok() || result2.is_ok());
     }
 }

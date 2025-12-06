@@ -1,70 +1,77 @@
 use super::error::{CacheError, CacheResult};
+use super::sqlite_cache::SqliteCache;
+use crate::slack::types::SlackChannel;
 use chrono::Utc;
 use rusqlite::params;
 
 #[allow(unused_imports)]
 use rusqlite::OptionalExtension;
 
-use crate::slack::types::SlackChannel;
-
-use super::sqlite_cache::SqliteCache;
-
 impl SqliteCache {
-    // Channel operations
     pub async fn save_channels(&self, channels: Vec<SlackChannel>) -> CacheResult<()> {
         if channels.is_empty() {
             return Err(CacheError::InvalidInput("No channels to save".to_string()));
         }
 
-        self.with_lock("channels_update", || {
-            let conn = self.pool.get()?;
+        self.with_lock("channels_update", || self.save_channels_internal(channels))
+            .await
+    }
 
-            // Use temporary table for atomic swap
-            conn.execute(
-                "CREATE TEMP TABLE IF NOT EXISTS channels_new (
-                    id TEXT PRIMARY KEY,
-                    data TEXT NOT NULL,
-                    updated_at INTEGER DEFAULT (unixepoch())
-                )",
-                [],
-            )?;
+    pub(super) fn save_channels_internal(&self, channels: Vec<SlackChannel>) -> CacheResult<()> {
+        if channels.is_empty() {
+            return Err(CacheError::InvalidInput("No channels to save".to_string()));
+        }
 
-            // Clear temp table
-            conn.execute("DELETE FROM channels_new", [])?;
+        let conn = self.pool.get()?;
 
-            // Insert new data into temp table
-            let tx = conn.unchecked_transaction()?;
-            let mut successful_count = 0;
+        conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS channels_new (
+                id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                updated_at INTEGER DEFAULT (unixepoch())
+            )",
+            [],
+        )?;
 
-            for channel in channels {
-                if let Ok(json) = serde_json::to_string(&channel)
-                    && tx.execute(
+        conn.execute("DELETE FROM channels_new", [])?;
+
+        let tx = conn.unchecked_transaction()?;
+        let mut successful_count = 0;
+
+        for channel in channels {
+            if let Ok(json) = serde_json::to_string(&channel)
+                && tx
+                    .execute(
                         "INSERT INTO channels_new (id, data) VALUES (?, ?)",
                         params![&channel.id, json],
-                    ).is_ok() {
-                        successful_count += 1;
-                    }
+                    )
+                    .is_ok()
+            {
+                successful_count += 1;
             }
+        }
 
-            if successful_count == 0 {
-                return Err(CacheError::InvalidInput("Failed to save any channels".to_string()));
-            }
+        if successful_count == 0 {
+            return Err(CacheError::InvalidInput(
+                "Failed to save any channels".to_string(),
+            ));
+        }
 
-            // Atomic swap: delete old and insert from new
-            tx.execute("DELETE FROM channels", [])?;
-            tx.execute("INSERT INTO channels (id, data, updated_at) SELECT id, data, updated_at FROM channels_new", [])?;
-            tx.execute("DELETE FROM channels_new", [])?;
+        tx.execute("DELETE FROM channels", [])?;
+        tx.execute(
+            "INSERT INTO channels (id, data, updated_at) SELECT id, data, updated_at FROM channels_new",
+            [],
+        )?;
+        tx.execute("DELETE FROM channels_new", [])?;
 
-            // Update sync timestamp
-            let now = Utc::now().timestamp();
-            tx.execute(
-                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_channel_sync', ?)",
-                params![now.to_string()],
-            )?;
+        let now = Utc::now().timestamp();
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_channel_sync', ?)",
+            params![now.to_string()],
+        )?;
 
-            tx.commit()?;
-            Ok(())
-        }).await
+        tx.commit()?;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -93,9 +100,7 @@ impl SqliteCache {
     pub fn search_channels(&self, query: &str, limit: usize) -> CacheResult<Vec<SlackChannel>> {
         let conn = self.pool.get()?;
 
-        // Handle empty or special queries
         if query.trim().is_empty() {
-            // Return all non-archived channels for empty query
             let mut stmt = conn.prepare_cached(
                 "SELECT data FROM channels
                  WHERE (is_archived = 0 OR is_archived IS NULL)
@@ -119,7 +124,6 @@ impl SqliteCache {
             return Ok(channels);
         }
 
-        // Phase 1: LIKE substring match on channel name with exact match priority
         let like_pattern = format!("%{query}%");
         let like_result = conn
             .prepare_cached(
@@ -152,7 +156,6 @@ impl SqliteCache {
             return Ok(like_result);
         }
 
-        // Phase 2: FTS5 fuzzy match (name, topic, purpose) - only if no LIKE results
         let processed_query = self.process_fts_query(query);
         if processed_query.is_empty() {
             return Ok(vec![]);
@@ -191,7 +194,6 @@ mod tests {
     use super::*;
     use rstest::rstest;
 
-    // Test fixtures
     fn create_test_channel(
         id: &str,
         name: &str,
@@ -245,7 +247,6 @@ mod tests {
         let result = cache.save_channels(vec![channel.clone()]).await;
         assert!(result.is_ok());
 
-        // Verify channel was saved
         let channels = cache.get_channels().unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].id, "C123");
@@ -272,28 +273,24 @@ mod tests {
     async fn test_save_channels_replaces_existing() {
         let cache = setup_cache().await;
 
-        // Save initial channels
         let channels_v1 = vec![
             create_test_channel("C123", "general", false, false, false, false),
             create_test_channel("C456", "random", false, false, false, false),
         ];
         cache.save_channels(channels_v1).await.unwrap();
 
-        // Save new set of channels (atomic swap)
         let channels_v2 = vec![
             create_test_channel("C123", "general-updated", false, false, false, false),
             create_test_channel("C789", "announcements", false, false, false, false),
         ];
         cache.save_channels(channels_v2).await.unwrap();
 
-        // Verify old data replaced
         let all_channels = cache.get_channels().unwrap();
         assert_eq!(all_channels.len(), 2);
 
         let general = all_channels.iter().find(|c| c.id == "C123").unwrap();
         assert_eq!(general.name, "general-updated");
 
-        // C456 should be removed
         assert!(all_channels.iter().all(|c| c.id != "C456"));
     }
 
@@ -382,7 +379,6 @@ mod tests {
         ];
         cache.save_channels(channels).await.unwrap();
 
-        // Empty query should return all non-archived channels
         let results = cache.search_channels("", 10).unwrap();
         assert_eq!(results.len(), 2);
     }
@@ -410,7 +406,6 @@ mod tests {
         ];
         cache.save_channels(channels).await.unwrap();
 
-        // Search should not return archived channels
         let results = cache.search_channels("test", 10).unwrap();
         assert_eq!(results.len(), 0);
     }
@@ -436,7 +431,6 @@ mod tests {
         )];
         cache.save_channels(channels).await.unwrap();
 
-        // Special characters are stripped by process_fts_query
         let results = cache.search_channels("general*@#$", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "general");
@@ -451,7 +445,6 @@ mod tests {
         ];
         cache.save_channels(channels).await.unwrap();
 
-        // FTS5 search should be case-insensitive
         let results = cache.search_channels("general", 10).unwrap();
         assert_eq!(results.len(), 1);
 
@@ -483,9 +476,6 @@ mod tests {
         let result1 = handle1.await.unwrap();
         let result2 = handle2.await.unwrap();
 
-        // Due to distributed locking, only one should succeed at a time
-        // The second one will acquire lock after the first releases
-        // In case of high contention, one might fail after MAX_RETRIES
         let success_count = [&result1, &result2].iter().filter(|r| r.is_ok()).count();
 
         assert!(
@@ -495,7 +485,6 @@ mod tests {
             result2
         );
 
-        // Verify the database has some data (from successful operation)
         let all_channels = cache.get_channels().unwrap();
         assert!(
             !all_channels.is_empty(),
@@ -525,7 +514,7 @@ mod tests {
 
         let private = all_channels.iter().find(|c| c.id == "G456").unwrap();
         assert!(private.is_private);
-        assert!(private.is_channel); // Private channels are still channels
+        assert!(private.is_channel);
         assert!(!private.is_im);
         assert!(!private.is_mpim);
 
@@ -540,7 +529,6 @@ mod tests {
         assert!(!mpdm.is_im);
     }
 
-    // New test: Exact match priority for channels
     #[tokio::test]
     async fn test_search_channels_exact_match_priority() {
         let cache = setup_cache().await;
@@ -552,12 +540,10 @@ mod tests {
         cache.save_channels(channels).await.unwrap();
 
         let results = cache.search_channels("general", 10).unwrap();
-        // Exact match "general" should be first
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].name, "general");
     }
 
-    // New test: Channel name before topic/purpose
     #[tokio::test]
     async fn test_search_channels_name_before_topic() {
         let cache = setup_cache().await;
@@ -567,15 +553,12 @@ mod tests {
         ];
         cache.save_channels(channels).await.unwrap();
 
-        // "dev" should match channel names via LIKE, not fall through to FTS5
         let results = cache.search_channels("dev", 10).unwrap();
         assert_eq!(results.len(), 2);
-        // Results should be sorted by name after priority
         assert!(results.iter().any(|c| c.name == "dev-team"));
         assert!(results.iter().any(|c| c.name == "dev-backend"));
     }
 
-    // New test: FTS5 fallback for channels
     #[tokio::test]
     async fn test_search_channels_fallback_to_fts5() {
         let cache = setup_cache().await;
@@ -585,7 +568,6 @@ mod tests {
         ];
         cache.save_channels(channels).await.unwrap();
 
-        // "xyz" has no LIKE match in channel names, should fall back to FTS5 and return empty
         let results = cache.search_channels("xyz", 10).unwrap();
         assert_eq!(results.len(), 0);
     }

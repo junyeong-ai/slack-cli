@@ -75,7 +75,7 @@ pub struct ConnectionConfig {
 }
 
 fn default_ttl_hours() -> u64 {
-    24
+    168 // 1 week
 }
 fn default_max_attempts() -> u32 {
     3
@@ -105,8 +105,8 @@ fn default_rate_limit_per_minute() -> u32 {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            ttl_users_hours: 24,
-            ttl_channels_hours: 24,
+            ttl_users_hours: 168,
+            ttl_channels_hours: 168,
             data_path: None,
         }
     }
@@ -440,8 +440,8 @@ mod tests {
         #[test]
         fn cache_config_defaults() {
             let config = CacheConfig::default();
-            assert_eq!(config.ttl_users_hours, 24);
-            assert_eq!(config.ttl_channels_hours, 24);
+            assert_eq!(config.ttl_users_hours, 168);
+            assert_eq!(config.ttl_channels_hours, 168);
             assert!(config.data_path.is_none());
         }
 
