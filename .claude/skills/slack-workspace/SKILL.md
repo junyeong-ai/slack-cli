@@ -13,7 +13,9 @@ allowed-tools: Bash
 ```bash
 # Search & Query
 slack-cli users <query> [--limit N] [-j]
+slack-cli users --id <id1,id2,...> [-j]
 slack-cli channels <query> [--limit N] [-j]
+slack-cli channels --id <id1,id2,...> [-j]
 slack-cli messages <channel> [--limit N] [-j]
 slack-cli thread <channel> <ts> [--limit N] [-j]
 slack-cli search <query> [--channel <ch>] [--user <u>] [--limit N] [-j]

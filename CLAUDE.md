@@ -28,8 +28,10 @@ src/
     ├── schema.rs        # FTS5, generated columns
     ├── helpers.rs       # FTS5 query sanitization, cache status
     ├── locks.rs         # Distributed locking
-    ├── users.rs         # 2-phase search
-    └── channels.rs      # 2-phase search
+    ├── background.rs    # Background auto-refresh
+    ├── constants.rs     # Runtime constants
+    ├── users.rs         # 2-phase search, ID lookup
+    └── channels.rs      # 2-phase search, ID lookup
 ```
 
 ---
@@ -128,18 +130,20 @@ sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
 
 | Location | Constant | Value |
 |----------|----------|-------|
-| `cache/locks.rs` | LOCK_TIMEOUT | 60s |
-| `cache/locks.rs` | MAX_RETRIES | 3 |
+| `cache/constants.rs` | MIN_REFRESH_INTERVAL | 3600s (1h cooldown) |
+| `cache/constants.rs` | LOCK_TIMEOUT | 300s |
+| `cache/constants.rs` | STALE_LOCK_THRESHOLD | 600s |
 | `cache/schema.rs` | SCHEMA_VERSION | 2 |
 | `config.rs` | rate_limit_per_minute | 20/min (configurable) |
-| `config.rs` | Cache TTL | 24h |
+| `config.rs` | ttl_users/channels_hours | 168h (1 week) |
+| `config.rs` | refresh_threshold_percent | 10% |
 
 ---
 
 ## Test Commands
 
 ```bash
-cargo test                    # 88 tests
+cargo test                    # 93 tests
 cargo clippy -- -D warnings   # Lint
 cargo fmt --check             # Format check
 ```

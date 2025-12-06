@@ -66,7 +66,9 @@ slack-cli bookmarks "#general"                      # List bookmarks
 ### Search & Query
 ```bash
 slack-cli users "john" --limit 10                 # Search users
+slack-cli users --id U123,U456                    # Lookup by IDs
 slack-cli channels "dev"                          # Search channels
+slack-cli channels --id C123,C456                 # Lookup by IDs
 slack-cli members "#dev-team"                     # List members
 slack-cli emoji --query "party"                   # Search emoji
 ```
@@ -143,8 +145,9 @@ user_token = "xoxp-..."
 bot_token = "xoxb-..."
 
 [cache]
-ttl_users_hours = 24
-ttl_channels_hours = 24
+ttl_users_hours = 168          # 1 week
+ttl_channels_hours = 168
+refresh_threshold_percent = 10 # Background refresh at 10% of TTL
 
 [connection]
 rate_limit_per_minute = 20
@@ -160,7 +163,9 @@ timeout_seconds = 30
 | Command | Description |
 |---------|-------------|
 | `users <query>` | Search users |
+| `users --id <ids>` | Lookup by IDs (comma-separated) |
 | `channels <query>` | Search channels |
+| `channels --id <ids>` | Lookup by IDs (comma-separated) |
 | `send <ch> <text>` | Send message |
 | `update <ch> <ts> <text>` | Update message |
 | `delete <ch> <ts>` | Delete message |

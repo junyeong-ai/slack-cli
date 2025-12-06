@@ -66,7 +66,9 @@ slack-cli bookmarks "#general"                      # 북마크 목록
 ### 검색 & 조회
 ```bash
 slack-cli users "john" --limit 10               # 사용자 검색
+slack-cli users --id U123,U456                  # ID로 조회
 slack-cli channels "dev"                        # 채널 검색
+slack-cli channels --id C123,C456               # ID로 조회
 slack-cli members "#dev-team"                   # 멤버 목록
 slack-cli emoji --query "party"                 # 이모지 검색
 ```
@@ -143,8 +145,9 @@ user_token = "xoxp-..."
 bot_token = "xoxb-..."
 
 [cache]
-ttl_users_hours = 24
-ttl_channels_hours = 24
+ttl_users_hours = 168          # 1주일
+ttl_channels_hours = 168
+refresh_threshold_percent = 10 # TTL의 10% 시점에 백그라운드 갱신
 
 [connection]
 rate_limit_per_minute = 20
@@ -160,7 +163,9 @@ timeout_seconds = 30
 | 명령어 | 설명 |
 |--------|------|
 | `users <query>` | 사용자 검색 |
+| `users --id <ids>` | ID로 조회 (쉼표 구분) |
 | `channels <query>` | 채널 검색 |
+| `channels --id <ids>` | ID로 조회 (쉼표 구분) |
 | `send <ch> <text>` | 메시지 전송 |
 | `update <ch> <ts> <text>` | 메시지 수정 |
 | `delete <ch> <ts>` | 메시지 삭제 |
