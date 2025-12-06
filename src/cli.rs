@@ -44,8 +44,12 @@ pub enum Command {
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        #[arg(long, value_delimiter = ',', value_name = "FIELDS",
-              help = "Additional fields to include [id,name,real_name,display_name,email,status,status_emoji,avatar,title,timezone,is_admin,is_bot,deleted]")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "FIELDS",
+            help = "Additional fields to include [id,name,real_name,display_name,email,status,status_emoji,avatar,title,timezone,is_admin,is_bot,deleted]"
+        )]
         expand: Option<Vec<String>>,
     },
 
@@ -60,8 +64,12 @@ pub enum Command {
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        #[arg(long, value_delimiter = ',', value_name = "FIELDS",
-              help = "Additional fields to include [id,name,type,members,topic,purpose,created,creator,is_member,is_archived,is_private]")]
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "FIELDS",
+            help = "Additional fields to include [id,name,type,members,topic,purpose,created,creator,is_member,is_archived,is_private]"
+        )]
         expand: Option<Vec<String>>,
     },
 

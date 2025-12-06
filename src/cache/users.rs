@@ -106,7 +106,8 @@ impl SqliteCache {
         let sql = format!("SELECT data FROM users WHERE id IN ({})", placeholders);
 
         let mut stmt = conn.prepare(&sql)?;
-        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
 
         let users = stmt
             .query_map(params.as_slice(), |row| {

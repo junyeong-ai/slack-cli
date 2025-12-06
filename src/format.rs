@@ -1,6 +1,6 @@
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
     if users.is_empty() {
@@ -13,8 +13,14 @@ pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
     }
 
     if as_json {
-        let filtered: Vec<Value> = users.iter().map(|u| filter_user_fields(u, fields)).collect();
-        println!("{}", serde_json::to_string_pretty(&filtered).unwrap_or_default());
+        let filtered: Vec<Value> = users
+            .iter()
+            .map(|u| filter_user_fields(u, fields))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&filtered).unwrap_or_default()
+        );
         return;
     }
 
@@ -170,7 +176,10 @@ pub fn print_channels(channels: &[SlackChannel], fields: &[String], as_json: boo
             .iter()
             .map(|c| filter_channel_fields(c, fields))
             .collect();
-        println!("{}", serde_json::to_string_pretty(&filtered).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&filtered).unwrap_or_default()
+        );
         return;
     }
 
@@ -251,7 +260,10 @@ fn get_channel_field(ch: &SlackChannel, field: &str) -> String {
         "id" => ch.id.clone(),
         "name" => ch.name.clone(),
         "type" => get_channel_type(ch).to_string(),
-        "members" => ch.num_members.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string()),
+        "members" => ch
+            .num_members
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "-".to_string()),
         "topic" => ch
             .topic
             .as_ref()

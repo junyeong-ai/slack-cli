@@ -33,7 +33,6 @@ pub struct SlackUser {
     pub profile: Option<SlackUserProfile>,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlackChannel {
     pub id: String,
