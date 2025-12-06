@@ -8,63 +8,75 @@ description: |
 allowed-tools: Bash
 ---
 
-# slack-cli Commands
+# slack-cli
+
+**Use `--json` for parsing.** Combine with `jq` for extraction.
 
 ```bash
-# Search & Query
-slack-cli users <query> [--limit N] [-j]
-slack-cli users --id <id1,id2,...> [-j]
-slack-cli channels <query> [--limit N] [-j]
-slack-cli channels --id <id1,id2,...> [-j]
-slack-cli messages <channel> [--limit N] [-j]
-slack-cli thread <channel> <ts> [--limit N] [-j]
-slack-cli search <query> [--channel <ch>] [--user <u>] [--limit N] [-j]
-slack-cli members <channel> [-j]
-slack-cli emoji [--query <q>] [-j]
+# Get user ID
+slack-cli users "john" --json | jq -r '.[0].id'
+
+# Get channel ID and send message
+ch=$(slack-cli channels "general" --json | jq -r '.[0].id')
+slack-cli send "$ch" "Hello"
+
+# Send and capture timestamp for thread reply
+ts=$(slack-cli send "#general" "Parent" --json | jq -r '.ts')
+slack-cli send "#general" "Reply" --thread "$ts"
+```
+
+## Commands
+
+```bash
+# Users & Channels
+slack-cli users <query> [--id U1,U2] [--expand <fields>] [--limit N] --json
+slack-cli channels <query> [--id C1,C2] [--expand <fields>] [--limit N] --json
 
 # Messages
-slack-cli send <channel> <text> [--thread <ts>]
+slack-cli messages <channel> [--limit N] --json
+slack-cli thread <channel> <ts> --json
+slack-cli search <query> [--channel C] [--user U] --json
+slack-cli send <channel> <text> [--thread <ts>]    # returns {ts, channel}
 slack-cli update <channel> <ts> <text>
 slack-cli delete <channel> <ts>
 
-# Reactions
+# Reactions & Pins
 slack-cli react <channel> <ts> <emoji>
 slack-cli unreact <channel> <ts> <emoji>
-slack-cli reactions <channel> <ts> [-j]
-
-# Pins
-slack-cli pin <channel> <ts>
-slack-cli unpin <channel> <ts>
-slack-cli pins <channel> [-j]
+slack-cli reactions <channel> <ts> --json
+slack-cli pin/unpin <channel> <ts>
+slack-cli pins <channel> --json
 
 # Bookmarks
 slack-cli bookmark <channel> <title> <url> [--emoji <e>]
 slack-cli unbookmark <channel> <bookmark_id>
-slack-cli bookmarks <channel> [-j]
+slack-cli bookmarks <channel> --json
 
-# Cache & Config
-slack-cli cache refresh [users|channels]
-slack-cli cache stats
-slack-cli config show|init
+# Cache
+slack-cli cache refresh [users|channels|all]
+slack-cli cache stats --json
 ```
+
+## --expand Fields
+
+| Type | Fields |
+|------|--------|
+| users | `avatar`, `title`, `timezone`, `status`, `status_emoji`, `display_name`, `is_admin`, `is_bot`, `deleted` |
+| channels | `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private` |
 
 ## Channel Format
 
-Valid: `#general`, `general`, `C0123...`, `D0123...`, `G0123...`
+`#name`, `name`, `C0123...` (public), `D0123...` (DM), `G0123...` (group)
 
-## Slack mrkdwn Syntax
+## Slack mrkdwn (NOT Markdown)
 
-When sending messages, use Slack mrkdwn (not GitHub Markdown):
+| Element | Slack Syntax | Wrong |
+|---------|--------------|-------|
+| Bold | `*text*` | `**text**` |
+| Italic | `_text_` | `*text*` |
+| Link | `<url\|label>` | `[label](url)` |
+| User mention | `<@U123>` | `@user` |
+| Channel mention | `<#C123>` | `#channel` |
+| List item | `• item` | `- item` |
 
-| Element | Syntax |
-|---------|--------|
-| Bold | `*text*` |
-| Italic | `_text_` |
-| Strike | `~text~` |
-| Code | `` `code` `` |
-| Link | `<url\|label>` |
-| User | `<@U123>` |
-| Channel | `<#C123>` |
-| List | `• item` (bullet, not `-`) |
-
-**Critical**: `**bold**`, `[link](url)`, `- list` render literally in Slack.
+**Critical**: Markdown syntax renders literally in Slack.

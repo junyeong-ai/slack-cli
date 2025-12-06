@@ -67,8 +67,10 @@ slack-cli bookmarks "#general"                      # List bookmarks
 ```bash
 slack-cli users "john" --limit 10                 # Search users
 slack-cli users --id U123,U456                    # Lookup by IDs
+slack-cli users "john" --expand avatar,title      # Include extra fields
 slack-cli channels "dev"                          # Search channels
 slack-cli channels --id C123,C456                 # Lookup by IDs
+slack-cli channels "dev" --expand topic,purpose   # Include extra fields
 slack-cli members "#dev-team"                     # List members
 slack-cli emoji --query "party"                   # Search emoji
 ```
@@ -149,6 +151,10 @@ ttl_users_hours = 168          # 1 week
 ttl_channels_hours = 168
 refresh_threshold_percent = 10 # Background refresh at 10% of TTL
 
+[output]
+users_fields = ["id", "name", "real_name", "email"]
+channels_fields = ["id", "name", "type", "members"]
+
 [connection]
 rate_limit_per_minute = 20
 timeout_seconds = 30
@@ -190,6 +196,9 @@ timeout_seconds = 30
 - `--json` — JSON output
 - `--limit <N>` — Limit results
 - `--thread <ts>` — Thread reply (send)
+- `--expand <fields>` — Extra fields (users/channels)
+  - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
+  - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
 
 ---
 

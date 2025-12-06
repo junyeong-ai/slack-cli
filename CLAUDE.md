@@ -126,6 +126,28 @@ sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
 
 ---
 
+## Output Field Configuration
+
+```rust
+// config.rs - Configurable output fields
+[output]
+users_fields = ["id", "name", "real_name", "email"]     // default
+channels_fields = ["id", "name", "type", "members"]     // default
+
+// CLI: --expand adds fields to defaults
+slack-cli users "john" --expand avatar,title
+
+// format.rs - Dynamic field filtering for table/JSON output
+filter_user_fields(user, fields) → serde_json::Value
+get_user_field(user, field) → String
+```
+
+### Available Fields
+- **users**: `id`, `name`, `real_name`, `display_name`, `email`, `status`, `status_emoji`, `avatar`, `title`, `timezone`, `is_admin`, `is_bot`, `deleted`
+- **channels**: `id`, `name`, `type`, `members`, `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private`
+
+---
+
 ## Constants
 
 | Location | Constant | Value |
@@ -137,6 +159,8 @@ sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
 | `config.rs` | rate_limit_per_minute | 20/min (configurable) |
 | `config.rs` | ttl_users/channels_hours | 168h (1 week) |
 | `config.rs` | refresh_threshold_percent | 10% |
+| `config.rs` | users_fields | ["id", "name", "real_name", "email"] |
+| `config.rs` | channels_fields | ["id", "name", "type", "members"] |
 
 ---
 

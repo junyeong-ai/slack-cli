@@ -67,8 +67,10 @@ slack-cli bookmarks "#general"                      # 북마크 목록
 ```bash
 slack-cli users "john" --limit 10               # 사용자 검색
 slack-cli users --id U123,U456                  # ID로 조회
+slack-cli users "john" --expand avatar,title    # 추가 필드 포함
 slack-cli channels "dev"                        # 채널 검색
 slack-cli channels --id C123,C456               # ID로 조회
+slack-cli channels "dev" --expand topic,purpose # 추가 필드 포함
 slack-cli members "#dev-team"                   # 멤버 목록
 slack-cli emoji --query "party"                 # 이모지 검색
 ```
@@ -149,6 +151,10 @@ ttl_users_hours = 168          # 1주일
 ttl_channels_hours = 168
 refresh_threshold_percent = 10 # TTL의 10% 시점에 백그라운드 갱신
 
+[output]
+users_fields = ["id", "name", "real_name", "email"]
+channels_fields = ["id", "name", "type", "members"]
+
 [connection]
 rate_limit_per_minute = 20
 timeout_seconds = 30
@@ -190,6 +196,9 @@ timeout_seconds = 30
 - `--json` — JSON 출력
 - `--limit <N>` — 결과 제한
 - `--thread <ts>` — 스레드 답장 (send)
+- `--expand <fields>` — 추가 필드 (users/channels)
+  - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
+  - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
 
 ---
 
