@@ -307,12 +307,14 @@ pub fn print_messages(messages: &[SlackMessage], as_json: bool) {
     }
 
     for msg in messages {
-        println!(
-            "[{}] {}: {}",
-            msg.ts,
-            msg.user.as_deref().unwrap_or("system"),
-            msg.text
-        );
+        // Priority: user > username (bot display name) > bot_id > "system"
+        let author = msg
+            .user
+            .as_deref()
+            .or(msg.username.as_deref())
+            .or(msg.bot_id.as_deref())
+            .unwrap_or("system");
+        println!("[{}] {}: {}", msg.ts, author, msg.text);
 
         if let Some(count) = msg.reply_count {
             println!("  └─ {} replies", count);

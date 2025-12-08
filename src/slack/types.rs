@@ -90,6 +90,10 @@ pub struct SlackMessage {
     pub ts: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub bot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub username: Option<String>,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel: Option<MessageChannel>,
