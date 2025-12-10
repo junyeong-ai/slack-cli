@@ -316,9 +316,91 @@ pub fn print_messages(messages: &[SlackMessage], as_json: bool) {
             .unwrap_or("system");
         println!("[{}] {}: {}", msg.ts, author, msg.text);
 
+        // Render attachments (wee-slack style)
+        if let Some(attachments) = &msg.attachments {
+            for att in attachments {
+                render_attachment(att);
+            }
+        }
+
         if let Some(count) = msg.reply_count {
             println!("  └─ {} replies", count);
         }
+    }
+}
+
+fn render_attachment(att: &Value) {
+    let mut rendered = false;
+
+    if let Some(pretext) = att.get("pretext").and_then(|v| v.as_str())
+        && !pretext.is_empty()
+    {
+        println!("  │ {}", pretext);
+        rendered = true;
+    }
+
+    let author = att.get("author_name").and_then(|v| v.as_str());
+    let title = att.get("title").and_then(|v| v.as_str());
+    match (author, title) {
+        (Some(a), Some(t)) => {
+            println!("  │ {}: {}", a, t);
+            rendered = true;
+        }
+        (Some(a), None) => {
+            println!("  │ {}", a);
+            rendered = true;
+        }
+        (None, Some(t)) => {
+            println!("  │ {}", t);
+            rendered = true;
+        }
+        _ => {}
+    }
+
+    if let Some(text) = att.get("text").and_then(|v| v.as_str())
+        && !text.is_empty()
+    {
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                println!("  │ {}", trimmed);
+            }
+        }
+        rendered = true;
+    }
+
+    if let Some(fields) = att.get("fields").and_then(|v| v.as_array()) {
+        for field in fields {
+            let field_title = field.get("title").and_then(|v| v.as_str());
+            let field_value = field.get("value").and_then(|v| v.as_str());
+            match (field_title, field_value) {
+                (Some(t), Some(v)) => {
+                    let first_line = v.lines().next().unwrap_or(v);
+                    println!("  │ {}: {}", t, first_line);
+                    rendered = true;
+                }
+                (None, Some(v)) => {
+                    let first_line = v.lines().next().unwrap_or(v);
+                    println!("  │ {}", first_line);
+                    rendered = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(footer) = att.get("footer").and_then(|v| v.as_str())
+        && !footer.is_empty()
+    {
+        println!("  │ {}", footer);
+        rendered = true;
+    }
+
+    if !rendered
+        && let Some(fallback) = att.get("fallback").and_then(|v| v.as_str())
+        && !fallback.is_empty()
+    {
+        println!("  │ {}", fallback);
     }
 }
 
