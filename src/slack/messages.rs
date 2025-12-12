@@ -150,6 +150,8 @@ impl SlackMessageClient {
         channel: &str,
         limit: usize,
         cursor: Option<&str>,
+        oldest: Option<&str>,
+        latest: Option<&str>,
     ) -> Result<(Vec<SlackMessage>, Option<String>)> {
         let mut params = json!({
             "channel": channel,
@@ -158,6 +160,14 @@ impl SlackMessageClient {
 
         if let Some(cursor) = cursor {
             params["cursor"] = json!(cursor);
+        }
+
+        if let Some(oldest) = oldest {
+            params["oldest"] = json!(oldest);
+        }
+
+        if let Some(latest) = latest {
+            params["latest"] = json!(latest);
         }
 
         let mut response = self

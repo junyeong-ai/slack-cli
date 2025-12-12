@@ -6,6 +6,7 @@ mod slack;
 
 use anyhow::{Context, Result};
 use cache::CacheStatus;
+use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
 use cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget};
 use std::io::{self, Write};
@@ -127,11 +128,23 @@ async fn main() -> Result<()> {
             channel,
             limit,
             cursor,
+            oldest,
+            latest,
         } => {
             let id = resolve_channel(&channel, &cache)?;
+
+            let oldest_ts = oldest.map(|o| parse_timestamp(&o)).transpose()?;
+            let latest_ts = latest.map(|l| parse_timestamp(&l)).transpose()?;
+
             let (messages, _) = slack
                 .messages
-                .get_channel_messages(&id, limit, cursor.as_deref())
+                .get_channel_messages(
+                    &id,
+                    limit,
+                    cursor.as_deref(),
+                    oldest_ts.as_deref(),
+                    latest_ts.as_deref(),
+                )
                 .await?;
 
             format::print_messages(&messages, cli.json);
@@ -357,6 +370,30 @@ fn resolve_channel(input: &str, cache: &cache::SqliteCache) -> Result<String> {
         .first()
         .map(|c| c.id.clone())
         .context(format!("Channel not found: {}", input))
+}
+
+fn parse_timestamp(input: &str) -> Result<String> {
+    // Unix timestamp: use directly
+    if input.parse::<f64>().is_ok() {
+        return Ok(input.to_string());
+    }
+
+    // ISO date (YYYY-MM-DD)
+    if let Ok(date) = NaiveDate::parse_from_str(input, "%Y-%m-%d") {
+        let ts = date
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid time"))?;
+        let local_ts = Local
+            .from_local_datetime(&ts)
+            .single()
+            .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?;
+        return Ok(local_ts.timestamp().to_string());
+    }
+
+    anyhow::bail!(
+        "Invalid date format: {} (expected Unix timestamp or YYYY-MM-DD)",
+        input
+    )
 }
 
 fn init_config(bot_token: Option<String>, user_token: Option<String>, force: bool) -> Result<()> {

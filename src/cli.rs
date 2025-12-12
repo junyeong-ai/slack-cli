@@ -98,6 +98,10 @@ pub enum Command {
         limit: usize,
         #[arg(long)]
         cursor: Option<String>,
+        #[arg(long, help = "Start time (Unix timestamp or ISO date: 2025-12-11)")]
+        oldest: Option<String>,
+        #[arg(long, help = "End time (Unix timestamp or ISO date: 2025-12-11)")]
+        latest: Option<String>,
     },
 
     #[command(about = "Read thread messages")]
