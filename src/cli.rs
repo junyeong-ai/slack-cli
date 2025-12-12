@@ -102,6 +102,8 @@ pub enum Command {
         oldest: Option<String>,
         #[arg(long, help = "End time (Unix timestamp or ISO date: 2025-12-11)")]
         latest: Option<String>,
+        #[arg(long, help = "Exclude bot messages")]
+        exclude_bots: bool,
     },
 
     #[command(about = "Read thread messages")]

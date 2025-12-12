@@ -130,13 +130,14 @@ async fn main() -> Result<()> {
             cursor,
             oldest,
             latest,
+            exclude_bots,
         } => {
             let id = resolve_channel(&channel, &cache)?;
 
             let oldest_ts = oldest.map(|o| parse_timestamp(&o)).transpose()?;
             let latest_ts = latest.map(|l| parse_timestamp(&l)).transpose()?;
 
-            let (messages, _) = slack
+            let (mut messages, _) = slack
                 .messages
                 .get_channel_messages(
                     &id,
@@ -146,6 +147,10 @@ async fn main() -> Result<()> {
                     latest_ts.as_deref(),
                 )
                 .await?;
+
+            if exclude_bots {
+                messages.retain(|m| m.bot_id.is_none());
+            }
 
             format::print_messages(&messages, cli.json);
         }
