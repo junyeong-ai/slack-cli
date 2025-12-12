@@ -33,12 +33,15 @@ slack-cli users <query> [--id U1,U2] [--expand <fields>] [--limit N] --json
 slack-cli channels <query> [--id C1,C2] [--expand <fields>] [--limit N] --json
 
 # Messages
-slack-cli messages <channel> [--limit N] --json
+slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
 slack-cli thread <channel> <ts> --json
 slack-cli search <query> [--channel C] [--user U] --json
 slack-cli send <channel> <text> [--thread <ts>]    # returns {ts, channel}
 slack-cli update <channel> <ts> <text>
 slack-cli delete <channel> <ts>
+
+# DATE: Unix timestamp or YYYY-MM-DD
+# --expand for messages: date, user_name
 
 # Reactions & Pins
 slack-cli react <channel> <ts> <emoji>
@@ -63,6 +66,7 @@ slack-cli cache stats --json
 |------|--------|
 | users | `avatar`, `title`, `timezone`, `status`, `status_emoji`, `display_name`, `is_admin`, `is_bot`, `deleted` |
 | channels | `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private` |
+| messages | `date`, `user_name` |
 
 ## Channel Format
 

@@ -42,6 +42,9 @@ slack-cli send "#general" "Announcement"          # Send
 slack-cli update "#general" 1234.5678 "Edited"    # Update
 slack-cli delete "#general" 1234.5678             # Delete
 slack-cli messages "#general" --limit 20          # List
+slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31  # Date filter
+slack-cli messages "#general" --exclude-bots      # Exclude bot messages
+slack-cli messages "#general" --expand date,user_name  # Expand date/name
 slack-cli thread "#general" 1234.5678             # Thread
 slack-cli search "keyword" --channel "#dev"       # Search
 ```
@@ -196,9 +199,15 @@ timeout_seconds = 30
 - `--json` — JSON output
 - `--limit <N>` — Limit results
 - `--thread <ts>` — Thread reply (send)
-- `--expand <fields>` — Extra fields (users/channels)
+- `--expand <fields>` — Extra fields (users/channels/messages)
   - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
   - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
+  - messages: `date`, `user_name`
+
+### messages Options
+- `--oldest <date>` — Start time (Unix timestamp or YYYY-MM-DD)
+- `--latest <date>` — End time (Unix timestamp or YYYY-MM-DD)
+- `--exclude-bots` — Exclude bot messages
 
 ---
 

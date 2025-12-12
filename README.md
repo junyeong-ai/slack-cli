@@ -42,6 +42,9 @@ slack-cli send "#general" "공지사항입니다"      # 전송
 slack-cli update "#general" 1234.5678 "수정됨"  # 수정
 slack-cli delete "#general" 1234.5678           # 삭제
 slack-cli messages "#general" --limit 20        # 조회
+slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31  # 날짜 필터
+slack-cli messages "#general" --exclude-bots    # 봇 메시지 제외
+slack-cli messages "#general" --expand date,user_name  # 날짜/이름 확장
 slack-cli thread "#general" 1234.5678           # 스레드
 slack-cli search "키워드" --channel "#dev"      # 검색
 ```
@@ -196,9 +199,15 @@ timeout_seconds = 30
 - `--json` — JSON 출력
 - `--limit <N>` — 결과 제한
 - `--thread <ts>` — 스레드 답장 (send)
-- `--expand <fields>` — 추가 필드 (users/channels)
+- `--expand <fields>` — 추가 필드 (users/channels/messages)
   - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
   - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
+  - messages: `date`, `user_name`
+
+### messages 옵션
+- `--oldest <date>` — 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
+- `--latest <date>` — 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
+- `--exclude-bots` — 봇 메시지 제외
 
 ---
 
