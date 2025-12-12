@@ -125,7 +125,6 @@ impl SqliteCache {
         Ok(users)
     }
 
-    #[cfg(test)]
     pub fn get_user_by_id(&self, id: &str) -> CacheResult<Option<SlackUser>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare_cached("SELECT data FROM users WHERE id = ?")?;

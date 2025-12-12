@@ -131,6 +131,7 @@ async fn main() -> Result<()> {
             oldest,
             latest,
             exclude_bots,
+            expand,
         } => {
             let id = resolve_channel(&channel, &cache)?;
 
@@ -152,13 +153,14 @@ async fn main() -> Result<()> {
                 messages.retain(|m| m.bot_id.is_none());
             }
 
-            format::print_messages(&messages, cli.json);
+            let expand_fields = expand.unwrap_or_default();
+            format::print_messages(&messages, cli.json, &expand_fields, Some(&cache));
         }
 
         Command::Thread { channel, ts, limit } => {
             let id = resolve_channel(&channel, &cache)?;
             let messages = slack.messages.get_thread_messages(&id, &ts, limit).await?;
-            format::print_messages(&messages, cli.json);
+            format::print_messages(&messages, cli.json, &[], None);
         }
 
         Command::Members { channel } => {
@@ -178,7 +180,7 @@ async fn main() -> Result<()> {
                 .search_messages(&query, channel.as_deref(), user.as_deref(), limit)
                 .await?;
 
-            format::print_messages(&messages, cli.json);
+            format::print_messages(&messages, cli.json, &[], None);
         }
 
         Command::React { channel, ts, emoji } => {

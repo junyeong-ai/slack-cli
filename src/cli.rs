@@ -104,6 +104,13 @@ pub enum Command {
         latest: Option<String>,
         #[arg(long, help = "Exclude bot messages")]
         exclude_bots: bool,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "FIELDS",
+            help = "Additional fields [date,user_name]"
+        )]
+        expand: Option<Vec<String>>,
     },
 
     #[command(about = "Read thread messages")]

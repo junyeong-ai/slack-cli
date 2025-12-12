@@ -1,5 +1,7 @@
+use crate::cache::SqliteCache;
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage};
+use chrono::DateTime;
 use serde_json::{Value, json};
 
 pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
@@ -292,9 +294,45 @@ fn get_channel_field(ch: &SlackChannel, field: &str) -> String {
     }
 }
 
-pub fn print_messages(messages: &[SlackMessage], as_json: bool) {
+pub fn print_messages(
+    messages: &[SlackMessage],
+    as_json: bool,
+    expand: &[String],
+    cache: Option<&SqliteCache>,
+) {
+    let expand_date = expand.iter().any(|f| f == "date");
+    let expand_user_name = expand.iter().any(|f| f == "user_name");
+
     if as_json {
-        match serde_json::to_string_pretty(messages) {
+        // Fast path: no expand fields, direct serialization
+        if !expand_date && !expand_user_name {
+            match serde_json::to_string_pretty(messages) {
+                Ok(json) => println!("{}", json),
+                Err(e) => eprintln!("Error serializing messages: {}", e),
+            }
+            return;
+        }
+
+        // Slow path: expand fields require Value transformation
+        let expanded: Vec<Value> = messages
+            .iter()
+            .map(|msg| {
+                let mut obj = serde_json::to_value(msg).unwrap_or(json!({}));
+                if let Some(map) = obj.as_object_mut() {
+                    if expand_date && let Some(date_str) = format_timestamp(&msg.ts) {
+                        map.insert("date".to_string(), json!(date_str));
+                    }
+                    if expand_user_name
+                        && let Some(user_id) = &msg.user
+                        && let Some(name) = resolve_user_name(user_id, cache)
+                    {
+                        map.insert("user_name".to_string(), json!(name));
+                    }
+                }
+                obj
+            })
+            .collect();
+        match serde_json::to_string_pretty(&expanded) {
             Ok(json) => println!("{}", json),
             Err(e) => eprintln!("Error serializing messages: {}", e),
         }
@@ -308,13 +346,29 @@ pub fn print_messages(messages: &[SlackMessage], as_json: bool) {
 
     for msg in messages {
         // Priority: user > username (bot display name) > bot_id > "system"
-        let author = msg
+        let author_id = msg
             .user
             .as_deref()
             .or(msg.username.as_deref())
             .or(msg.bot_id.as_deref())
             .unwrap_or("system");
-        println!("[{}] {}: {}", msg.ts, author, msg.text);
+
+        let author = if expand_user_name {
+            msg.user
+                .as_ref()
+                .and_then(|id| resolve_user_name(id, cache))
+                .unwrap_or_else(|| author_id.to_string())
+        } else {
+            author_id.to_string()
+        };
+
+        let ts_display = if expand_date {
+            format_timestamp(&msg.ts).unwrap_or_else(|| msg.ts.clone())
+        } else {
+            msg.ts.clone()
+        };
+
+        println!("[{}] {}: {}", ts_display, author, msg.text);
 
         // Render attachments (wee-slack style)
         if let Some(attachments) = &msg.attachments {
@@ -327,6 +381,19 @@ pub fn print_messages(messages: &[SlackMessage], as_json: bool) {
             println!("  └─ {} replies", count);
         }
     }
+}
+
+fn format_timestamp(ts: &str) -> Option<String> {
+    let ts_secs: i64 = ts.split('.').next()?.parse().ok()?;
+    DateTime::from_timestamp(ts_secs, 0).map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+fn resolve_user_name(user_id: &str, cache: Option<&SqliteCache>) -> Option<String> {
+    cache?
+        .get_user_by_id(user_id)
+        .ok()
+        .flatten()
+        .and_then(|u| u.profile.and_then(|p| p.real_name))
 }
 
 fn render_attachment(att: &Value) {
