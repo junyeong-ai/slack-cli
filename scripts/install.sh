@@ -67,11 +67,53 @@ download_binary() {
 
 build_from_source() {
     echo "🔨 Building from source..." >&2
-    if ! cargo build --release 2>&1 | grep -E "Compiling|Finished|error" >&2; then
-        echo "❌ Build failed" >&2
+
+    # Check if Rust toolchain is available
+    if ! command -v cargo >/dev/null; then
+        echo "❌ Rust toolchain not found. Install from https://rustup.rs" >&2
         exit 1
     fi
-    echo "target/release/$BINARY_NAME"
+
+    local build_dir=""
+    local need_cleanup=false
+
+    # Check if we're in the project directory (has Cargo.toml with slack-cli)
+    if [ -f "Cargo.toml" ] && grep -q 'name = "slack-cli"' Cargo.toml 2>/dev/null; then
+        build_dir="."
+    else
+        # Clone the repository to a temporary directory
+        build_dir=$(mktemp -d)
+        need_cleanup=true
+        echo "📥 Cloning repository..." >&2
+        if ! git clone --depth 1 --quiet "https://github.com/$REPO.git" "$build_dir" >&2; then
+            echo "❌ Failed to clone repository" >&2
+            rm -rf "$build_dir"
+            exit 1
+        fi
+    fi
+
+    # Build the project
+    if ! (cd "$build_dir" && cargo build --release 2>&1 | grep -E "Compiling|Finished|error" >&2); then
+        echo "❌ Build failed" >&2
+        [ "$need_cleanup" = true ] && rm -rf "$build_dir"
+        exit 1
+    fi
+
+    local binary_path="$build_dir/target/release/$BINARY_NAME"
+    if [ ! -f "$binary_path" ]; then
+        echo "❌ Binary not found at $binary_path" >&2
+        [ "$need_cleanup" = true ] && rm -rf "$build_dir"
+        exit 1
+    fi
+
+    # If we cloned to temp dir, copy binary to current dir for install_binary
+    if [ "$need_cleanup" = true ]; then
+        cp "$binary_path" "./$BINARY_NAME"
+        rm -rf "$build_dir"
+        echo "./$BINARY_NAME"
+    else
+        echo "$binary_path"
+    fi
 }
 
 install_binary() {
