@@ -119,6 +119,9 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
+    permissions:
+      checks: write
+      contents: read
     steps:
       - uses: actions/checkout@v5
 
