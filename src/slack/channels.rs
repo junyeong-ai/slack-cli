@@ -16,8 +16,11 @@ impl SlackChannelClient {
         Self { core }
     }
 
-    /// Fetch all channels from the workspace
-    /// Uses user token when available to get private channels the user has access to
+    /// Fetch all channels from the workspace.
+    ///
+    /// Conversation types are driven by `cache.channel_types`. Prefers a user
+    /// token (when present) so private channels the caller belongs to are
+    /// included.
     pub async fn fetch_all_channels(&self) -> Result<Vec<SlackChannel>> {
         let mut all_channels = Vec::new();
 
@@ -39,10 +42,20 @@ impl SlackChannelClient {
         let mut cursor: Option<String> = None;
         let limit = SLACK_API_LIMIT;
 
+        let types = self
+            .core
+            .config
+            .cache
+            .channel_types
+            .iter()
+            .map(|t| t.as_api_str())
+            .collect::<Vec<_>>()
+            .join(",");
+
         loop {
             let mut params = json!({
                 "limit": limit,
-                "types": "public_channel,private_channel",
+                "types": types,
                 "exclude_archived": false,
             });
 
@@ -50,7 +63,6 @@ impl SlackChannelClient {
                 params["cursor"] = json!(cursor_val);
             }
 
-            // Use user token preference to get private channels
             let mut response = self
                 .core
                 .api_call("conversations.list", params, None, true)

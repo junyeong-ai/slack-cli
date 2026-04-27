@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::slack::ConversationType;
+
 /// Expand tilde (~) to home directory in path
 fn expand_tilde(path: &Path) -> PathBuf {
     if let Some(path_str) = path.to_str() {
@@ -48,6 +50,9 @@ pub struct CacheConfig {
     pub refresh_threshold_percent: u64,
 
     pub data_path: Option<PathBuf>,
+
+    #[serde(default = "default_channel_types")]
+    pub channel_types: Vec<ConversationType>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -115,6 +120,12 @@ pub struct ConnectionConfig {
 fn default_ttl_hours() -> u64 {
     168
 }
+fn default_channel_types() -> Vec<ConversationType> {
+    vec![
+        ConversationType::PublicChannel,
+        ConversationType::PrivateChannel,
+    ]
+}
 fn default_refresh_threshold_percent() -> u64 {
     10
 }
@@ -150,6 +161,7 @@ impl Default for CacheConfig {
             ttl_channels_hours: 168,
             refresh_threshold_percent: 10,
             data_path: None,
+            channel_types: default_channel_types(),
         }
     }
 }
@@ -219,6 +231,13 @@ impl Config {
                 Self::default_config_path()
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "~/.config/slack-cli/config.toml".to_string())
+            );
+        }
+
+        if config.cache.channel_types.is_empty() {
+            anyhow::bail!(
+                "cache.channel_types must not be empty. Allowed values: \
+                 public_channel, private_channel, mpim, im"
             );
         }
 
@@ -329,6 +348,13 @@ impl Config {
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| "-".to_string()))
             );
+            let channel_types: Vec<&str> = masked
+                .cache
+                .channel_types
+                .iter()
+                .map(|t| t.as_api_str())
+                .collect();
+            println!("  channel_types: {:?}", channel_types);
             println!("\nOutput:");
             println!("  users_fields: {:?}", masked.output.users_fields);
             println!("  channels_fields: {:?}", masked.output.channels_fields);
@@ -493,6 +519,63 @@ mod tests {
             assert_eq!(config.ttl_channels_hours, 168);
             assert_eq!(config.refresh_threshold_percent, 10);
             assert!(config.data_path.is_none());
+            assert_eq!(
+                config.channel_types,
+                vec![
+                    ConversationType::PublicChannel,
+                    ConversationType::PrivateChannel,
+                ]
+            );
+        }
+
+        #[test]
+        fn channel_type_deserializes_from_snake_case() {
+            #[derive(Deserialize)]
+            struct Wrapper {
+                types: Vec<ConversationType>,
+            }
+            let parsed: Wrapper = toml::from_str(
+                "types = [\"public_channel\", \"private_channel\", \"mpim\", \"im\"]",
+            )
+            .unwrap();
+            assert_eq!(
+                parsed.types,
+                vec![
+                    ConversationType::PublicChannel,
+                    ConversationType::PrivateChannel,
+                    ConversationType::Mpim,
+                    ConversationType::Im,
+                ]
+            );
+        }
+
+        #[test]
+        fn channel_type_rejects_invalid_value() {
+            #[derive(Deserialize)]
+            struct Wrapper {
+                #[allow(dead_code)]
+                types: Vec<ConversationType>,
+            }
+            let result: Result<Wrapper, _> = toml::from_str("types = [\"invalid\"]");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn load_rejects_empty_channel_types() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(
+                &path,
+                "user_token = \"xoxp-test\"\n[cache]\nchannel_types = []\n",
+            )
+            .unwrap();
+
+            let err = Config::load(Some(path), None, None, None).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("channel_types must not be empty"),
+                "unexpected error: {msg}"
+            );
         }
 
         #[test]

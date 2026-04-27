@@ -10,6 +10,7 @@ use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
 use cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,7 +27,14 @@ async fn main() -> Result<()> {
         .init();
 
     if let Command::Config { action } = &cli.command {
-        return handle_config_action(action, cli.json);
+        return handle_config_action(
+            action,
+            cli.json,
+            cli.config.clone(),
+            cli.token.clone(),
+            cli.user_token.clone(),
+            cli.data_dir.clone(),
+        );
     }
 
     dotenvy::dotenv().ok();
@@ -329,7 +337,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_config_action(action: &ConfigAction, as_json: bool) -> Result<()> {
+fn handle_config_action(
+    action: &ConfigAction,
+    as_json: bool,
+    config_path: Option<PathBuf>,
+    cli_token: Option<String>,
+    cli_user_token: Option<String>,
+    cli_data_dir: Option<PathBuf>,
+) -> Result<()> {
     match action {
         ConfigAction::Init {
             bot_token,
@@ -338,13 +353,15 @@ fn handle_config_action(action: &ConfigAction, as_json: bool) -> Result<()> {
         } => init_config(bot_token.clone(), user_token.clone(), *force),
 
         ConfigAction::Show => {
-            let config = config::Config::load(None, None, None, None)?;
+            let config =
+                config::Config::load(config_path, cli_token, cli_user_token, cli_data_dir)?;
             config.show_masked(as_json)
         }
 
         ConfigAction::Path => {
-            let path =
-                config::Config::default_config_path().context("Cannot determine config path")?;
+            let path = config_path
+                .or_else(config::Config::default_config_path)
+                .context("Cannot determine config path")?;
             println!("{}", path.display());
             Ok(())
         }

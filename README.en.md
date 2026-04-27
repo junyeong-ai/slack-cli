@@ -154,6 +154,10 @@ bot_token = "xoxb-..."
 ttl_users_hours = 168          # 1 week
 ttl_channels_hours = 168
 refresh_threshold_percent = 10 # Background refresh at 10% of TTL
+channel_types = ["public_channel", "private_channel"]
+                               # Conversation types to cache.
+                               # Trim to match your token scopes (e.g. ["public_channel"] if no groups:read).
+                               # Allowed: public_channel, private_channel, mpim, im
 
 [output]
 users_fields = ["id", "name", "real_name", "email"]

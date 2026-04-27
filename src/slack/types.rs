@@ -1,5 +1,25 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationType {
+    PublicChannel,
+    PrivateChannel,
+    Mpim,
+    Im,
+}
+
+impl ConversationType {
+    pub const fn as_api_str(self) -> &'static str {
+        match self {
+            Self::PublicChannel => "public_channel",
+            Self::PrivateChannel => "private_channel",
+            Self::Mpim => "mpim",
+            Self::Im => "im",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlackUserProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
