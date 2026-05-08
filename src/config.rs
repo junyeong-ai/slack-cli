@@ -102,8 +102,19 @@ pub struct RetryConfig {
     pub exponential_base: f64,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlackAppDistribution {
+    #[default]
+    CommercialExternal,
+    MarketplaceOrInternal,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConnectionConfig {
+    #[serde(default = "default_api_base_url")]
+    pub api_base_url: String,
+
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
 
@@ -115,6 +126,9 @@ pub struct ConnectionConfig {
 
     #[serde(default = "default_rate_limit_per_minute")]
     pub rate_limit_per_minute: u32,
+
+    #[serde(default)]
+    pub app_distribution: SlackAppDistribution,
 }
 
 fn default_ttl_hours() -> u64 {
@@ -144,6 +158,9 @@ fn default_exponential_base() -> f64 {
 fn default_timeout_seconds() -> u64 {
     30
 }
+fn default_api_base_url() -> String {
+    "https://slack.com/api".to_string()
+}
 fn default_max_idle_per_host() -> i32 {
     10
 }
@@ -152,6 +169,11 @@ fn default_pool_idle_timeout_seconds() -> u64 {
 }
 fn default_rate_limit_per_minute() -> u32 {
     20
+}
+
+fn normalize_token(token: String) -> Option<String> {
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_string())
 }
 
 impl Default for CacheConfig {
@@ -180,10 +202,12 @@ impl Default for RetryConfig {
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
+            api_base_url: default_api_base_url(),
             timeout_seconds: 30,
             max_idle_per_host: 10,
             pool_idle_timeout_seconds: 90,
             rate_limit_per_minute: 20,
+            app_distribution: SlackAppDistribution::default(),
         }
     }
 }
@@ -204,22 +228,35 @@ impl Config {
             config = toml::from_str(&content).context("Failed to parse config.toml")?;
         }
 
-        if let Ok(token) = std::env::var("SLACK_BOT_TOKEN") {
+        if let Ok(token) = std::env::var("SLACK_BOT_TOKEN")
+            && let Some(token) = normalize_token(token)
+        {
             config.bot_token = Some(token);
         }
-        if let Ok(token) = std::env::var("SLACK_USER_TOKEN") {
+        if let Ok(token) = std::env::var("SLACK_USER_TOKEN")
+            && let Some(token) = normalize_token(token)
+        {
             config.user_token = Some(token);
         }
 
-        if let Some(token) = cli_token {
+        if let Some(token) = cli_token.and_then(normalize_token) {
             config.bot_token = Some(token);
         }
-        if let Some(token) = cli_user_token {
+        if let Some(token) = cli_user_token.and_then(normalize_token) {
             config.user_token = Some(token);
         }
         if let Some(dir) = cli_data_dir {
             config.cache.data_path = Some(dir);
         }
+
+        config.bot_token = config.bot_token.take().and_then(normalize_token);
+        config.user_token = config.user_token.take().and_then(normalize_token);
+        config.connection.api_base_url = config
+            .connection
+            .api_base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
 
         if config.bot_token.is_none() && config.user_token.is_none() {
             anyhow::bail!(
@@ -234,14 +271,73 @@ impl Config {
             );
         }
 
-        if config.cache.channel_types.is_empty() {
+        config.validate()?;
+
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self
+            .bot_token
+            .as_deref()
+            .is_some_and(|token| token.trim().is_empty())
+            || self
+                .user_token
+                .as_deref()
+                .is_some_and(|token| token.trim().is_empty())
+        {
+            anyhow::bail!("Slack tokens must not be empty");
+        }
+
+        if self.cache.ttl_users_hours == 0 || self.cache.ttl_channels_hours == 0 {
+            anyhow::bail!("cache TTL values must be greater than zero");
+        }
+
+        if self.cache.refresh_threshold_percent == 0 || self.cache.refresh_threshold_percent > 100 {
+            anyhow::bail!("cache.refresh_threshold_percent must be between 1 and 100");
+        }
+
+        if self.cache.channel_types.is_empty() {
             anyhow::bail!(
                 "cache.channel_types must not be empty. Allowed values: \
                  public_channel, private_channel, mpim, im"
             );
         }
 
-        Ok(config)
+        if self.retry.max_attempts == 0 {
+            anyhow::bail!("retry.max_attempts must be greater than zero");
+        }
+
+        if self.retry.initial_delay_ms == 0 || self.retry.max_delay_ms == 0 {
+            anyhow::bail!("retry delay values must be greater than zero");
+        }
+
+        if self.retry.initial_delay_ms > self.retry.max_delay_ms {
+            anyhow::bail!(
+                "retry.initial_delay_ms must be less than or equal to retry.max_delay_ms"
+            );
+        }
+
+        if self.retry.exponential_base < 1.0 || !self.retry.exponential_base.is_finite() {
+            anyhow::bail!("retry.exponential_base must be finite and at least 1.0");
+        }
+
+        if self.connection.api_base_url.trim().is_empty() {
+            anyhow::bail!("connection.api_base_url must not be empty");
+        }
+
+        if self.connection.timeout_seconds == 0
+            || self.connection.pool_idle_timeout_seconds == 0
+            || self.connection.rate_limit_per_minute == 0
+        {
+            anyhow::bail!("connection timeout and rate limit values must be greater than zero");
+        }
+
+        if self.connection.max_idle_per_host < 0 {
+            anyhow::bail!("connection.max_idle_per_host must not be negative");
+        }
+
+        Ok(())
     }
 
     pub fn default_config_path() -> Option<PathBuf> {
@@ -364,6 +460,7 @@ impl Config {
             println!("  max_delay_ms: {}", masked.retry.max_delay_ms);
             println!("  exponential_base: {}", masked.retry.exponential_base);
             println!("\nConnection:");
+            println!("  api_base_url: {}", masked.connection.api_base_url);
             println!("  timeout_seconds: {}", masked.connection.timeout_seconds);
             println!(
                 "  max_idle_per_host: {}",
@@ -377,13 +474,22 @@ impl Config {
                 "  rate_limit_per_minute: {}",
                 masked.connection.rate_limit_per_minute
             );
+            println!(
+                "  app_distribution: {}",
+                match masked.connection.app_distribution {
+                    SlackAppDistribution::CommercialExternal => "commercial_external",
+                    SlackAppDistribution::MarketplaceOrInternal => "marketplace_or_internal",
+                }
+            );
         }
 
         Ok(())
     }
 
-    pub fn edit_config() -> Result<()> {
-        let path = Self::default_config_path().context("Cannot determine config path")?;
+    pub fn edit_config(config_path: Option<PathBuf>) -> Result<()> {
+        let path = config_path
+            .or_else(Self::default_config_path)
+            .context("Cannot determine config path")?;
 
         if !path.exists() {
             println!(
@@ -579,6 +685,89 @@ mod tests {
         }
 
         #[test]
+        fn load_rejects_whitespace_only_tokens() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(&path, "user_token = \"   \"\n").unwrap();
+
+            let err = Config::load(Some(path), None, None, None).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("No Slack token found"),
+                "unexpected error: {msg}"
+            );
+        }
+
+        #[test]
+        fn load_normalizes_tokens_and_api_base_url() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(
+                &path,
+                "user_token = \"  xoxp-test  \"\n[connection]\napi_base_url = \" https://slack.com/api/ \"\n",
+            )
+            .unwrap();
+
+            let config = Config::load(Some(path), None, None, None).unwrap();
+            assert_eq!(config.user_token.as_deref(), Some("xoxp-test"));
+            assert_eq!(config.connection.api_base_url, "https://slack.com/api");
+        }
+
+        #[test]
+        fn load_rejects_invalid_connection_values() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(
+                &path,
+                "user_token = \"xoxp-test\"\n[connection]\nmax_idle_per_host = -1\n",
+            )
+            .unwrap();
+
+            let err = Config::load(Some(path), None, None, None).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("max_idle_per_host must not be negative"),
+                "unexpected error: {msg}"
+            );
+        }
+
+        #[test]
+        fn load_rejects_invalid_retry_values() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(
+                &path,
+                "user_token = \"xoxp-test\"\n[retry]\nmax_attempts = 0\n",
+            )
+            .unwrap();
+
+            let err = Config::load(Some(path), None, None, None).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("retry.max_attempts must be greater than zero"),
+                "unexpected error: {msg}"
+            );
+        }
+
+        #[test]
+        fn load_rejects_invalid_cache_threshold() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(
+                &path,
+                "user_token = \"xoxp-test\"\n[cache]\nrefresh_threshold_percent = 101\n",
+            )
+            .unwrap();
+
+            let err = Config::load(Some(path), None, None, None).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("refresh_threshold_percent must be between 1 and 100"),
+                "unexpected error: {msg}"
+            );
+        }
+
+        #[test]
         fn retry_config_defaults() {
             let config = RetryConfig::default();
             assert_eq!(config.max_attempts, 3);
@@ -590,10 +779,31 @@ mod tests {
         #[test]
         fn connection_config_defaults() {
             let config = ConnectionConfig::default();
+            assert_eq!(config.api_base_url, "https://slack.com/api");
             assert_eq!(config.timeout_seconds, 30);
             assert_eq!(config.max_idle_per_host, 10);
             assert_eq!(config.pool_idle_timeout_seconds, 90);
             assert_eq!(config.rate_limit_per_minute, 20);
+            assert!(matches!(
+                config.app_distribution,
+                SlackAppDistribution::CommercialExternal
+            ));
+        }
+
+        #[test]
+        fn app_distribution_deserializes_from_snake_case() {
+            #[derive(Deserialize)]
+            struct Wrapper {
+                app_distribution: SlackAppDistribution,
+            }
+
+            let parsed: Wrapper =
+                toml::from_str("app_distribution = \"marketplace_or_internal\"").unwrap();
+
+            assert!(matches!(
+                parsed.app_distribution,
+                SlackAppDistribution::MarketplaceOrInternal
+            ));
         }
     }
 }

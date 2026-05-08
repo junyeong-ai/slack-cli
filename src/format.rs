@@ -1,6 +1,6 @@
 use crate::cache::SqliteCache;
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
-use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage};
+use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchResults};
 use chrono::DateTime;
 use serde_json::{Value, json};
 
@@ -584,5 +584,72 @@ pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) {
     for b in bookmarks {
         let emoji = b.emoji.as_deref().unwrap_or("");
         println!("{} {} - {} (id: {})", emoji, b.title, b.link, b.id);
+    }
+}
+
+pub fn print_search_results(results: &SearchResults, as_json: bool) {
+    if as_json {
+        match serde_json::to_string_pretty(results) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing search results: {}", e),
+        }
+        return;
+    }
+
+    if results.messages.is_empty()
+        && results.files.is_empty()
+        && results.channels.is_empty()
+        && results.users.is_empty()
+    {
+        println!("No search results found");
+        return;
+    }
+
+    for msg in &results.messages {
+        let author = msg
+            .author_name
+            .as_deref()
+            .or(msg.author_user_id.as_deref())
+            .unwrap_or("unknown");
+        let channel = msg.channel_name.as_deref().unwrap_or("-");
+        println!("[message] #{} {}: {}", channel, author, msg.text);
+        if let Some(permalink) = &msg.permalink {
+            println!("  {}", permalink);
+        }
+    }
+
+    for file in &results.files {
+        let title = file.title.as_deref().unwrap_or("[untitled file]");
+        let file_type = file.file_type.as_deref().unwrap_or("file");
+        println!("[file] {} ({})", title, file_type);
+        if let Some(permalink) = &file.permalink {
+            println!("  {}", permalink);
+        }
+    }
+
+    for channel in &results.channels {
+        let name = channel.name.as_deref().unwrap_or("[unnamed channel]");
+        println!("[channel] #{}", name);
+        if let Some(topic) = channel.topic.as_deref().filter(|topic| !topic.is_empty()) {
+            println!("  {}", topic);
+        }
+        if let Some(permalink) = &channel.permalink {
+            println!("  {}", permalink);
+        }
+    }
+
+    for user in &results.users {
+        let name = user
+            .full_name
+            .as_deref()
+            .or(user.user_id.as_deref())
+            .unwrap_or("[unknown user]");
+        println!("[user] {}", name);
+        if let Some(title) = user.title.as_deref().filter(|title| !title.is_empty()) {
+            println!("  {}", title);
+        }
+        if let Some(permalink) = &user.permalink {
+            println!("  {}", permalink);
+        }
     }
 }

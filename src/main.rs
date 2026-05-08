@@ -1,18 +1,14 @@
-mod cache;
-mod cli;
-mod config;
-mod format;
-mod slack;
-
 use anyhow::{Context, Result};
-use cache::CacheStatus;
 use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
-use cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget};
-use std::io::{self, Write};
+use slack_cli::{
+    cache::{self, CacheStatus},
+    cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget},
+    config, format, slack,
+};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -26,6 +22,8 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
+    dotenvy::dotenv().ok();
+
     if let Command::Config { action } = &cli.command {
         return handle_config_action(
             action,
@@ -36,8 +34,6 @@ async fn main() -> Result<()> {
             cli.data_dir.clone(),
         );
     }
-
-    dotenvy::dotenv().ok();
 
     let config = config::Config::load(cli.config, cli.token, cli.user_token, cli.data_dir)?;
 
@@ -50,16 +46,14 @@ async fn main() -> Result<()> {
         .to_str()
         .context("Database path contains invalid UTF-8 characters")?;
     let cache = Arc::new(cache::SqliteCache::new(db_path_str).await?);
-    let slack = Arc::new(slack::SlackClient::new(config.clone()));
+    let slack = Arc::new(slack::SlackClient::new(config.clone())?);
 
-    let ttl = config.cache.ttl_users_hours;
     let threshold = config.cache.refresh_threshold_percent;
-    let cache_status = cache.get_cache_status(ttl, threshold)?;
-
-    if cache_status == CacheStatus::Empty {
-        eprintln!("⚠ Cache is empty. Refreshing...");
-        refresh_cache(&slack, &cache, RefreshTarget::All, cli.json).await?;
-    }
+    let cache_status = cache.get_cache_status(
+        config.cache.ttl_users_hours,
+        config.cache.ttl_channels_hours,
+        threshold,
+    )?;
 
     match cli.command {
         Command::Users {
@@ -68,6 +62,7 @@ async fn main() -> Result<()> {
             limit,
             expand,
         } => {
+            ensure_users_cache(&slack, &cache, cli.json).await?;
             let users = if let Some(ids) = id {
                 cache.get_users_by_ids(&ids)?
             } else {
@@ -83,6 +78,7 @@ async fn main() -> Result<()> {
             limit,
             expand,
         } => {
+            ensure_channels_cache(&slack, &cache, cli.json).await?;
             let channels = if let Some(ids) = id {
                 cache.get_channels_by_ids(&ids)?
             } else {
@@ -97,7 +93,7 @@ async fn main() -> Result<()> {
             text,
             thread,
         } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let result = slack
                 .messages
                 .send_message(&id, &text, thread.as_deref())
@@ -111,7 +107,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Update { channel, ts, text } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let result = slack.messages.update_message(&id, &ts, &text).await?;
 
             if cli.json {
@@ -122,7 +118,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Delete { channel, ts } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let result = slack.messages.delete_message(&id, &ts).await?;
 
             if cli.json {
@@ -141,7 +137,7 @@ async fn main() -> Result<()> {
             exclude_bots,
             expand,
         } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
 
             let oldest_ts = oldest.map(|o| parse_timestamp(&o)).transpose()?;
             let latest_ts = latest.map(|l| parse_timestamp(&l)).transpose()?;
@@ -166,33 +162,57 @@ async fn main() -> Result<()> {
         }
 
         Command::Thread { channel, ts, limit } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let messages = slack.messages.get_thread_messages(&id, &ts, limit).await?;
             format::print_messages(&messages, cli.json, &[], None);
         }
 
         Command::Members { channel } => {
-            let id = resolve_channel(&channel, &cache)?;
-            let members = slack.messages.list_channel_members(&id).await?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
+            let members = slack.channels.list_members(&id).await?;
             format::print_members(&members, &cache, cli.json);
         }
 
         Command::Search {
             query,
-            channel,
-            user,
             limit,
+            channel_types,
+            content_types,
+            include_context,
+            include_bots,
+            sort,
+            sort_dir,
         } => {
-            let messages = slack
-                .messages
-                .search_messages(&query, channel.as_deref(), user.as_deref(), limit)
-                .await?;
+            if cli.verbose {
+                match slack.search.capabilities().await {
+                    Ok(capabilities) => {
+                        tracing::debug!(
+                            ai_search_enabled = capabilities.is_ai_search_enabled,
+                            "Slack search capabilities"
+                        );
+                    }
+                    Err(error) => {
+                        tracing::debug!(?error, "Unable to read Slack search capabilities");
+                    }
+                }
+            }
 
-            format::print_messages(&messages, cli.json, &[], None);
+            let options = slack::SearchOptions {
+                limit,
+                channel_types,
+                content_types,
+                include_context_messages: include_context,
+                include_bots,
+                sort,
+                sort_dir,
+            };
+            let results = slack.search.search(&query, &options).await?;
+
+            format::print_search_results(&results, cli.json);
         }
 
         Command::React { channel, ts, emoji } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             slack.reactions.add(&id, &ts, &emoji).await?;
 
             if cli.json {
@@ -203,7 +223,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Unreact { channel, ts, emoji } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             slack.reactions.remove(&id, &ts, &emoji).await?;
 
             if cli.json {
@@ -214,7 +234,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Reactions { channel, ts } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let reactions = slack.reactions.get(&id, &ts).await?;
             format::print_reactions(&reactions, cli.json);
         }
@@ -229,7 +249,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Pin { channel, ts } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             slack.pins.add(&id, &ts).await?;
 
             if cli.json {
@@ -240,7 +260,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Unpin { channel, ts } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             slack.pins.remove(&id, &ts).await?;
 
             if cli.json {
@@ -251,7 +271,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Pins { channel } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let pins = slack.pins.list(&id).await?;
             format::print_pins(&pins, cli.json);
         }
@@ -262,7 +282,7 @@ async fn main() -> Result<()> {
             url,
             emoji,
         } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let bookmark = slack
                 .bookmarks
                 .add(&id, &title, &url, emoji.as_deref())
@@ -279,7 +299,7 @@ async fn main() -> Result<()> {
             channel,
             bookmark_id,
         } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             slack.bookmarks.remove(&id, &bookmark_id).await?;
 
             if cli.json {
@@ -290,7 +310,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Bookmarks { channel } => {
-            let id = resolve_channel(&channel, &cache)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let bookmarks = slack.bookmarks.list(&id).await?;
             format::print_bookmarks(&bookmarks, cli.json);
         }
@@ -320,18 +340,8 @@ async fn main() -> Result<()> {
         Command::Config { .. } => unreachable!(),
     }
 
-    let should_refresh = cache_status == CacheStatus::NeedsRefresh
-        && !cache.is_within_refresh_cooldown().unwrap_or(true);
-
-    if should_refresh {
-        let cache_clone = cache.clone();
-        let slack_clone = slack.clone();
-
-        tokio::spawn(async move {
-            cache_clone.try_background_refresh(&slack_clone).await;
-        });
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    if cache_status == CacheStatus::NeedsRefresh && !cli.json {
+        eprintln!("Cache is stale. Run `slack-cli cache refresh` to update local lookup data.");
     }
 
     Ok(())
@@ -350,7 +360,7 @@ fn handle_config_action(
             bot_token,
             user_token,
             force,
-        } => init_config(bot_token.clone(), user_token.clone(), *force),
+        } => init_config(config_path, bot_token.clone(), user_token.clone(), *force),
 
         ConfigAction::Show => {
             let config =
@@ -366,7 +376,7 @@ fn handle_config_action(
             Ok(())
         }
 
-        ConfigAction::Edit => config::Config::edit_config(),
+        ConfigAction::Edit => config::Config::edit_config(config_path),
     }
 }
 
@@ -382,18 +392,84 @@ fn merge_fields(defaults: &[String], expand: Option<&[String]>) -> Vec<String> {
     fields
 }
 
-fn resolve_channel(input: &str, cache: &cache::SqliteCache) -> Result<String> {
-    if input.starts_with(['C', 'D', 'G']) {
+async fn resolve_channel(
+    input: &str,
+    slack: &slack::SlackClient,
+    cache: &cache::SqliteCache,
+    json: bool,
+) -> Result<String> {
+    if is_slack_conversation_id(input) {
         return Ok(input.to_string());
     }
 
     let name = input.trim_start_matches('#').trim_start_matches('@');
-    let channels = cache.search_channels(name, 1)?;
+    let mut channels = cache.search_channels(name, 2)?;
+
+    if channels.is_empty() {
+        ensure_channels_cache(slack, cache, json).await?;
+        channels = cache.search_channels(name, 2)?;
+    }
+
+    if channels.len() > 1 && !channels.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
+        let matches = channels
+            .iter()
+            .map(|c| format!("#{} ({})", c.name, c.id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!("Channel name is ambiguous: {}. Matches: {}", input, matches);
+    }
 
     channels
-        .first()
+        .iter()
+        .find(|c| c.name.eq_ignore_ascii_case(name))
+        .or_else(|| channels.first())
         .map(|c| c.id.clone())
         .context(format!("Channel not found: {}", input))
+}
+
+fn is_slack_conversation_id(input: &str) -> bool {
+    let mut chars = input.chars();
+    matches!(chars.next(), Some('C' | 'D' | 'G'))
+        && chars.clone().count() >= 8
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
+async fn ensure_users_cache(
+    slack: &slack::SlackClient,
+    cache: &cache::SqliteCache,
+    json: bool,
+) -> Result<()> {
+    let (users, _) = cache.get_counts()?;
+    if users == 0 {
+        if !json {
+            eprint!("Fetching users... ");
+        }
+        let users = slack.users.fetch_all_users().await?;
+        cache.save_users(users).await?;
+        if !json {
+            eprintln!("done");
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_channels_cache(
+    slack: &slack::SlackClient,
+    cache: &cache::SqliteCache,
+    json: bool,
+) -> Result<()> {
+    let (_, channels) = cache.get_counts()?;
+    if channels == 0 {
+        if !json {
+            eprint!("Fetching channels... ");
+        }
+        let channels = slack.channels.fetch_all_channels().await?;
+        cache.save_channels(channels).await?;
+        if !json {
+            eprintln!("done");
+        }
+    }
+    Ok(())
 }
 
 fn parse_timestamp(input: &str) -> Result<String> {
@@ -420,8 +496,15 @@ fn parse_timestamp(input: &str) -> Result<String> {
     )
 }
 
-fn init_config(bot_token: Option<String>, user_token: Option<String>, force: bool) -> Result<()> {
-    let path = config::Config::default_config_path().context("Cannot determine config path")?;
+fn init_config(
+    config_path: Option<PathBuf>,
+    bot_token: Option<String>,
+    user_token: Option<String>,
+    force: bool,
+) -> Result<()> {
+    let path = config_path
+        .or_else(config::Config::default_config_path)
+        .context("Cannot determine config path")?;
 
     if path.exists() && !force {
         anyhow::bail!(
@@ -430,35 +513,29 @@ fn init_config(bot_token: Option<String>, user_token: Option<String>, force: boo
         );
     }
 
-    let bot_token = match bot_token {
-        Some(t) => t,
-        None => {
-            print!("Bot token (xoxb-...): ");
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            input.trim().to_string()
+    let bot_token = bot_token.and_then(trim_token);
+    let user_token = user_token.and_then(trim_token);
+
+    let (bot_token, user_token) = match (bot_token, user_token) {
+        (bot_token, user_token) if bot_token.is_some() || user_token.is_some() => {
+            (bot_token, user_token)
         }
+        _ if io::stdin().is_terminal() => {
+            let user_token = prompt_optional("User token (xoxp-..., recommended): ")?;
+            let bot_token = prompt_optional("Bot token (xoxb-..., optional): ")?;
+            (bot_token, user_token)
+        }
+        _ => anyhow::bail!(
+            "No Slack token provided. Use --user-token xoxp-... or --bot-token xoxb-..."
+        ),
     };
 
-    let user_token = match user_token {
-        Some(t) => Some(t),
-        None => {
-            print!("User token (optional, Enter to skip): ");
-            io::stdout().flush()?;
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let trimmed = input.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
-    };
+    if bot_token.is_none() && user_token.is_none() {
+        anyhow::bail!("At least one Slack token is required");
+    }
 
     let config = config::Config {
-        bot_token: Some(bot_token),
+        bot_token,
         user_token,
         ..Default::default()
     };
@@ -481,6 +558,20 @@ fn init_config(bot_token: Option<String>, user_token: Option<String>, force: boo
     println!("\nRun: slack-cli cache refresh");
 
     Ok(())
+}
+
+fn prompt_optional(prompt: &str) -> Result<Option<String>> {
+    print!("{}", prompt);
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let value = input.trim();
+    Ok((!value.is_empty()).then(|| value.to_string()))
+}
+
+fn trim_token(token: String) -> Option<String> {
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_string())
 }
 
 async fn refresh_cache(

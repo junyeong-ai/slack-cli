@@ -139,6 +139,8 @@ pub struct SlackMessage {
     pub blocks: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permalink: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

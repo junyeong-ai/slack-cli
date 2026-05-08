@@ -10,24 +10,6 @@ const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 500;
 
 impl SqliteCache {
-    pub fn try_acquire_lock(&self, key: &str) -> CacheResult<bool> {
-        let conn = self.pool.get()?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-
-        conn.execute(
-            "DELETE FROM locks WHERE expires_at < ? OR acquired_at < ?",
-            params![now, now - STALE_LOCK_THRESHOLD_SECS],
-        )?;
-
-        let expires_at = now + LOCK_TIMEOUT_SECS;
-        let rows = conn.execute(
-            "INSERT OR IGNORE INTO locks (key, instance_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
-            params![key, &self.instance_id, now, expires_at],
-        )?;
-
-        Ok(rows > 0)
-    }
-
     pub(super) async fn acquire_lock(&self, key: &str) -> CacheResult<()> {
         let mut backoff = Duration::from_millis(INITIAL_BACKOFF_MS);
 
@@ -120,21 +102,6 @@ mod tests {
         SqliteCache::new(":memory:")
             .await
             .expect("Failed to create test cache")
-    }
-
-    #[tokio::test]
-    async fn test_try_acquire_lock_success() {
-        let cache = setup_cache().await;
-        assert!(cache.try_acquire_lock("test_lock").unwrap());
-        cache.release_lock("test_lock").await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_try_acquire_lock_fails_when_held() {
-        let cache = setup_cache().await;
-        assert!(cache.try_acquire_lock("test_lock").unwrap());
-        assert!(!cache.try_acquire_lock("test_lock").unwrap());
-        cache.release_lock("test_lock").await.unwrap();
     }
 
     #[tokio::test]

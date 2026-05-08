@@ -1,4 +1,3 @@
-mod background;
 mod channels;
 pub mod constants;
 mod error;

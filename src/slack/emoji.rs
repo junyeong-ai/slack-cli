@@ -24,10 +24,7 @@ impl SlackEmojiClient {
     }
 
     pub async fn list(&self) -> Result<Vec<CustomEmoji>> {
-        let response = self
-            .core
-            .api_call("emoji.list", json!({}), None, false)
-            .await?;
+        let response = self.core.api_call("emoji.list", json!({})).await?;
 
         let emoji_map: HashMap<String, String> = response
             .get("emoji")

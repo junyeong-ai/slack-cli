@@ -39,16 +39,12 @@ impl SqliteCache {
         let mut successful_count = 0;
 
         for user in users {
-            if let Ok(json) = serde_json::to_string(&user)
-                && tx
-                    .execute(
-                        "INSERT INTO users_new (id, data) VALUES (?, ?)",
-                        params![&user.id, json],
-                    )
-                    .is_ok()
-            {
-                successful_count += 1;
-            }
+            let json = serde_json::to_string(&user)?;
+            tx.execute(
+                "INSERT INTO users_new (id, data) VALUES (?, ?)",
+                params![&user.id, json],
+            )?;
+            successful_count += 1;
         }
 
         if successful_count == 0 {
@@ -166,7 +162,7 @@ impl SqliteCache {
             let mut stmt = conn.prepare_cached(&sql)?;
 
             let users = stmt
-                .query_map(params![limit], |row| {
+                .query_map(params![limit as i64], |row| {
                     let json: String = row.get(0)?;
                     serde_json::from_str(&json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -205,7 +201,7 @@ impl SqliteCache {
 
         let like_pattern = format!("%{query}%");
         let like_result = conn.prepare_cached(&like_sql).and_then(|mut stmt| {
-            stmt.query_map(params![query, like_pattern, limit], |row| {
+            stmt.query_map(params![query, like_pattern, limit as i64], |row| {
                 let json: String = row.get(0)?;
                 serde_json::from_str(&json).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -239,7 +235,7 @@ impl SqliteCache {
         );
 
         let fts_result = conn.prepare_cached(&fts_sql).and_then(|mut stmt| {
-            stmt.query_map(params![processed_query, limit], |row| {
+            stmt.query_map(params![processed_query, limit as i64], |row| {
                 let json: String = row.get(0)?;
                 serde_json::from_str(&json).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(

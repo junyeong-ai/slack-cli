@@ -48,10 +48,7 @@ impl SlackMessageClient {
             "text": text,
         });
 
-        let response = self
-            .core
-            .api_call("chat.update", params, None, false)
-            .await?;
+        let response = self.core.api_call("chat.update", params).await?;
 
         Ok(MessageResponse {
             channel: response["channel"].as_str().unwrap_or(channel).to_string(),
@@ -65,10 +62,7 @@ impl SlackMessageClient {
             "ts": ts,
         });
 
-        let response = self
-            .core
-            .api_call("chat.delete", params, None, false)
-            .await?;
+        let response = self.core.api_call("chat.delete", params).await?;
 
         Ok(MessageResponse {
             channel: response["channel"].as_str().unwrap_or(channel).to_string(),
@@ -84,26 +78,6 @@ impl SlackMessageClient {
     ) -> Result<Vec<SlackMessage>> {
         let (messages, _) = self.get_thread_replies(channel, thread_ts, limit).await?;
         Ok(messages)
-    }
-
-    pub async fn list_channel_members(&self, channel: &str) -> Result<Vec<String>> {
-        let params = json!({
-            "channel": channel,
-        });
-
-        let response = self
-            .core
-            .api_call("conversations.members", params, None, false)
-            .await?;
-
-        let members: Vec<String> = response["members"]
-            .as_array()
-            .unwrap_or(&Vec::new())
-            .iter()
-            .filter_map(|m| m.as_str().map(|s| s.to_string()))
-            .collect();
-
-        Ok(members)
     }
 
     /// Send a message to a channel
@@ -132,10 +106,7 @@ impl SlackMessageClient {
             params["thread_ts"] = json!(ts);
         }
 
-        let response = self
-            .core
-            .api_call("chat.postMessage", params, None, false)
-            .await?;
+        let response = self.core.api_call("chat.postMessage", params).await?;
 
         let timestamp = response["ts"]
             .as_str()
@@ -170,19 +141,18 @@ impl SlackMessageClient {
             params["latest"] = json!(latest);
         }
 
-        let mut response = self
-            .core
-            .api_call("conversations.history", params, None, false)
-            .await?;
+        let mut response = self.core.api_call("conversations.history", params).await?;
 
-        let messages: Vec<SlackMessage> = response
+        let raw_messages = response
             .get_mut("messages")
             .and_then(|v| v.as_array_mut())
             .map(std::mem::take)
-            .unwrap_or_default()
+            .ok_or_else(|| anyhow::anyhow!("Missing messages in conversations.history response"))?;
+
+        let messages = raw_messages
             .into_iter()
-            .filter_map(|m| serde_json::from_value(m).ok())
-            .collect();
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<SlackMessage>, _>>()?;
 
         let next_cursor = response["response_metadata"]["next_cursor"]
             .as_str()
@@ -199,69 +169,51 @@ impl SlackMessageClient {
         thread_ts: &str,
         limit: usize,
     ) -> Result<(Vec<SlackMessage>, bool)> {
-        let params = json!({
-            "channel": channel,
-            "ts": thread_ts,
-            "limit": limit,
-        });
+        let mut all_messages = Vec::new();
+        let mut cursor: Option<String> = None;
+        let page_limit = limit.min(1000);
 
-        let mut response = self
-            .core
-            .api_call("conversations.replies", params, None, false)
-            .await?;
+        loop {
+            let mut params = json!({
+                "channel": channel,
+                "ts": thread_ts,
+                "limit": page_limit,
+            });
 
-        let messages: Vec<SlackMessage> = response
-            .get_mut("messages")
-            .and_then(|v| v.as_array_mut())
-            .map(std::mem::take)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|m| serde_json::from_value(m).ok())
-            .collect();
+            if let Some(cursor) = &cursor {
+                params["cursor"] = json!(cursor);
+            }
 
-        let has_more = response["has_more"].as_bool().unwrap_or(false);
+            let mut response = self.core.api_call("conversations.replies", params).await?;
 
-        Ok((messages, has_more))
-    }
+            let raw_messages = response
+                .get_mut("messages")
+                .and_then(|v| v.as_array_mut())
+                .map(std::mem::take)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing messages in conversations.replies response")
+                })?;
 
-    /// Search messages
-    pub async fn search_messages(
-        &self,
-        query: &str,
-        channel: Option<&str>,
-        from_user: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<SlackMessage>> {
-        let mut search_query = query.to_string();
+            let mut page_messages = raw_messages
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<Vec<SlackMessage>, _>>()?;
 
-        if let Some(channel) = channel {
-            search_query.push_str(&format!(" in:{}", channel));
+            all_messages.append(&mut page_messages);
+
+            cursor = response["response_metadata"]["next_cursor"]
+                .as_str()
+                .filter(|c| !c.is_empty())
+                .map(ToOwned::to_owned);
+
+            if cursor.is_none() || all_messages.len() >= limit {
+                break;
+            }
         }
 
-        if let Some(user) = from_user {
-            search_query.push_str(&format!(" from:{}", user));
-        }
+        all_messages.truncate(limit);
+        let has_more = cursor.is_some();
 
-        let params = json!({
-            "query": search_query,
-            "count": limit,
-        });
-
-        let mut response = self
-            .core
-            .api_call("search.messages", params, None, true)
-            .await?;
-
-        let messages: Vec<SlackMessage> = response
-            .get_mut("messages")
-            .and_then(|v| v.get_mut("matches"))
-            .and_then(|v| v.as_array_mut())
-            .map(std::mem::take)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|m| serde_json::from_value(m).ok())
-            .collect();
-
-        Ok(messages)
+        Ok((all_messages, has_more))
     }
 }

@@ -1,6 +1,20 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+use crate::slack::{SearchChannelType, SearchContentType, SearchSort, SearchSortDirection};
+
+fn parse_search_limit(value: &str) -> Result<usize, String> {
+    let limit = value
+        .parse::<usize>()
+        .map_err(|_| "limit must be a number from 1 to 20".to_string())?;
+
+    if (1..=20).contains(&limit) {
+        Ok(limit)
+    } else {
+        Err("limit must be between 1 and 20".to_string())
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "slack-cli",
@@ -94,7 +108,7 @@ pub enum Command {
     #[command(about = "Get channel messages")]
     Messages {
         channel: String,
-        #[arg(long, default_value = "100")]
+        #[arg(long, default_value = "15")]
         limit: usize,
         #[arg(long)]
         cursor: Option<String>,
@@ -117,22 +131,40 @@ pub enum Command {
     Thread {
         channel: String,
         ts: String,
-        #[arg(long, default_value = "100")]
+        #[arg(long, default_value = "15")]
         limit: usize,
     },
 
     #[command(about = "List channel members")]
     Members { channel: String },
 
-    #[command(about = "Search messages (requires user token)")]
+    #[command(about = "Search Slack context with Real-time Search API")]
     Search {
         query: String,
-        #[arg(long)]
-        channel: Option<String>,
-        #[arg(long)]
-        user: Option<String>,
-        #[arg(long, default_value = "10")]
+        #[arg(
+            long,
+            default_value = "10",
+            value_parser = parse_search_limit,
+            help = "Number of results to request (1-20)"
+        )]
         limit: usize,
+        #[arg(
+            long,
+            value_enum,
+            value_delimiter = ',',
+            default_value = "public_channel,private_channel,mpim,im"
+        )]
+        channel_types: Vec<SearchChannelType>,
+        #[arg(long, value_enum, value_delimiter = ',', default_value = "messages")]
+        content_types: Vec<SearchContentType>,
+        #[arg(long)]
+        include_context: bool,
+        #[arg(long)]
+        include_bots: bool,
+        #[arg(long, value_enum, default_value = "score")]
+        sort: SearchSort,
+        #[arg(long, value_enum, default_value = "desc")]
+        sort_dir: SearchSortDirection,
     },
 
     #[command(about = "Add reaction to a message")]

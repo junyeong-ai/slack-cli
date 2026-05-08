@@ -39,16 +39,12 @@ impl SqliteCache {
         let mut successful_count = 0;
 
         for channel in channels {
-            if let Ok(json) = serde_json::to_string(&channel)
-                && tx
-                    .execute(
-                        "INSERT INTO channels_new (id, data) VALUES (?, ?)",
-                        params![&channel.id, json],
-                    )
-                    .is_ok()
-            {
-                successful_count += 1;
-            }
+            let json = serde_json::to_string(&channel)?;
+            tx.execute(
+                "INSERT INTO channels_new (id, data) VALUES (?, ?)",
+                params![&channel.id, json],
+            )?;
+            successful_count += 1;
         }
 
         if successful_count == 0 {
@@ -138,7 +134,7 @@ impl SqliteCache {
             )?;
 
             let channels = stmt
-                .query_map(params![limit], |row| {
+                .query_map(params![limit as i64], |row| {
                     let json: String = row.get(0)?;
                     serde_json::from_str(&json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -168,7 +164,7 @@ impl SqliteCache {
              LIMIT ?3",
             )
             .and_then(|mut stmt| {
-                stmt.query_map(params![query, like_pattern, limit], |row| {
+                stmt.query_map(params![query, like_pattern, limit as i64], |row| {
                     let json: String = row.get(0)?;
                     serde_json::from_str(&json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(
@@ -201,7 +197,7 @@ impl SqliteCache {
              LIMIT ?2",
             )
             .and_then(|mut stmt| {
-                stmt.query_map(params![processed_query, limit], |row| {
+                stmt.query_map(params![processed_query, limit as i64], |row| {
                     let json: String = row.get(0)?;
                     serde_json::from_str(&json).map_err(|e| {
                         rusqlite::Error::FromSqlConversionFailure(

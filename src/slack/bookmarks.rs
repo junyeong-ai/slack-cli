@@ -46,10 +46,7 @@ impl SlackBookmarkClient {
             params["emoji"] = json!(emoji);
         }
 
-        let response = self
-            .core
-            .api_call("bookmarks.add", params, None, false)
-            .await?;
+        let response = self.core.api_call("bookmarks.add", params).await?;
 
         let bookmark = response
             .get("bookmark")
@@ -76,9 +73,7 @@ impl SlackBookmarkClient {
             "bookmark_id": bookmark_id,
         });
 
-        self.core
-            .api_call("bookmarks.remove", params, None, false)
-            .await?;
+        self.core.api_call("bookmarks.remove", params).await?;
 
         Ok(())
     }
@@ -88,25 +83,30 @@ impl SlackBookmarkClient {
             "channel_id": channel,
         });
 
-        let response = self
-            .core
-            .api_call("bookmarks.list", params, None, false)
-            .await?;
+        let response = self.core.api_call("bookmarks.list", params).await?;
 
         let bookmarks = response
             .get("bookmarks")
             .and_then(|b| b.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|b| {
-                        Some(Bookmark {
-                            id: b.get("id")?.as_str()?.to_string(),
+                    .map(|b| {
+                        Ok(Bookmark {
+                            id: b
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| anyhow::anyhow!("Missing bookmark id"))?
+                                .to_string(),
                             channel_id: b
                                 .get("channel_id")
                                 .and_then(|c| c.as_str())
                                 .unwrap_or(channel)
                                 .to_string(),
-                            title: b.get("title")?.as_str()?.to_string(),
+                            title: b
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| anyhow::anyhow!("Missing bookmark title"))?
+                                .to_string(),
                             link: b
                                 .get("link")
                                 .and_then(|l| l.as_str())
@@ -128,8 +128,9 @@ impl SlackBookmarkClient {
                                 .unwrap_or(0),
                         })
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>>>()
             })
+            .transpose()?
             .unwrap_or_default();
 
         Ok(bookmarks)

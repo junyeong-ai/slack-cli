@@ -32,7 +32,7 @@ impl SlackPinClient {
             "timestamp": ts,
         });
 
-        self.core.api_call("pins.add", params, None, false).await?;
+        self.core.api_call("pins.add", params).await?;
 
         Ok(())
     }
@@ -43,9 +43,7 @@ impl SlackPinClient {
             "timestamp": ts,
         });
 
-        self.core
-            .api_call("pins.remove", params, None, false)
-            .await?;
+        self.core.api_call("pins.remove", params).await?;
 
         Ok(())
     }
@@ -55,27 +53,36 @@ impl SlackPinClient {
             "channel": channel,
         });
 
-        let response = self.core.api_call("pins.list", params, None, false).await?;
+        let response = self.core.api_call("pins.list", params).await?;
 
         let items = response
             .get("items")
             .and_then(|items| items.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|item| {
-                        let item_type = item.get("type")?.as_str()?;
+                    .map(|item| {
+                        let item_type = item
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| anyhow::anyhow!("Missing pinned item type"))?;
                         if item_type != "message" {
-                            return None;
+                            return Ok(None);
                         }
 
-                        let msg = item.get("message")?;
-                        Some(PinnedMessage {
+                        let msg = item
+                            .get("message")
+                            .ok_or_else(|| anyhow::anyhow!("Missing pinned message payload"))?;
+                        Ok(Some(PinnedMessage {
                             channel: item
                                 .get("channel")
                                 .and_then(|c| c.as_str())
                                 .unwrap_or(channel)
                                 .to_string(),
-                            ts: msg.get("ts")?.as_str()?.to_string(),
+                            ts: msg
+                                .get("ts")
+                                .and_then(|v| v.as_str())
+                                .ok_or_else(|| anyhow::anyhow!("Missing pinned message timestamp"))?
+                                .to_string(),
                             text: msg.get("text").and_then(|t| t.as_str()).map(String::from),
                             user: msg.get("user").and_then(|u| u.as_str()).map(String::from),
                             created: item.get("created").and_then(|c| c.as_i64()).unwrap_or(0),
@@ -84,10 +91,12 @@ impl SlackPinClient {
                                 .and_then(|c| c.as_str())
                                 .unwrap_or("")
                                 .to_string(),
-                        })
+                        }))
                     })
-                    .collect()
+                    .collect::<Result<Vec<_>>>()
+                    .map(|items| items.into_iter().flatten().collect::<Vec<_>>())
             })
+            .transpose()?
             .unwrap_or_default();
 
         Ok(items)

@@ -117,8 +117,6 @@ pub async fn initialize_schema(pool: &Pool<SqliteConnectionManager>) -> CacheRes
 
         CREATE INDEX IF NOT EXISTS idx_locks_expires ON locks(expires_at);
 
-        -- Initialize schema version
-        INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', json(?));
         "
     )?;
 

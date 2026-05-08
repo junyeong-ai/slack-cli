@@ -1,100 +1,172 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-#[derive(Debug, Clone)]
-pub enum ApiMethod {
-    Get,      // Use GET with query parameters
-    PostJson, // Use POST with JSON body
-    PostForm, // Use POST with form data
+#[derive(Debug, Clone, Copy)]
+pub enum RequestEncoding {
+    Query,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TokenPolicy {
+    BotPreferred,
+    UserPreferred,
+    UserRequired,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RatePolicy {
+    pub requests_per_minute: u32,
+    pub max_page_limit: Option<usize>,
 }
 
 pub struct ApiConfig {
-    pub method: ApiMethod,
-    pub prefer_user_token: bool,
+    pub encoding: RequestEncoding,
+    pub token_policy: TokenPolicy,
+    pub rate_policy: RatePolicy,
 }
 
 impl ApiConfig {
-    pub const fn new(method: ApiMethod, prefer_user_token: bool) -> Self {
+    pub const fn new(
+        encoding: RequestEncoding,
+        token_policy: TokenPolicy,
+        requests_per_minute: u32,
+        max_page_limit: Option<usize>,
+    ) -> Self {
         Self {
-            method,
-            prefer_user_token,
+            encoding,
+            token_policy,
+            rate_policy: RatePolicy {
+                requests_per_minute,
+                max_page_limit,
+            },
         }
     }
 }
 
-// Centralized API method configuration
 pub static API_CONFIGS: LazyLock<HashMap<&'static str, ApiConfig>> = LazyLock::new(|| {
     let mut m = HashMap::new();
 
-    // GET methods
     m.insert(
         "conversations.history",
-        ApiConfig::new(ApiMethod::Get, true),
-    ); // Prefer user token for private channel access
+        ApiConfig::new(
+            RequestEncoding::Query,
+            TokenPolicy::UserPreferred,
+            50,
+            Some(999),
+        ),
+    );
     m.insert(
         "conversations.replies",
-        ApiConfig::new(ApiMethod::Get, true),
-    ); // Prefer user token for private channel access
+        ApiConfig::new(
+            RequestEncoding::Query,
+            TokenPolicy::UserPreferred,
+            50,
+            Some(1000),
+        ),
+    );
     m.insert(
         "conversations.members",
-        ApiConfig::new(ApiMethod::Get, true),
-    ); // Prefer user token for private channel members
-    m.insert("users.list", ApiConfig::new(ApiMethod::Get, false));
-    m.insert("conversations.list", ApiConfig::new(ApiMethod::Get, true)); // Prefer user token for private channels
+        ApiConfig::new(
+            RequestEncoding::Query,
+            TokenPolicy::UserPreferred,
+            20,
+            Some(1000),
+        ),
+    );
+    m.insert(
+        "users.list",
+        ApiConfig::new(
+            RequestEncoding::Query,
+            TokenPolicy::BotPreferred,
+            20,
+            Some(200),
+        ),
+    );
+    m.insert(
+        "conversations.list",
+        ApiConfig::new(
+            RequestEncoding::Query,
+            TokenPolicy::UserPreferred,
+            20,
+            Some(1000),
+        ),
+    );
 
-    // POST JSON methods - Chat
     m.insert(
         "chat.postMessage",
-        ApiConfig::new(ApiMethod::PostJson, false),
-    );
-    m.insert("chat.update", ApiConfig::new(ApiMethod::PostJson, false));
-    m.insert("chat.delete", ApiConfig::new(ApiMethod::PostJson, false));
-    m.insert(
-        "chat.scheduleMessage",
-        ApiConfig::new(ApiMethod::PostJson, false),
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 60, None),
     );
     m.insert(
-        "conversations.open",
-        ApiConfig::new(ApiMethod::PostJson, false),
+        "chat.update",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 60, None),
+    );
+    m.insert(
+        "chat.delete",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 60, None),
     );
 
-    // POST JSON methods - Reactions
-    m.insert("reactions.add", ApiConfig::new(ApiMethod::PostJson, false));
+    m.insert(
+        "reactions.add",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 20, None),
+    );
     m.insert(
         "reactions.remove",
-        ApiConfig::new(ApiMethod::PostJson, false),
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 20, None),
     );
-    m.insert("reactions.get", ApiConfig::new(ApiMethod::Get, false));
+    m.insert(
+        "reactions.get",
+        ApiConfig::new(RequestEncoding::Query, TokenPolicy::BotPreferred, 20, None),
+    );
 
-    // POST JSON methods - Pins
-    m.insert("pins.add", ApiConfig::new(ApiMethod::PostJson, false));
-    m.insert("pins.remove", ApiConfig::new(ApiMethod::PostJson, false));
-    m.insert("pins.list", ApiConfig::new(ApiMethod::Get, false));
+    m.insert(
+        "pins.add",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 20, None),
+    );
+    m.insert(
+        "pins.remove",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 20, None),
+    );
+    m.insert(
+        "pins.list",
+        ApiConfig::new(RequestEncoding::Query, TokenPolicy::BotPreferred, 20, None),
+    );
 
-    // POST JSON methods - Bookmarks
-    m.insert("bookmarks.add", ApiConfig::new(ApiMethod::PostJson, false));
+    m.insert(
+        "bookmarks.add",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 20, None),
+    );
     m.insert(
         "bookmarks.remove",
-        ApiConfig::new(ApiMethod::PostJson, false),
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 20, None),
     );
-    m.insert("bookmarks.list", ApiConfig::new(ApiMethod::Get, false));
-
-    // GET methods - Emoji
-    m.insert("emoji.list", ApiConfig::new(ApiMethod::Get, false));
-
-    // User profile
     m.insert(
-        "users.profile.set",
-        ApiConfig::new(ApiMethod::PostJson, true),
+        "bookmarks.list",
+        ApiConfig::new(RequestEncoding::Query, TokenPolicy::BotPreferred, 20, None),
     );
 
-    // POST Form methods
-    m.insert("search.messages", ApiConfig::new(ApiMethod::PostForm, true));
+    m.insert(
+        "emoji.list",
+        ApiConfig::new(RequestEncoding::Query, TokenPolicy::BotPreferred, 20, None),
+    );
+
+    m.insert(
+        "assistant.search.info",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::UserPreferred, 20, None),
+    );
+    m.insert(
+        "assistant.search.context",
+        ApiConfig::new(
+            RequestEncoding::Json,
+            TokenPolicy::UserRequired,
+            10,
+            Some(20),
+        ),
+    );
 
     m
 });
 
-/// Get API configuration for a method
 pub fn get_api_config(method: &str) -> Option<&'static ApiConfig> {
     API_CONFIGS.get(method)
 }

@@ -36,9 +36,7 @@ impl SlackReactionClient {
             "name": name,
         });
 
-        self.core
-            .api_call("reactions.add", params, None, false)
-            .await?;
+        self.core.api_call("reactions.add", params).await?;
 
         Ok(())
     }
@@ -51,9 +49,7 @@ impl SlackReactionClient {
             "name": name,
         });
 
-        self.core
-            .api_call("reactions.remove", params, None, false)
-            .await?;
+        self.core.api_call("reactions.remove", params).await?;
 
         Ok(())
     }
@@ -65,10 +61,7 @@ impl SlackReactionClient {
             "full": true,
         });
 
-        let response = self
-            .core
-            .api_call("reactions.get", params, None, false)
-            .await?;
+        let response = self.core.api_call("reactions.get", params).await?;
 
         let reactions = response
             .get("message")
@@ -76,9 +69,11 @@ impl SlackReactionClient {
             .and_then(|r| r.as_array())
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|r| serde_json::from_value(r.clone()).ok())
-                    .collect()
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .collect::<Result<Vec<ReactionInfo>, _>>()
             })
+            .transpose()?
             .unwrap_or_default();
 
         Ok(MessageReactions {

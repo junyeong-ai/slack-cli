@@ -7,6 +7,7 @@ pub mod emoji;
 pub mod messages;
 pub mod pins;
 pub mod reactions;
+pub mod search;
 pub mod types;
 pub mod users;
 
@@ -15,4 +16,8 @@ pub use client::SlackClient;
 pub use emoji::CustomEmoji;
 pub use pins::PinnedMessage;
 pub use reactions::MessageReactions;
+pub use search::{
+    SearchChannelType, SearchContentType, SearchOptions, SearchResults, SearchSort,
+    SearchSortDirection,
+};
 pub use types::*;

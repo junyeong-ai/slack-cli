@@ -1,7 +1,6 @@
-use super::constants::MIN_REFRESH_INTERVAL_SECS;
 use super::error::{CacheError, CacheResult};
 use super::sqlite_cache::SqliteCache;
-use rusqlite::params;
+use rusqlite::OptionalExtension;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,14 +47,42 @@ impl SqliteCache {
 
     pub fn get_cache_status(
         &self,
-        ttl_hours: u64,
+        users_ttl_hours: u64,
+        channels_ttl_hours: u64,
         threshold_percent: u64,
     ) -> CacheResult<CacheStatus> {
-        if self.is_cache_empty()? {
+        let (users, channels) = self.get_counts()?;
+        if users == 0 && channels == 0 {
             return Ok(CacheStatus::Empty);
         }
 
-        let age_hours = self.get_cache_age_hours()?;
+        if users == 0 || channels == 0 {
+            return Ok(CacheStatus::NeedsRefresh);
+        }
+
+        let users_status =
+            self.get_cache_entry_status("last_user_sync", users_ttl_hours, threshold_percent)?;
+        let channels_status = self.get_cache_entry_status(
+            "last_channel_sync",
+            channels_ttl_hours,
+            threshold_percent,
+        )?;
+
+        if users_status == CacheStatus::NeedsRefresh || channels_status == CacheStatus::NeedsRefresh
+        {
+            Ok(CacheStatus::NeedsRefresh)
+        } else {
+            Ok(CacheStatus::Fresh)
+        }
+    }
+
+    fn get_cache_entry_status(
+        &self,
+        metadata_key: &str,
+        ttl_hours: u64,
+        threshold_percent: u64,
+    ) -> CacheResult<CacheStatus> {
+        let age_hours = self.get_cache_age_hours(metadata_key)?;
         let threshold_hours = (ttl_hours * threshold_percent / 100) as f64;
 
         if age_hours >= threshold_hours {
@@ -65,16 +92,16 @@ impl SqliteCache {
         }
     }
 
-    fn get_cache_age_hours(&self) -> CacheResult<f64> {
+    fn get_cache_age_hours(&self, metadata_key: &str) -> CacheResult<f64> {
         let conn = self.pool.get()?;
 
         let last_sync: Option<i64> = conn
             .query_row(
-                "SELECT value FROM metadata WHERE key = 'last_user_sync'",
-                [],
+                "SELECT value FROM metadata WHERE key = ?",
+                [metadata_key],
                 |row| row.get(0),
             )
-            .ok();
+            .optional()?;
 
         match last_sync {
             Some(ts) => {
@@ -86,43 +113,6 @@ impl SqliteCache {
             }
             None => Ok(f64::MAX),
         }
-    }
-
-    pub fn is_within_refresh_cooldown(&self) -> CacheResult<bool> {
-        let conn = self.pool.get()?;
-
-        let last_attempt: Option<i64> = conn
-            .query_row(
-                "SELECT value FROM metadata WHERE key = 'last_refresh_attempt'",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-
-        match last_attempt {
-            Some(ts) => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(CacheError::SystemTimeError)?
-                    .as_secs() as i64;
-                Ok(now - ts < MIN_REFRESH_INTERVAL_SECS)
-            }
-            None => Ok(false),
-        }
-    }
-
-    pub fn mark_refresh_attempted(&self) -> CacheResult<()> {
-        let conn = self.pool.get()?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(CacheError::SystemTimeError)?
-            .as_secs() as i64;
-
-        conn.execute(
-            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_refresh_attempt', ?)",
-            params![now.to_string()],
-        )?;
-        Ok(())
     }
 }
 
@@ -217,20 +207,109 @@ mod tests {
         #[test]
         fn empty_cache_status() {
             let cache = create_test_cache();
-            assert_eq!(cache.get_cache_status(168, 10).unwrap(), CacheStatus::Empty);
+            assert_eq!(
+                cache.get_cache_status(168, 168, 10).unwrap(),
+                CacheStatus::Empty
+            );
         }
 
         #[test]
-        fn cooldown_false_when_never_attempted() {
+        fn partial_cache_needs_refresh() {
             let cache = create_test_cache();
-            assert!(!cache.is_within_refresh_cooldown().unwrap());
+            let conn = cache.pool.get().unwrap();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+
+            conn.execute(
+                "INSERT INTO users (id, data) VALUES ('U1', json('{\"id\":\"U1\",\"name\":\"user\"}'))",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES ('last_user_sync', ?)",
+                [now],
+            )
+            .unwrap();
+
+            assert_eq!(
+                cache.get_cache_status(168, 168, 10).unwrap(),
+                CacheStatus::NeedsRefresh
+            );
         }
 
         #[test]
-        fn cooldown_true_after_recent_attempt() {
+        fn fresh_users_and_channels_status() {
             let cache = create_test_cache();
-            cache.mark_refresh_attempted().unwrap();
-            assert!(cache.is_within_refresh_cooldown().unwrap());
+            let conn = cache.pool.get().unwrap();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+
+            conn.execute(
+                "INSERT INTO users (id, data) VALUES ('U1', json('{\"id\":\"U1\",\"name\":\"user\"}'))",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO channels (id, data) VALUES ('C1', json('{\"id\":\"C1\",\"name\":\"channel\"}'))",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES ('last_user_sync', ?)",
+                [now],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES ('last_channel_sync', ?)",
+                [now],
+            )
+            .unwrap();
+
+            assert_eq!(
+                cache.get_cache_status(168, 168, 10).unwrap(),
+                CacheStatus::Fresh
+            );
+        }
+
+        #[test]
+        fn stale_channel_status_needs_refresh() {
+            let cache = create_test_cache();
+            let conn = cache.pool.get().unwrap();
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let stale = now - (24 * 3600);
+
+            conn.execute(
+                "INSERT INTO users (id, data) VALUES ('U1', json('{\"id\":\"U1\",\"name\":\"user\"}'))",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO channels (id, data) VALUES ('C1', json('{\"id\":\"C1\",\"name\":\"channel\"}'))",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES ('last_user_sync', ?)",
+                [now],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO metadata (key, value) VALUES ('last_channel_sync', ?)",
+                [stale],
+            )
+            .unwrap();
+
+            assert_eq!(
+                cache.get_cache_status(168, 168, 10).unwrap(),
+                CacheStatus::NeedsRefresh
+            );
         }
     }
 }
