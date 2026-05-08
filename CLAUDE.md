@@ -14,9 +14,10 @@ src/
 ├── format.rs            # Output formatting (table/JSON)
 ├── slack/
 │   ├── core.rs          # HTTP client, rate limiting, retry
-│   ├── client.rs        # Facade: 7 specialized clients
-│   ├── api_config.rs    # API method configs (18 methods)
-│   ├── messages.rs      # send, update, delete, search
+│   ├── client.rs        # Facade for specialized Slack API clients
+│   ├── api_config.rs    # API method metadata, token policy, rate policy
+│   ├── messages.rs      # send, update, delete, history, threads
+│   ├── search.rs        # Real-time Search API
 │   ├── reactions.rs     # add, remove, get
 │   ├── pins.rs          # add, remove, list
 │   ├── bookmarks.rs     # add, remove, list
@@ -28,7 +29,6 @@ src/
     ├── schema.rs        # FTS5, generated columns
     ├── helpers.rs       # FTS5 query sanitization, cache status
     ├── locks.rs         # Distributed locking
-    ├── background.rs    # Background auto-refresh
     ├── constants.rs     # Runtime constants
     ├── users.rs         # 2-phase search, ID lookup
     └── channels.rs      # 2-phase search, ID lookup
@@ -41,16 +41,17 @@ src/
 ### API Call Flow
 ```rust
 // slack/core.rs - All API calls go through this
-SlackCore::api_call(method, params, files, prefer_user_token)
-  → rate_limiter.until_ready()
-  → get_api_config(method) // api_config.rs
-  → HTTP request (GET/POST JSON/POST Form)
+SlackCore::api_call(method, params)
+  → get_api_config(method) // encoding, token policy, rate policy
+  → method rate limiter with jitter
+  → token selection from TokenPolicy
+  → HTTP request (query or JSON)
   → retry on 429 with Retry-After
   → parse JSON, check "ok" field
 ```
 
 ### Adding New API Method
-1. `api_config.rs`: Add to `API_CONFIGS` map
+1. `api_config.rs`: Add method metadata to `API_CONFIGS`
 2. `slack/{module}.rs`: Add method to appropriate client
 3. `cli.rs`: Add Command variant
 4. `main.rs`: Add match arm
@@ -88,21 +89,21 @@ process_fts_query(query) → "\"escaped query\""
 ```rust
 // cache/schema.rs
 const SCHEMA_VERSION: i32 = 2;
-// Bump triggers full table recreation
 ```
 
 ### Rate Limiting
 ```rust
-// slack/core.rs - Configurable rate limit with jitter
-// Default: 20 req/min, configurable via config.connection.rate_limit_per_minute
-governor::RateLimiter + Jitter::up_to(100ms)
+// slack/core.rs
+// Effective limit = min(config.connection.rate_limit_per_minute, method rate policy)
+HashMap<method, governor::RateLimiter> + Jitter::up_to(100ms)
 ```
 
-### Token Priority
+### Token Policy
 ```rust
 // api_config.rs
-prefer_user_token: bool // true = user token for private channels
-// core.rs: actual = param || config.prefer_user_token
+TokenPolicy::BotPreferred
+TokenPolicy::UserPreferred
+TokenPolicy::UserRequired
 ```
 
 ---
@@ -152,11 +153,11 @@ get_user_field(user, field) → String
 
 | Location | Constant | Value |
 |----------|----------|-------|
-| `cache/constants.rs` | MIN_REFRESH_INTERVAL | 3600s (1h cooldown) |
 | `cache/constants.rs` | LOCK_TIMEOUT | 300s |
 | `cache/constants.rs` | STALE_LOCK_THRESHOLD | 600s |
 | `cache/schema.rs` | SCHEMA_VERSION | 2 |
 | `config.rs` | rate_limit_per_minute | 20/min (configurable) |
+| `config.rs` | app_distribution | "commercial_external" |
 | `config.rs` | ttl_users/channels_hours | 168h (1 week) |
 | `config.rs` | refresh_threshold_percent | 10% |
 | `config.rs` | channel_types | ["public_channel", "private_channel"] |
@@ -168,7 +169,7 @@ get_user_field(user, field) → String
 ## Test Commands
 
 ```bash
-cargo test                    # 93 tests
-cargo clippy -- -D warnings   # Lint
-cargo fmt --check             # Format check
+cargo +1.95.0 nextest run --profile ci --all-features --workspace
+cargo +1.95.0 clippy --all-targets --all-features -- -D warnings
+cargo +1.95.0 fmt --all -- --check
 ```

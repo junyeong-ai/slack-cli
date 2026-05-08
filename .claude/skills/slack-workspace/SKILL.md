@@ -1,28 +1,31 @@
 ---
 name: slack-workspace
-version: 0.1.0
+version: 0.2.0
 description: |
-  Execute Slack workspace queries via slack-cli. Search users/channels, send/update/delete messages,
-  add reactions, pin messages, manage bookmarks, list emoji. Use when working with Slack data,
-  team communication, or automating Slack workflows.
+  Execute Slack workspace workflows via slack-cli. Search Slack context with the Real-time Search API,
+  look up users/channels from the local cache, send/update/delete messages, add reactions, pin messages,
+  manage bookmarks, and list emoji.
 allowed-tools: Bash
 ---
 
 # slack-cli
 
-**Use `--json` for parsing.** Combine with `jq` for extraction.
+**Use `--json` for machine parsing.** Combine with `jq` for extraction.
 
 ```bash
 # Get user ID
 slack-cli users "john" --json | jq -r '.[0].id'
 
-# Get channel ID and send message
+# Get channel ID and send a message
 ch=$(slack-cli channels "general" --json | jq -r '.[0].id')
 slack-cli send "$ch" "Hello"
 
 # Send and capture timestamp for thread reply
 ts=$(slack-cli send "#general" "Parent" --json | jq -r '.ts')
 slack-cli send "#general" "Reply" --thread "$ts"
+
+# Search Slack context
+slack-cli search "What changed in the deploy plan?" --sort timestamp --json
 ```
 
 ## Commands
@@ -35,7 +38,7 @@ slack-cli channels <query> [--id C1,C2] [--expand <fields>] [--limit N] --json
 # Messages
 slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
 slack-cli thread <channel> <ts> --json
-slack-cli search <query> [--channel C] [--user U] --json
+slack-cli search <query> [--limit N] [--channel-types TYPES] [--content-types TYPES] [--include-context] [--include-bots] [--sort score|timestamp] [--sort-dir asc|desc] --json
 slack-cli send <channel> <text> [--thread <ts>]    # returns {ts, channel}
 slack-cli update <channel> <ts> <text>
 slack-cli delete <channel> <ts>
@@ -60,6 +63,20 @@ slack-cli cache refresh [users|channels|all]
 slack-cli cache stats --json
 ```
 
+## Search
+
+`slack-cli search` uses Slack's Real-time Search API (`assistant.search.context`). It requires a user token for CLI use outside the Slack client. Use granular search scopes as needed: `search:read.public`, `search:read.private`, `search:read.im`, `search:read.mpim`, `search:read.files`, `search:read.users`.
+
+Defaults:
+
+| Option | Default |
+|--------|---------|
+| `--limit` | `10` (1-20) |
+| `--channel-types` | `public_channel,private_channel,mpim,im` |
+| `--content-types` | `messages` |
+| `--sort` | `score` |
+| `--sort-dir` | `desc` |
+
 ## --expand Fields
 
 | Type | Fields |
@@ -70,7 +87,7 @@ slack-cli cache stats --json
 
 ## Channel Format
 
-`#name`, `name`, `C0123...` (public), `D0123...` (DM), `G0123...` (group)
+`#name`, `name`, `C...` (public/private channel), `D...` (DM), `G...` (private channel or MPIM)
 
 ## Slack mrkdwn (NOT Markdown)
 

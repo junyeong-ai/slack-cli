@@ -1,19 +1,19 @@
 # Slack CLI
 
 [![CI](https://github.com/junyeong-ai/slack-cli/workflows/CI/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
-[![Rust](https://img.shields.io/badge/rust-1.91.1%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.95.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-junyeong--ai%2Fslack--cli-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/junyeong-ai/slack-cli)
 
 > **English** | **[한국어](README.md)**
 
-**Take full control of Slack from your terminal.** From messaging to reactions, pins, and bookmarks — do everything without opening a browser.
+**Run core Slack workflows from your terminal.** Send messages, search context, manage reactions, pins, bookmarks, users, and channels without opening a browser.
 
 ---
 
 ## Why Slack CLI?
 
 - **Fast** — Millisecond searches powered by SQLite FTS5
-- **Complete** — 21 commands covering all Slack features
+- **Practical** — Messages, search, reactions, pins, bookmarks, users, and channels
 - **Automatable** — Integrates with scripts, CI/CD, and AI agents
 
 ---
@@ -25,7 +25,7 @@
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 
 # Configure
-slack-cli config init --bot-token xoxb-your-token
+slack-cli config init --user-token xoxp-your-token
 slack-cli cache refresh
 
 # Use
@@ -42,12 +42,12 @@ slack-cli send "#general" "Hello!"
 slack-cli send "#general" "Announcement"          # Send
 slack-cli update "#general" 1234.5678 "Edited"    # Update
 slack-cli delete "#general" 1234.5678             # Delete
-slack-cli messages "#general" --limit 20          # List
+slack-cli messages "#general" --limit 15          # List
 slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31  # Date filter
 slack-cli messages "#general" --exclude-bots      # Exclude bot messages
 slack-cli messages "#general" --expand date,user_name  # Expand date/name
 slack-cli thread "#general" 1234.5678             # Thread
-slack-cli search "keyword" --channel "#dev"       # Search
+slack-cli search "keyword" --sort timestamp       # Real-time Search
 ```
 
 ### Reactions
@@ -95,18 +95,31 @@ slack-cli config show                             # Show config
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-### Cargo
+`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin/slack-cli`. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required.
+
 ```bash
-cargo install slack-cli
+# Install a specific release
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.2.0 bash
+
+# Uninstall (noninteractive default removes only the binary and keeps skill/config)
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/uninstall.sh | bash
+
+# Remove the skill and configuration too
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/uninstall.sh | bash -s -- --yes
+```
+
+### Cargo (Git)
+```bash
+cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ```
 
 ### Build from Source
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release
+cargo +1.95.0 build --release
 ```
 
-**Requirements**: Rust 1.91.1+
+**Requirements**: Rust 1.95.0+
 
 ---
 
@@ -121,9 +134,11 @@ cargo build --release
 ```
 channels:read  channels:history  groups:read  groups:history
 im:read  im:history  mpim:read  mpim:history
-users:read  users:read.email  chat:write  search:read
+users:read  users:read.email  chat:write
 reactions:read  reactions:write  pins:read  pins:write
 bookmarks:read  bookmarks:write  emoji:read
+search:read.public  search:read.private  search:read.im
+search:read.mpim  search:read.files  search:read.users
 ```
 
 ### 3. Install and Copy Token
@@ -153,7 +168,7 @@ bot_token = "xoxb-..."
 [cache]
 ttl_users_hours = 168          # 1 week
 ttl_channels_hours = 168
-refresh_threshold_percent = 10 # Background refresh at 10% of TTL
+refresh_threshold_percent = 10 # Warn as stale after 10% of TTL
 channel_types = ["public_channel", "private_channel"]
                                # Conversation types to cache.
                                # Trim to match your token scopes (e.g. ["public_channel"] if no groups:read).
@@ -164,9 +179,13 @@ users_fields = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
 
 [connection]
+api_base_url = "https://slack.com/api"
 rate_limit_per_minute = 20
+app_distribution = "commercial_external"
 timeout_seconds = 30
 ```
+
+Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
 
 **Priority**: CLI options > Environment variables > Config file
 
@@ -186,7 +205,7 @@ timeout_seconds = 30
 | `messages <ch>` | List messages |
 | `thread <ch> <ts>` | List thread |
 | `members <ch>` | List members |
-| `search <query>` | Search messages |
+| `search <query>` | Search with the Real-time Search API |
 | `react <ch> <ts> <emoji>` | Add reaction |
 | `unreact <ch> <ts> <emoji>` | Remove reaction |
 | `reactions <ch> <ts>` | List reactions |
@@ -202,17 +221,32 @@ timeout_seconds = 30
 
 ### Common Options
 - `--json` — JSON output
-- `--limit <N>` — Limit results
-- `--thread <ts>` — Thread reply (send)
-- `--expand <fields>` — Extra fields (users/channels/messages)
+
+### users/channels Options
+- `--limit <N>` — Limit results (default: `10`)
+- `--id <ids>` — Lookup by IDs (comma-separated)
+- `--expand <fields>` — Extra fields
   - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
   - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
-  - messages: `date`, `user_name`
 
-### messages Options
+### send Options
+- `--thread <ts>` — Thread reply
+
+### messages/thread Options
+- `--limit <N>` — Limit results (default: `15`)
 - `--oldest <date>` — Start time (Unix timestamp or YYYY-MM-DD)
 - `--latest <date>` — End time (Unix timestamp or YYYY-MM-DD)
 - `--exclude-bots` — Exclude bot messages
+- `--expand <fields>` — Extra fields: `date`, `user_name`
+
+### search Options
+- `--limit <N>` — Number of results to request (1-20, default: `10`)
+- `--channel-types <types>` — Conversation types to search (default: `public_channel,private_channel,mpim,im`)
+- `--content-types <types>` — Content types to search (default: `messages`)
+- `--include-context` — Include surrounding context
+- `--include-bots` — Include bot-authored messages
+- `--sort <score|timestamp>` — Sort field
+- `--sort-dir <asc|desc>` — Sort direction
 
 ---
 
