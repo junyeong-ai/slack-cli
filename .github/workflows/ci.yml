@@ -10,6 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RUSTFLAGS: -D warnings
+  RUST_TOOLCHAIN: 1.95.0
 
 jobs:
   test:
@@ -19,14 +20,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: [stable]
     steps:
       - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
@@ -35,7 +35,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run tests with nextest
-        run: cargo nextest run --all-features --workspace --verbose
+        run: cargo nextest run --profile ci --all-features --workspace --verbose
 
   coverage:
     name: Code Coverage
@@ -44,8 +44,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: llvm-tools-preview
 
       - name: Cache dependencies
@@ -59,6 +60,7 @@ jobs:
       - name: Generate coverage with nextest
         run: |
           cargo llvm-cov nextest \
+            --profile ci \
             --all-features \
             --workspace \
             --lcov \
@@ -95,7 +97,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2

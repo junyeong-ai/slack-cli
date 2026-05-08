@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.95.0
 
 jobs:
   build:
@@ -22,6 +23,8 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
 
@@ -29,8 +32,9 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
       - name: Cache dependencies
@@ -60,33 +64,44 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             binary="target/$target/release/slack-cli.exe"
             archive="slack-cli-v${version}-${target}.zip"
+            latest_archive="slack-cli-${target}.zip"
             cp "$binary" slack-cli.exe
             7z a "$archive" slack-cli.exe
-            echo "ASSET=$archive" >> $GITHUB_ENV
           else
             binary="target/$target/release/slack-cli"
             archive="slack-cli-v${version}-${target}.tar.gz"
+            latest_archive="slack-cli-${target}.tar.gz"
             cp "$binary" slack-cli
             tar -czf "$archive" slack-cli
-            echo "ASSET=$archive" >> $GITHUB_ENV
           fi
+
+          cp "$archive" "$latest_archive"
 
       - name: Generate checksum
         shell: bash
         run: |
-          if command -v sha256sum >/dev/null; then
-            sha256sum "$ASSET" > "$ASSET.sha256"
-          elif command -v shasum >/dev/null; then
-            shasum -a 256 "$ASSET" > "$ASSET.sha256"
-          fi
+          for asset in slack-cli-v*-${{ matrix.target }}.* slack-cli-${{ matrix.target }}.*; do
+            case "$asset" in
+              *.sha256) continue ;;
+            esac
+
+            if command -v sha256sum >/dev/null; then
+              sha256sum "$asset" > "$asset.sha256"
+            elif command -v shasum >/dev/null; then
+              shasum -a 256 "$asset" > "$asset.sha256"
+            else
+              echo "No checksum tool found" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
           path: |
-            ${{ env.ASSET }}
-            ${{ env.ASSET }}.sha256
+            slack-cli-v*-${{ matrix.target }}.*
+            slack-cli-${{ matrix.target }}.*
 
   release:
     name: Create Release
