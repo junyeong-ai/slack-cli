@@ -99,7 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/
 
 ```bash
 # 특정 릴리스 설치
-curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.2.0 bash
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.3.0 bash
 
 # 제거 (비대화형 기본값은 바이너리만 제거하고 스킬/설정은 보존)
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/uninstall.sh | bash

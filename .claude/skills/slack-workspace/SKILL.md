@@ -1,6 +1,6 @@
 ---
 name: slack-workspace
-version: 0.2.0
+version: 0.3.0
 description: |
   Execute Slack workspace workflows via slack-cli. Search Slack context with the Real-time Search API,
   look up users/channels from the local cache, send/update/delete messages, add reactions, pin messages,
