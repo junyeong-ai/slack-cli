@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 BINARY_NAME="slack-cli"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
@@ -7,12 +7,103 @@ SKILL_NAME="slack-workspace"
 USER_SKILL_DIR="$HOME/.claude/skills/$SKILL_NAME"
 CONFIG_DIR="$HOME/.config/slack-cli"
 
+ASSUME_YES=false
+REMOVE_SKILL=""
+BACKUP_SKILL=""
+REMOVE_CONFIG=""
+
+usage() {
+    cat <<EOF
+Usage: uninstall.sh [options]
+
+Options:
+  -y, --yes             Remove binary, skill, and configuration without prompts
+      --remove-skill    Remove the installed user-level skill
+      --keep-skill      Keep the installed user-level skill
+      --backup-skill    Back up the user-level skill before removal
+      --no-backup-skill Remove the user-level skill without backup
+      --remove-config   Remove configuration and cache
+      --keep-config     Keep configuration and cache
+  -h, --help            Show this help
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -y|--yes)
+            ASSUME_YES=true
+            ;;
+        --remove-skill)
+            REMOVE_SKILL=yes
+            ;;
+        --keep-skill)
+            REMOVE_SKILL=no
+            ;;
+        --backup-skill)
+            BACKUP_SKILL=yes
+            ;;
+        --no-backup-skill)
+            BACKUP_SKILL=no
+            ;;
+        --remove-config)
+            REMOVE_CONFIG=yes
+            ;;
+        --keep-config)
+            REMOVE_CONFIG=no
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+if [ "$ASSUME_YES" = true ]; then
+    REMOVE_SKILL="${REMOVE_SKILL:-yes}"
+    BACKUP_SKILL="${BACKUP_SKILL:-yes}"
+    REMOVE_CONFIG="${REMOVE_CONFIG:-yes}"
+fi
+
+prompt_yes_no() {
+    local prompt="$1"
+    local default="$2"
+    local configured="$3"
+    local reply=""
+
+    case "$configured" in
+        yes|no)
+            [ "$configured" = yes ]
+            return
+            ;;
+    esac
+
+    if [ -t 0 ]; then
+        read -r -n 1 -p "$prompt" reply || reply=""
+        echo
+    else
+        reply="$default"
+    fi
+
+    reply="${reply:-$default}"
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+remove_empty_dir() {
+    local dir="$1"
+
+    if [ -d "$dir" ] && [ -z "$(find "$dir" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+        rmdir "$dir"
+    fi
+}
+
 echo "🗑️  Uninstalling Slack CLI..."
 echo
-
-# ============================================================================
-# Binary Removal
-# ============================================================================
 
 if [ -f "$INSTALL_DIR/$BINARY_NAME" ]; then
     rm "$INSTALL_DIR/$BINARY_NAME"
@@ -22,41 +113,27 @@ else
 fi
 echo
 
-# ============================================================================
-# Skill Removal
-# ============================================================================
-
 if [ -d "$USER_SKILL_DIR" ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "🤖 Claude Code Skill Found"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
+    echo
     echo "User-level skill detected at: $USER_SKILL_DIR"
-    echo ""
-    read -p "Remove Claude Code skill? [y/N]: " -n 1 -r
-    echo
     echo
 
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "Create backup before removing? [Y/n]: " -n 1 -r
-        echo
-        echo
-
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if prompt_yes_no "Remove Claude Code skill? [y/N]: " "n" "$REMOVE_SKILL"; then
+        if prompt_yes_no "Create backup before removing? [Y/n]: " "y" "$BACKUP_SKILL"; then
             timestamp=$(date +%Y%m%d_%H%M%S)
             backup_dir="$USER_SKILL_DIR.backup_$timestamp"
-            cp -r "$USER_SKILL_DIR" "$backup_dir"
+            cp -R "$USER_SKILL_DIR" "$backup_dir"
             echo "📦 Backup created: $backup_dir"
         fi
 
         rm -rf "$USER_SKILL_DIR"
         echo "✅ Removed user-level skill"
 
-        # Cleanup empty parent directory if it exists
-        if [ -d "$HOME/.claude/skills" ] && [ -z "$(ls -A "$HOME/.claude/skills")" ]; then
-            rmdir "$HOME/.claude/skills"
-            echo "   Cleaned up empty skills directory"
-        fi
+        remove_empty_dir "$HOME/.claude/skills"
+        remove_empty_dir "$HOME/.claude"
     else
         echo "⏭️  Kept user-level skill"
     fi
@@ -66,23 +143,16 @@ else
     echo
 fi
 
-# ============================================================================
-# Configuration Removal
-# ============================================================================
-
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "⚙️  Configuration & Cache"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
+echo
 
 if [ -d "$CONFIG_DIR" ]; then
     echo "Found configuration directory: $CONFIG_DIR"
-    echo ""
-    read -p "Remove configuration and cache? [y/N]: " -n 1 -r
-    echo
     echo
 
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if prompt_yes_no "Remove configuration and cache? [y/N]: " "n" "$REMOVE_CONFIG"; then
         rm -rf "$CONFIG_DIR"
         echo "✅ Removed configuration and cache: $CONFIG_DIR"
     else
@@ -99,14 +169,13 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo
 
 echo "ℹ️  Notes:"
-echo ""
+echo
 echo "• Project-level skill (if any) remains at .claude/skills/$SKILL_NAME"
 echo "  This is distributed via git and shared with your team"
-echo ""
-echo "• Environment variables are NOT removed automatically"
-echo "  If you have these in your shell profile, remove them manually:"
+echo
+echo "• Environment variables are not removed automatically:"
 echo "  - SLACK_BOT_TOKEN"
 echo "  - SLACK_USER_TOKEN"
-echo ""
+echo
 echo "• To reinstall: ./install.sh"
 echo
