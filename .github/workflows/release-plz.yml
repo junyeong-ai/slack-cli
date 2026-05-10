@@ -14,6 +14,7 @@ concurrency:
 jobs:
   release-pr:
     name: Open release PR
+    if: vars.ENABLE_RELEASE_PLZ == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -38,6 +39,7 @@ jobs:
 
   release:
     name: Tag releases
+    if: vars.ENABLE_RELEASE_PLZ == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
