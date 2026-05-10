@@ -25,7 +25,9 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          cache: false
 
       - name: Run release-plz release-pr
         uses: MarcoIeni/release-plz-action@49c995b2442b0f60dd4aab07a164cc00643471fc # v0.5.128
@@ -46,7 +48,9 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          cache: false
 
       - name: Run release-plz release
         uses: MarcoIeni/release-plz-action@49c995b2442b0f60dd4aab07a164cc00643471fc # v0.5.128
