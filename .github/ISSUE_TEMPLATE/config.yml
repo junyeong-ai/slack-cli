@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/junyeong-ai/slack-cli/discussions
+    about: Ask a question or discuss an idea before opening an issue.
+  - name: Security vulnerability
+    url: https://github.com/junyeong-ai/slack-cli/security/advisories/new
+    about: Report security issues privately, not via public issues.
