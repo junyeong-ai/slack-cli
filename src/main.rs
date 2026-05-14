@@ -178,8 +178,13 @@ async fn main() -> Result<()> {
             limit,
             channel_types,
             content_types,
-            include_context,
+            channel,
+            before,
+            after,
+            include_context_messages,
             include_bots,
+            include_archived_channels,
+            disable_semantic_search,
             sort,
             sort_dir,
         } => {
@@ -197,14 +202,29 @@ async fn main() -> Result<()> {
                 }
             }
 
+            let context_channel_id = match channel {
+                Some(input) => Some(resolve_channel(&input, &slack, &cache, cli.json).await?),
+                None => None,
+            };
+
+            let before = before.as_deref().map(parse_unix_seconds).transpose()?;
+            let after = after.as_deref().map(parse_unix_seconds).transpose()?;
+
             let options = slack::SearchOptions {
                 limit,
                 channel_types,
                 content_types,
-                include_context_messages: include_context,
+                context_channel_id,
+                include_archived_channels,
+                before,
+                after,
                 include_bots,
+                disable_semantic_search,
                 sort,
                 sort_dir,
+                include_context_messages,
+                include_message_blocks: cli.json,
+                highlight: !cli.json,
             };
             let results = slack.search.search(&query, &options).await?;
 
@@ -472,28 +492,32 @@ async fn ensure_channels_cache(
     Ok(())
 }
 
+fn parse_unix_seconds(input: &str) -> Result<i64> {
+    if let Ok(secs) = input.parse::<f64>() {
+        return Ok(secs as i64);
+    }
+
+    let date = NaiveDate::parse_from_str(input, "%Y-%m-%d").map_err(|_| {
+        anyhow::anyhow!(
+            "Invalid date format: {} (expected Unix timestamp or YYYY-MM-DD)",
+            input
+        )
+    })?;
+    let dt = date
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow::anyhow!("Invalid time"))?;
+    let local = Local
+        .from_local_datetime(&dt)
+        .single()
+        .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?;
+    Ok(local.timestamp())
+}
+
 fn parse_timestamp(input: &str) -> Result<String> {
-    // Unix timestamp: use directly
     if input.parse::<f64>().is_ok() {
         return Ok(input.to_string());
     }
-
-    // ISO date (YYYY-MM-DD)
-    if let Ok(date) = NaiveDate::parse_from_str(input, "%Y-%m-%d") {
-        let ts = date
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| anyhow::anyhow!("Invalid time"))?;
-        let local_ts = Local
-            .from_local_datetime(&ts)
-            .single()
-            .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?;
-        return Ok(local_ts.timestamp().to_string());
-    }
-
-    anyhow::bail!(
-        "Invalid date format: {} (expected Unix timestamp or YYYY-MM-DD)",
-        input
-    )
+    parse_unix_seconds(input).map(|s| s.to_string())
 }
 
 fn init_config(

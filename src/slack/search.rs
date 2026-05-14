@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::core::SlackCore;
@@ -82,10 +82,17 @@ pub struct SearchOptions {
     pub limit: usize,
     pub channel_types: Vec<SearchChannelType>,
     pub content_types: Vec<SearchContentType>,
-    pub include_context_messages: bool,
+    pub context_channel_id: Option<String>,
+    pub include_archived_channels: bool,
+    pub before: Option<i64>,
+    pub after: Option<i64>,
     pub include_bots: bool,
+    pub disable_semantic_search: bool,
     pub sort: SearchSort,
     pub sort_dir: SearchSortDirection,
+    pub include_context_messages: bool,
+    pub include_message_blocks: bool,
+    pub highlight: bool,
 }
 
 impl SearchOptions {
@@ -259,27 +266,7 @@ impl SlackSearchClient {
 
     pub async fn search(&self, query: &str, options: &SearchOptions) -> Result<SearchResults> {
         let limit = options.limit.clamp(1, SearchOptions::MAX_LIMIT);
-        let channel_types = options
-            .channel_types
-            .iter()
-            .map(|t| t.as_api_str())
-            .collect::<Vec<_>>();
-        let content_types = options
-            .content_types
-            .iter()
-            .map(|t| t.as_api_str())
-            .collect::<Vec<_>>();
-
-        let mut params = json!({
-            "query": query,
-            "channel_types": channel_types,
-            "content_types": content_types,
-            "include_context_messages": options.include_context_messages,
-            "include_bots": options.include_bots,
-            "sort": options.sort.as_api_str(),
-            "sort_dir": options.sort_dir.as_api_str(),
-            "include_message_blocks": true,
-        });
+        let mut params = build_request_params(query, options);
 
         let mut results = SearchResults::default();
         let mut cursor: Option<String> = None;
@@ -316,9 +303,67 @@ impl SlackSearchClient {
     }
 }
 
+fn build_request_params(query: &str, options: &SearchOptions) -> Value {
+    let channel_types: Vec<&'static str> = options
+        .channel_types
+        .iter()
+        .map(|t| t.as_api_str())
+        .collect();
+    let content_types: Vec<&'static str> = options
+        .content_types
+        .iter()
+        .map(|t| t.as_api_str())
+        .collect();
+
+    let mut params = json!({
+        "query": query,
+        "channel_types": channel_types,
+        "content_types": content_types,
+        "include_archived_channels": options.include_archived_channels,
+        "include_bots": options.include_bots,
+        "disable_semantic_search": options.disable_semantic_search,
+        "sort": options.sort.as_api_str(),
+        "sort_dir": options.sort_dir.as_api_str(),
+        "include_context_messages": options.include_context_messages,
+        "include_message_blocks": options.include_message_blocks,
+        "highlight": options.highlight,
+    });
+
+    if let Some(channel_id) = &options.context_channel_id {
+        params["context_channel_id"] = json!(channel_id);
+    }
+    if let Some(before) = options.before {
+        params["before"] = json!(before);
+    }
+    if let Some(after) = options.after {
+        params["after"] = json!(after);
+    }
+
+    params
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_options() -> SearchOptions {
+        SearchOptions {
+            limit: 10,
+            channel_types: vec![SearchChannelType::PublicChannel],
+            content_types: vec![SearchContentType::Messages],
+            context_channel_id: None,
+            include_archived_channels: false,
+            before: None,
+            after: None,
+            include_bots: false,
+            disable_semantic_search: false,
+            sort: SearchSort::Score,
+            sort_dir: SearchSortDirection::Desc,
+            include_context_messages: false,
+            include_message_blocks: false,
+            highlight: false,
+        }
+    }
 
     #[test]
     fn parses_real_time_search_message_response() {
@@ -439,5 +484,36 @@ mod tests {
         assert_eq!(results.total_len(), 2);
         assert_eq!(results.messages.len(), 2);
         assert!(results.files.is_empty());
+    }
+
+    #[test]
+    fn request_params_include_optional_filters() {
+        let mut opts = sample_options();
+        opts.before = Some(1_700_000_000);
+        opts.after = Some(1_600_000_000);
+        opts.context_channel_id = Some("C123ABCDE".to_string());
+        opts.disable_semantic_search = true;
+        opts.include_archived_channels = true;
+        opts.highlight = true;
+        opts.include_message_blocks = true;
+
+        let params = build_request_params("hello", &opts);
+
+        assert_eq!(params["query"], json!("hello"));
+        assert_eq!(params["before"], json!(1_700_000_000));
+        assert_eq!(params["after"], json!(1_600_000_000));
+        assert_eq!(params["context_channel_id"], json!("C123ABCDE"));
+        assert_eq!(params["disable_semantic_search"], json!(true));
+        assert_eq!(params["include_archived_channels"], json!(true));
+        assert_eq!(params["highlight"], json!(true));
+        assert_eq!(params["include_message_blocks"], json!(true));
+    }
+
+    #[test]
+    fn request_params_omit_unset_optional_filters() {
+        let params = build_request_params("hello", &sample_options());
+        assert!(params.get("before").is_none());
+        assert!(params.get("after").is_none());
+        assert!(params.get("context_channel_id").is_none());
     }
 }

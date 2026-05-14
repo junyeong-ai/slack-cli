@@ -160,10 +160,23 @@ pub enum Command {
         channel_types: Vec<SearchChannelType>,
         #[arg(long, value_enum, value_delimiter = ',', default_value = "messages")]
         content_types: Vec<SearchContentType>,
-        #[arg(long)]
-        include_context: bool,
-        #[arg(long)]
+        #[arg(long, help = "Restrict the search to one channel (ID or name)")]
+        channel: Option<String>,
+        #[arg(long, help = "Only results before this time (Unix ts or YYYY-MM-DD)")]
+        before: Option<String>,
+        #[arg(long, help = "Only results after this time (Unix ts or YYYY-MM-DD)")]
+        after: Option<String>,
+        #[arg(
+            long = "include-context",
+            help = "Include surrounding context messages"
+        )]
+        include_context_messages: bool,
+        #[arg(long, help = "Include bot-authored messages")]
         include_bots: bool,
+        #[arg(long = "include-archived", help = "Include archived channels")]
+        include_archived_channels: bool,
+        #[arg(long = "no-semantic", help = "Force keyword-only matching")]
+        disable_semantic_search: bool,
         #[arg(long, value_enum, default_value = "score")]
         sort: SearchSort,
         #[arg(long, value_enum, default_value = "desc")]
