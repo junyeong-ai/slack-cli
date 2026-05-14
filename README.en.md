@@ -99,7 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/
 
 ```bash
 # Install a specific release
-curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.3.0 bash
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.4.0 bash
 
 # Uninstall (noninteractive default removes only the binary and keeps skill/config)
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/uninstall.sh | bash
