@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -269,16 +269,17 @@ impl SlackSearchClient {
             let response = self
                 .core
                 .api_call("assistant.search.context", params.clone())
-                .await?;
-
+                .await
+                .context("Search requires a user token (xoxp-...) with search:read.* scopes")?;
             let response: SearchContextResponse = serde_json::from_value(response)?;
-            let next_cursor = response
+
+            results.extend(response.results);
+
+            cursor = response
                 .response_metadata
                 .map(|m| m.next_cursor)
                 .filter(|c| !c.is_empty());
-            results.extend(response.results);
 
-            cursor = next_cursor;
             if cursor.is_none() || results.total_len() >= limit {
                 break;
             }
