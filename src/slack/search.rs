@@ -99,11 +99,6 @@ impl SearchOptions {
     pub const MAX_LIMIT: usize = 100;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchCapabilities {
-    pub is_ai_search_enabled: bool,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 struct SearchContextResponse {
     results: SearchResults,
@@ -255,16 +250,7 @@ impl SlackSearchClient {
         Self { core }
     }
 
-    pub async fn capabilities(&self) -> Result<SearchCapabilities> {
-        let response = self
-            .core
-            .api_call("assistant.search.info", json!({}))
-            .await?;
-
-        Ok(serde_json::from_value(response)?)
-    }
-
-    pub async fn search(&self, query: &str, options: &SearchOptions) -> Result<SearchResults> {
+    pub async fn context(&self, query: &str, options: &SearchOptions) -> Result<SearchResults> {
         let limit = options.limit.clamp(1, SearchOptions::MAX_LIMIT);
         let mut params = build_request_params(query, options);
 

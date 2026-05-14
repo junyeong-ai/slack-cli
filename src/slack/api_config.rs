@@ -151,10 +151,6 @@ pub static API_CONFIGS: LazyLock<HashMap<&'static str, ApiConfig>> = LazyLock::n
     );
 
     m.insert(
-        "assistant.search.info",
-        ApiConfig::new(RequestEncoding::Json, TokenPolicy::UserPreferred, 20, None),
-    );
-    m.insert(
         "assistant.search.context",
         ApiConfig::new(
             RequestEncoding::Json,

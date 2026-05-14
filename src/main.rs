@@ -188,20 +188,6 @@ async fn main() -> Result<()> {
             sort,
             sort_dir,
         } => {
-            if cli.verbose {
-                match slack.search.capabilities().await {
-                    Ok(capabilities) => {
-                        tracing::debug!(
-                            ai_search_enabled = capabilities.is_ai_search_enabled,
-                            "Slack search capabilities"
-                        );
-                    }
-                    Err(error) => {
-                        tracing::debug!(?error, "Unable to read Slack search capabilities");
-                    }
-                }
-            }
-
             let context_channel_id = match channel {
                 Some(input) => Some(resolve_channel(&input, &slack, &cache, cli.json).await?),
                 None => None,
@@ -226,7 +212,7 @@ async fn main() -> Result<()> {
                 include_message_blocks: cli.json,
                 highlight: !cli.json,
             };
-            let results = slack.search.search(&query, &options).await?;
+            let results = slack.search.context(&query, &options).await?;
 
             format::print_search_results(&results, cli.json);
         }
