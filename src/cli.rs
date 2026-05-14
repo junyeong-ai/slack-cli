@@ -1,17 +1,20 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-use crate::slack::{SearchChannelType, SearchContentType, SearchSort, SearchSortDirection};
+use crate::slack::{
+    SearchChannelType, SearchContentType, SearchOptions, SearchSort, SearchSortDirection,
+};
 
 fn parse_search_limit(value: &str) -> Result<usize, String> {
+    let max = SearchOptions::MAX_LIMIT;
     let limit = value
         .parse::<usize>()
-        .map_err(|_| "limit must be a number from 1 to 20".to_string())?;
+        .map_err(|_| format!("limit must be an integer between 1 and {max}"))?;
 
-    if (1..=20).contains(&limit) {
+    if (1..=max).contains(&limit) {
         Ok(limit)
     } else {
-        Err("limit must be between 1 and 20".to_string())
+        Err(format!("limit must be between 1 and {max}"))
     }
 }
 
@@ -145,7 +148,7 @@ pub enum Command {
             long,
             default_value = "10",
             value_parser = parse_search_limit,
-            help = "Number of results to request (1-20)"
+            help = "Maximum total results to return (1-100)"
         )]
         limit: usize,
         #[arg(

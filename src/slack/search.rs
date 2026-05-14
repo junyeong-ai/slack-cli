@@ -4,6 +4,9 @@ use serde_json::json;
 use std::sync::Arc;
 
 use super::core::SlackCore;
+
+const PAGE_SIZE: usize = 20;
+
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum SearchChannelType {
     #[value(name = "public_channel")]
@@ -83,6 +86,10 @@ pub struct SearchOptions {
     pub include_bots: bool,
     pub sort: SearchSort,
     pub sort_dir: SearchSortDirection,
+}
+
+impl SearchOptions {
+    pub const MAX_LIMIT: usize = 100;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,7 +258,7 @@ impl SlackSearchClient {
     }
 
     pub async fn search(&self, query: &str, options: &SearchOptions) -> Result<SearchResults> {
-        let limit = options.limit.clamp(1, 20);
+        let limit = options.limit.clamp(1, SearchOptions::MAX_LIMIT);
         let channel_types = options
             .channel_types
             .iter()
@@ -265,7 +272,6 @@ impl SlackSearchClient {
 
         let mut params = json!({
             "query": query,
-            "limit": limit,
             "channel_types": channel_types,
             "content_types": content_types,
             "include_context_messages": options.include_context_messages,
@@ -279,6 +285,10 @@ impl SlackSearchClient {
         let mut cursor: Option<String> = None;
 
         loop {
+            let remaining = limit.saturating_sub(results.total_len());
+            let page_size = remaining.clamp(1, PAGE_SIZE);
+            params["limit"] = json!(page_size);
+
             if let Some(cursor) = &cursor {
                 params["cursor"] = json!(cursor);
             }
