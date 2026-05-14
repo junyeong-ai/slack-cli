@@ -1,5 +1,6 @@
 ---
 name: slack-workspace
+# Consumed by scripts/install.sh for upgrade comparison; bump with the crate version.
 version: 0.3.0
 description: |
   Execute Slack workspace workflows via slack-cli. Search Slack context with the Real-time Search API,
@@ -38,7 +39,7 @@ slack-cli channels <query> [--id C1,C2] [--expand <fields>] [--limit N] --json
 # Messages
 slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
 slack-cli thread <channel> <ts> --json
-slack-cli search <query> [--limit N] [--channel-types TYPES] [--content-types TYPES] [--include-context] [--include-bots] [--sort score|timestamp] [--sort-dir asc|desc] --json
+slack-cli search <query> [--limit N] [--channel <ch>] [--before DATE] [--after DATE] [--channel-types TYPES] [--content-types TYPES] [--include-context] [--include-bots] [--include-archived] [--no-semantic] [--sort score|timestamp] [--sort-dir asc|desc] --json
 slack-cli send <channel> <text> [--thread <ts>]    # returns {ts, channel}
 slack-cli update <channel> <ts> <text>
 slack-cli delete <channel> <ts>
@@ -71,11 +72,21 @@ Defaults:
 
 | Option | Default |
 |--------|---------|
-| `--limit` | `10` (1-20) |
+| `--limit` | `10` (1-100, paginated across 20-result pages) |
 | `--channel-types` | `public_channel,private_channel,mpim,im` |
 | `--content-types` | `messages` |
 | `--sort` | `score` |
 | `--sort-dir` | `desc` |
+
+Filters:
+
+| Option | Effect |
+|--------|--------|
+| `--channel <id\|name>` | Restrict to one channel (resolved via cache) |
+| `--before <ts\|YYYY-MM-DD>` | Only results before this instant |
+| `--after <ts\|YYYY-MM-DD>` | Only results after this instant |
+| `--include-archived` | Include archived channels |
+| `--no-semantic` | Force keyword-only matching (skip the API's automatic semantic mode) |
 
 ## --expand Fields
 

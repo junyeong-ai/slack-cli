@@ -1,175 +1,54 @@
-# Slack CLI - AI Agent Developer Guide
+# slack-cli
 
-Rust CLI for Slack API. SQLite FTS5 cache, async/await, facade pattern.
+Rust CLI for the Slack Web API. Single crate, SQLite + FTS5 local cache, async/await throughout.
 
----
-
-## Architecture
+## Layout
 
 ```
 src/
-├── main.rs              # CLI entry, command dispatch
-├── cli.rs               # Clap command definitions
-├── config.rs            # TOML config, env vars
-├── format.rs            # Output formatting (table/JSON)
-├── slack/
-│   ├── core.rs          # HTTP client, rate limiting, retry
-│   ├── client.rs        # Facade for specialized Slack API clients
-│   ├── api_config.rs    # API method metadata, token policy, rate policy
-│   ├── messages.rs      # send, update, delete, history, threads
-│   ├── search.rs        # Real-time Search API
-│   ├── reactions.rs     # add, remove, get
-│   ├── pins.rs          # add, remove, list
-│   ├── bookmarks.rs     # add, remove, list
-│   ├── emoji.rs         # list, search
-│   ├── users.rs         # list (streaming pagination)
-│   └── channels.rs      # list (streaming pagination)
-└── cache/
-    ├── sqlite_cache.rs  # r2d2 pool, WAL mode
-    ├── schema.rs        # FTS5, generated columns
-    ├── helpers.rs       # FTS5 query sanitization, cache status
-    ├── locks.rs         # Distributed locking
-    ├── constants.rs     # Runtime constants
-    ├── users.rs         # 2-phase search, ID lookup
-    └── channels.rs      # 2-phase search, ID lookup
+├── main.rs       CLI entry, command dispatch
+├── cli.rs        clap command definitions
+├── config.rs     TOML config, env vars, token resolution
+├── format.rs     Output formatting (table / JSON)
+├── lib.rs        Library re-exports
+├── slack/        See src/slack/CLAUDE.md
+└── cache/        See src/cache/CLAUDE.md
 ```
 
----
-
-## Key Patterns
-
-### API Call Flow
-```rust
-// slack/core.rs - All API calls go through this
-SlackCore::api_call(method, params)
-  → get_api_config(method) // encoding, token policy, rate policy
-  → method rate limiter with jitter
-  → token selection from TokenPolicy
-  → HTTP request (query or JSON)
-  → retry on 429 with Retry-After
-  → parse JSON, check "ok" field
-```
-
-### Adding New API Method
-1. `api_config.rs`: Add method metadata to `API_CONFIGS`
-2. `slack/{module}.rs`: Add method to appropriate client
-3. `cli.rs`: Add Command variant
-4. `main.rs`: Add match arm
-5. `format.rs`: Add print function (if new type)
-
-### Cache Search (2-Phase)
-```rust
-// Phase 1: LIKE with priority (exact match = 0)
-SELECT data FROM users WHERE name LIKE ?
-// Phase 2: FTS5 only if Phase 1 empty
-SELECT data FROM users JOIN users_fts WHERE MATCH ?
-```
-
-### Distributed Locking
-```rust
-// cache/locks.rs - For concurrent cache refresh
-self.with_lock("users_update", || {
-    // Atomic swap via temp table
-    // Auto-releases on success or error
-}).await
-```
-
----
-
-## Critical Implementation Details
-
-### FTS5 Query Sanitization
-```rust
-// cache/helpers.rs - MUST call before FTS5 MATCH
-process_fts_query(query) → "\"escaped query\""
-// Empty result → skip FTS5, use LIKE fallback
-```
-
-### Schema Version
-```rust
-// cache/schema.rs
-const SCHEMA_VERSION: i32 = 2;
-```
-
-### Rate Limiting
-```rust
-// slack/core.rs
-// Effective limit = min(config.connection.rate_limit_per_minute, method rate policy)
-HashMap<method, governor::RateLimiter> + Jitter::up_to(100ms)
-```
-
-### Token Policy
-```rust
-// api_config.rs
-TokenPolicy::BotPreferred
-TokenPolicy::UserPreferred
-TokenPolicy::UserRequired
-```
-
----
-
-## Common Tasks
-
-### Add Cache Field
-1. `slack/types.rs`: Add to struct
-2. `cache/schema.rs`: Add generated column + bump SCHEMA_VERSION
-3. Update FTS5 table if searchable
-
-### Debug API Calls
-```bash
-RUST_LOG=debug cargo run -- users "john"
-```
-
-### Inspect Cache
-```bash
-sqlite3 ~/.config/slack-cli/cache/slack.db ".schema"
-```
-
----
-
-## Output Field Configuration
-
-```rust
-// config.rs - Configurable output fields
-[output]
-users_fields = ["id", "name", "real_name", "email"]     // default
-channels_fields = ["id", "name", "type", "members"]     // default
-
-// CLI: --expand adds fields to defaults
-slack-cli users "john" --expand avatar,title
-
-// format.rs - Dynamic field filtering for table/JSON output
-filter_user_fields(user, fields) → serde_json::Value
-get_user_field(user, field) → String
-```
-
-### Available Fields
-- **users**: `id`, `name`, `real_name`, `display_name`, `email`, `status`, `status_emoji`, `avatar`, `title`, `timezone`, `is_admin`, `is_bot`, `deleted`
-- **channels**: `id`, `name`, `type`, `members`, `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private`
-
----
-
-## Constants
-
-| Location | Constant | Value |
-|----------|----------|-------|
-| `cache/constants.rs` | LOCK_TIMEOUT | 300s |
-| `cache/constants.rs` | STALE_LOCK_THRESHOLD | 600s |
-| `cache/schema.rs` | SCHEMA_VERSION | 2 |
-| `config.rs` | rate_limit_per_minute | 20/min (configurable) |
-| `config.rs` | app_distribution | "commercial_external" |
-| `config.rs` | ttl_users/channels_hours | 168h (1 week) |
-| `config.rs` | refresh_threshold_percent | 10% |
-| `config.rs` | channel_types | ["public_channel", "private_channel"] |
-| `config.rs` | users_fields | ["id", "name", "real_name", "email"] |
-| `config.rs` | channels_fields | ["id", "name", "type", "members"] |
-
----
-
-## Test Commands
+## Build & test
 
 ```bash
 cargo +1.95.0 nextest run --profile ci --all-features --workspace
 cargo +1.95.0 clippy --all-targets --all-features -- -D warnings
 cargo +1.95.0 fmt --all -- --check
 ```
+
+Debug a single command:
+```bash
+RUST_LOG=debug cargo run -- users "john"
+```
+
+## Cross-cutting conventions
+
+### Method naming on `Slack*Client`
+Verb-only, no noun redundancy. Match the Slack API verb when one exists.
+- `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`
+- `users.list`, `channels.list`, `channels.members`
+- `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`
+
+No `send_message`, no `fetch_all_*`, no `get_*` prefixes.
+
+### All HTTP goes through `SlackCore::api_call`
+Per-method behaviour (encoding, token policy, rate limit) is declared once in `slack/api_config.rs::API_CONFIGS`. Never call `reqwest` directly from a domain client.
+
+### Token policy
+Declared per method in `api_config.rs`:
+- `BotPreferred` — bot first, user fallback
+- `UserPreferred` — user first, bot fallback
+- `UserRequired` — user only (use when bot calls would need an `action_token` the CLI cannot supply)
+
+### Output mode flows through the CLI bridge
+`cli.json` is read in `main.rs` and used to derive request-shape options (e.g. `include_message_blocks`, `highlight` for search). Library types in `slack/` stay output-agnostic.
+
+### Fields and constants live in code
+CLI `--expand` field lists and defaults are defined in `config.rs` and `format.rs`. Do not duplicate them in docs. The README's "Available Fields" tables are the user-facing source of truth.

@@ -240,11 +240,16 @@ timeout_seconds = 30
 - `--expand <fields>` — 추가 필드: `date`, `user_name`
 
 ### search 옵션
-- `--limit <N>` — 요청할 결과 수 (1-20, 기본: `10`)
+- `--limit <N>` — 총 결과 수 (1-100, 기본: `10`. 20개 단위 페이지로 자동 페이징)
+- `--channel <id|name>` — 특정 채널로 검색 한정
+- `--before <date>` — 이 시점 이전 결과만 (Unix ts 또는 YYYY-MM-DD)
+- `--after <date>` — 이 시점 이후 결과만
 - `--channel-types <types>` — 검색할 대화 타입 (기본: `public_channel,private_channel,mpim,im`)
 - `--content-types <types>` — 검색 대상 (기본: `messages`)
 - `--include-context` — 검색 결과 주변 맥락 포함
 - `--include-bots` — 봇 메시지 포함
+- `--include-archived` — 아카이브 채널 포함
+- `--no-semantic` — 키워드 일치만 사용 (시맨틱 검색 비활성)
 - `--sort <score|timestamp>` — 정렬 기준
 - `--sort-dir <asc|desc>` — 정렬 방향
 

@@ -240,11 +240,16 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 - `--expand <fields>` — Extra fields: `date`, `user_name`
 
 ### search Options
-- `--limit <N>` — Number of results to request (1-20, default: `10`)
+- `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)
+- `--channel <id|name>` — Restrict the search to one channel
+- `--before <date>` — Only results before this time (Unix ts or YYYY-MM-DD)
+- `--after <date>` — Only results after this time
 - `--channel-types <types>` — Conversation types to search (default: `public_channel,private_channel,mpim,im`)
 - `--content-types <types>` — Content types to search (default: `messages`)
-- `--include-context` — Include surrounding context
+- `--include-context` — Include surrounding context messages
 - `--include-bots` — Include bot-authored messages
+- `--include-archived` — Include archived channels
+- `--no-semantic` — Force keyword-only matching (skip the API's automatic semantic mode)
 - `--sort <score|timestamp>` — Sort field
 - `--sort-dir <asc|desc>` — Sort direction
 
