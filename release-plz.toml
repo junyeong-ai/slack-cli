@@ -3,7 +3,7 @@ publish = false
 git_release_enable = false
 git_tag_enable = true
 changelog_update = true
-semver_check = true
+semver_check = false
 pr_branch_prefix = "release-plz/"
 pr_labels = ["release"]
 
