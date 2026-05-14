@@ -5,7 +5,8 @@ use std::sync::Arc;
 use super::core::SlackCore;
 use crate::slack::SlackChannel;
 
-const SLACK_API_LIMIT: u32 = 200;
+const PAGE_SIZE: u32 = 200;
+const MEMBERS_PAGE_SIZE: u32 = 1000;
 
 pub struct SlackChannelClient {
     pub(crate) core: Arc<SlackCore>,
@@ -16,31 +17,9 @@ impl SlackChannelClient {
         Self { core }
     }
 
-    /// Fetch all channels from the workspace.
-    ///
-    /// Conversation types are driven by `cache.channel_types`. Prefers a user
-    /// token (when present) so private channels the caller belongs to are
-    /// included.
-    pub async fn fetch_all_channels(&self) -> Result<Vec<SlackChannel>> {
+    pub async fn list(&self) -> Result<Vec<SlackChannel>> {
         let mut all_channels = Vec::new();
-
-        self.fetch_all_channels_streaming(|channels| {
-            all_channels.extend(channels);
-            Ok(())
-        })
-        .await?;
-
-        Ok(all_channels)
-    }
-
-    /// Stream fetch channels with callback for immediate processing of each page
-    pub async fn fetch_all_channels_streaming<F>(&self, mut callback: F) -> Result<usize>
-    where
-        F: FnMut(Vec<SlackChannel>) -> Result<()>,
-    {
-        let mut total_fetched = 0;
         let mut cursor: Option<String> = None;
-        let limit = SLACK_API_LIMIT;
 
         let types = self
             .core
@@ -54,18 +33,16 @@ impl SlackChannelClient {
 
         loop {
             let mut params = json!({
-                "limit": limit,
+                "limit": PAGE_SIZE,
                 "types": types,
                 "exclude_archived": false,
             });
-
-            if let Some(cursor_val) = &cursor {
-                params["cursor"] = json!(cursor_val);
+            if let Some(c) = &cursor {
+                params["cursor"] = json!(c);
             }
 
             let mut response = self.core.api_call("conversations.list", params).await?;
 
-            // Parse channels from response
             let raw_channels = response
                 .get_mut("channels")
                 .and_then(|v| v.as_array_mut())
@@ -74,19 +51,13 @@ impl SlackChannelClient {
                     anyhow::anyhow!("Missing channels in conversations.list response")
                 })?;
 
-            let page_channels = raw_channels
+            let page_channels: Vec<SlackChannel> = raw_channels
                 .into_iter()
                 .map(serde_json::from_value)
-                .collect::<Result<Vec<SlackChannel>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?;
 
-            // Process this page immediately via callback
-            if !page_channels.is_empty() {
-                let page_count = page_channels.len();
-                callback(page_channels)?;
-                total_fetched += page_count;
-            }
+            all_channels.extend(page_channels);
 
-            // Check for pagination
             cursor = response["response_metadata"]["next_cursor"]
                 .as_str()
                 .filter(|c| !c.is_empty())
@@ -97,21 +68,20 @@ impl SlackChannelClient {
             }
         }
 
-        Ok(total_fetched)
+        Ok(all_channels)
     }
 
-    pub async fn list_members(&self, channel: &str) -> Result<Vec<String>> {
+    pub async fn members(&self, channel: &str) -> Result<Vec<String>> {
         let mut all_members = Vec::new();
         let mut cursor: Option<String> = None;
 
         loop {
             let mut params = json!({
                 "channel": channel,
-                "limit": 1000,
+                "limit": MEMBERS_PAGE_SIZE,
             });
-
-            if let Some(cursor) = &cursor {
-                params["cursor"] = json!(cursor);
+            if let Some(c) = &cursor {
+                params["cursor"] = json!(c);
             }
 
             let response = self.core.api_call("conversations.members", params).await?;

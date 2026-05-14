@@ -1,10 +1,12 @@
 use anyhow::Result;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::sync::Arc;
 
 use super::core::SlackCore;
 use crate::slack::SlackMessage;
+
+const REPLIES_PAGE_SIZE: usize = 1000;
 
 #[derive(Debug, serde::Serialize, Deserialize)]
 pub struct MessageResponse {
@@ -21,27 +23,33 @@ impl SlackMessageClient {
         Self { core }
     }
 
-    pub async fn send_message(
+    pub async fn send(
         &self,
         channel: &str,
         text: &str,
         thread_ts: Option<&str>,
     ) -> Result<MessageResponse> {
-        let ts = self
-            .post_message(channel, Some(text), None, thread_ts, false)
-            .await?;
+        let mut params = json!({
+            "channel": channel,
+            "text": text,
+        });
+        if let Some(ts) = thread_ts {
+            params["thread_ts"] = json!(ts);
+        }
+
+        let response = self.core.api_call("chat.postMessage", params).await?;
+
+        let ts = response["ts"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("Missing timestamp in response"))?;
+
         Ok(MessageResponse {
             channel: channel.to_string(),
-            ts,
+            ts: ts.to_string(),
         })
     }
 
-    pub async fn update_message(
-        &self,
-        channel: &str,
-        ts: &str,
-        text: &str,
-    ) -> Result<MessageResponse> {
+    pub async fn update(&self, channel: &str, ts: &str, text: &str) -> Result<MessageResponse> {
         let params = json!({
             "channel": channel,
             "ts": ts,
@@ -56,7 +64,7 @@ impl SlackMessageClient {
         })
     }
 
-    pub async fn delete_message(&self, channel: &str, ts: &str) -> Result<MessageResponse> {
+    pub async fn delete(&self, channel: &str, ts: &str) -> Result<MessageResponse> {
         let params = json!({
             "channel": channel,
             "ts": ts,
@@ -70,53 +78,7 @@ impl SlackMessageClient {
         })
     }
 
-    pub async fn get_thread_messages(
-        &self,
-        channel: &str,
-        thread_ts: &str,
-        limit: usize,
-    ) -> Result<Vec<SlackMessage>> {
-        let (messages, _) = self.get_thread_replies(channel, thread_ts, limit).await?;
-        Ok(messages)
-    }
-
-    /// Send a message to a channel
-    pub async fn post_message(
-        &self,
-        channel: &str,
-        text: Option<&str>,
-        blocks: Option<&Vec<Value>>,
-        thread_ts: Option<&str>,
-        reply_broadcast: bool,
-    ) -> Result<String> {
-        let mut params = json!({
-            "channel": channel,
-            "reply_broadcast": reply_broadcast,
-        });
-
-        if let Some(text) = text {
-            params["text"] = json!(text);
-        }
-
-        if let Some(blocks) = blocks {
-            params["blocks"] = json!(blocks);
-        }
-
-        if let Some(ts) = thread_ts {
-            params["thread_ts"] = json!(ts);
-        }
-
-        let response = self.core.api_call("chat.postMessage", params).await?;
-
-        let timestamp = response["ts"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing timestamp in response"))?;
-
-        Ok(timestamp.to_string())
-    }
-
-    /// Get channel messages
-    pub async fn get_channel_messages(
+    pub async fn history(
         &self,
         channel: &str,
         limit: usize,
@@ -132,11 +94,9 @@ impl SlackMessageClient {
         if let Some(cursor) = cursor {
             params["cursor"] = json!(cursor);
         }
-
         if let Some(oldest) = oldest {
             params["oldest"] = json!(oldest);
         }
-
         if let Some(latest) = latest {
             params["latest"] = json!(latest);
         }
@@ -162,16 +122,15 @@ impl SlackMessageClient {
         Ok((messages, next_cursor))
     }
 
-    /// Get thread replies
-    pub async fn get_thread_replies(
+    pub async fn replies(
         &self,
         channel: &str,
         thread_ts: &str,
         limit: usize,
-    ) -> Result<(Vec<SlackMessage>, bool)> {
+    ) -> Result<Vec<SlackMessage>> {
         let mut all_messages = Vec::new();
         let mut cursor: Option<String> = None;
-        let page_limit = limit.min(1000);
+        let page_limit = limit.min(REPLIES_PAGE_SIZE);
 
         loop {
             let mut params = json!({
@@ -180,8 +139,8 @@ impl SlackMessageClient {
                 "limit": page_limit,
             });
 
-            if let Some(cursor) = &cursor {
-                params["cursor"] = json!(cursor);
+            if let Some(c) = &cursor {
+                params["cursor"] = json!(c);
             }
 
             let mut response = self.core.api_call("conversations.replies", params).await?;
@@ -212,8 +171,6 @@ impl SlackMessageClient {
         }
 
         all_messages.truncate(limit);
-        let has_more = cursor.is_some();
-
-        Ok((all_messages, has_more))
+        Ok(all_messages)
     }
 }

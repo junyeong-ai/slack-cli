@@ -94,10 +94,7 @@ async fn main() -> Result<()> {
             thread,
         } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let result = slack
-                .messages
-                .send_message(&id, &text, thread.as_deref())
-                .await?;
+            let result = slack.messages.send(&id, &text, thread.as_deref()).await?;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -108,7 +105,7 @@ async fn main() -> Result<()> {
 
         Command::Update { channel, ts, text } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let result = slack.messages.update_message(&id, &ts, &text).await?;
+            let result = slack.messages.update(&id, &ts, &text).await?;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -119,7 +116,7 @@ async fn main() -> Result<()> {
 
         Command::Delete { channel, ts } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let result = slack.messages.delete_message(&id, &ts).await?;
+            let result = slack.messages.delete(&id, &ts).await?;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -144,7 +141,7 @@ async fn main() -> Result<()> {
 
             let (mut messages, _) = slack
                 .messages
-                .get_channel_messages(
+                .history(
                     &id,
                     limit,
                     cursor.as_deref(),
@@ -163,13 +160,13 @@ async fn main() -> Result<()> {
 
         Command::Thread { channel, ts, limit } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let messages = slack.messages.get_thread_messages(&id, &ts, limit).await?;
+            let messages = slack.messages.replies(&id, &ts, limit).await?;
             format::print_messages(&messages, cli.json, &[], None);
         }
 
         Command::Members { channel } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let members = slack.channels.list_members(&id).await?;
+            let members = slack.channels.members(&id).await?;
             format::print_members(&members, &cache, cli.json);
         }
 
@@ -450,7 +447,7 @@ async fn ensure_users_cache(
         if !json {
             eprint!("Fetching users... ");
         }
-        let users = slack.users.fetch_all_users().await?;
+        let users = slack.users.list().await?;
         cache.save_users(users).await?;
         if !json {
             eprintln!("done");
@@ -469,7 +466,7 @@ async fn ensure_channels_cache(
         if !json {
             eprint!("Fetching channels... ");
         }
-        let channels = slack.channels.fetch_all_channels().await?;
+        let channels = slack.channels.list().await?;
         cache.save_channels(channels).await?;
         if !json {
             eprintln!("done");
@@ -595,7 +592,7 @@ async fn refresh_cache(
             if !json {
                 eprint!("Fetching users... ");
             }
-            let users = slack.users.fetch_all_users().await?;
+            let users = slack.users.list().await?;
             cache.save_users(users).await?;
             if !json {
                 eprintln!("✓");
@@ -609,7 +606,7 @@ async fn refresh_cache(
             if !json {
                 eprint!("Fetching channels... ");
             }
-            let channels = slack.channels.fetch_all_channels().await?;
+            let channels = slack.channels.list().await?;
             cache.save_channels(channels).await?;
             if !json {
                 eprintln!("✓");
