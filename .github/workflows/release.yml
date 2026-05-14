@@ -69,10 +69,12 @@ jobs:
           MATRIX_TARGET: ${{ matrix.target }}
           MATRIX_CROSS: ${{ matrix.cross }}
         run: |
+          set -euo pipefail
           if [ "$MATRIX_CROSS" = "true" ]; then
             cross build --release --locked --target "$MATRIX_TARGET"
           else
-            cargo build --release --locked --target "$MATRIX_TARGET"
+            toolchain="$(rustup show active-toolchain | awk '{print $1}')"
+            rustup run "$toolchain" cargo build --release --locked --target "$MATRIX_TARGET"
           fi
 
       - name: Package binary
@@ -190,11 +192,10 @@ jobs:
           cd dist
           for f in *; do
             case "$f" in
-              *.sha256|*.sig|*.pem|*.intoto.jsonl) continue ;;
+              *.sha256|*.bundle|*.intoto.jsonl) continue ;;
             esac
             cosign sign-blob --yes \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.pem" \
+              --bundle "${f}.bundle" \
               "$f"
           done
 
