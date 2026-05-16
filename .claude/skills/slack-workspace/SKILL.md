@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 # version is consumed by scripts/install.sh upgrade comparison — bump with the crate
-version: 0.4.0
+version: 0.5.0
 description: Drive a Slack workspace from the terminal via slack-cli. Use when the user wants to send/edit/delete messages, search Slack history, look up users or channels by name, read threads, add reactions, pin or bookmark messages, or list members in a channel.
 allowed-tools: Bash
 ---
