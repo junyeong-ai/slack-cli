@@ -24,11 +24,14 @@
 # 설치
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 
-# 설정
-slack-cli config init --user-token xoxp-your-token
-slack-cli cache refresh
+# 로그인 (브라우저 OAuth)
+slack-cli auth login --client-id <your-client-id>
+
+# 또는 기존 토큰을 붙여넣기
+slack-cli auth login --user-token xoxp-your-token
 
 # 사용
+slack-cli cache refresh
 slack-cli users "john"
 slack-cli send "#general" "Hello!"
 ```
@@ -79,10 +82,19 @@ slack-cli members "#dev-team"                   # 멤버 목록
 slack-cli emoji --query "party"                 # 이모지 검색
 ```
 
-### 캐시 & 설정
+### 인증 & 캐시 & 설정
 ```bash
-slack-cli cache stats                           # 상태 확인
-slack-cli cache refresh                         # 새로고침
+slack-cli auth login                            # 새 워크스페이스 로그인 (기본: PKCE)
+slack-cli auth login --method static --user-token xoxp-...  # 토큰 붙여넣기
+slack-cli auth profiles                         # 저장된 프로필 목록
+slack-cli auth status --verify                  # 활성 프로필 검증
+slack-cli auth use work                         # 활성 프로필 전환
+slack-cli auth logout                           # 활성 프로필 제거
+
+slack-cli --profile work users "john"           # 특정 프로필로 1회 호출
+
+slack-cli cache stats                           # 캐시 상태
+slack-cli cache refresh                         # 캐시 새로고침
 slack-cli config show                           # 설정 표시
 ```
 
@@ -123,48 +135,66 @@ cargo +1.95.0 build --release
 
 ---
 
-## Slack 토큰 설정
+## 인증
 
-### 1. 앱 생성
-[api.slack.com/apps](https://api.slack.com/apps) → Create New App → From scratch
+`slack-cli`는 토큰을 `~/.config/slack-cli/auth.json`에 0600 권한으로 저장하며, 워크스페이스마다 명명된 프로필로 관리합니다. `config.toml`에는 토큰이 들어가지 않습니다.
 
-### 2. 권한 추가
+### 방법 1 — PKCE OAuth (브라우저 흐름, 권장)
 
-**User Token Scopes** (권장):
+```bash
+slack-cli auth login --client-id <client-id>
+# 또는 환경변수
+SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
+```
+
+`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 사전 준비:
+
+1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성
+2. **OAuth & Permissions** → User Token Scopes에 아래 항목 추가
+3. **Redirect URLs**에 `http://127.0.0.1:53682/callback` 등록
+4. **Manage Distribution**에서 PKCE 옵션 활성화 후 client_id 복사
+
+**User Token Scopes** (전체 기능 사용 시):
 ```
 channels:read  channels:history  groups:read  groups:history
 im:read  im:history  mpim:read  mpim:history
 users:read  users:read.email  chat:write
 reactions:read  reactions:write  pins:read  pins:write
-bookmarks:read  bookmarks:write  emoji:read
-search:read.public  search:read.private  search:read.im
-search:read.mpim  search:read.files  search:read.users
+bookmarks:read  bookmarks:write  emoji:read  search:read
 ```
 
-### 3. 설치 및 토큰 복사
-Install to Workspace → `xoxp-...` 토큰 복사
+### 방법 2 — 토큰 직접 붙여넣기 (Static)
 
-### 4. CLI 설정
+기존 발급된 `xoxp-` / `xoxb-` 토큰이 있을 때:
+
 ```bash
-slack-cli config init --user-token xoxp-your-token
+slack-cli auth login --method static --user-token xoxp-your-token
+# 봇 토큰을 함께 등록
+slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
+
+`auth.test`로 토큰을 검증한 뒤 프로필이 저장됩니다.
+
+### 프로필 관리
+
+```bash
+slack-cli auth profiles                  # 목록
+slack-cli auth status --verify           # 활성 프로필 + auth.test 검증
+slack-cli auth use work                  # 활성 프로필 전환
+slack-cli --profile work users "john"    # 1회 호출에만 다른 프로필 사용
+slack-cli auth logout                    # 활성 프로필 제거
+slack-cli auth logout --all              # 모든 프로필 제거
+```
+
+`--profile NAME`은 글로벌 플래그로 어느 위치에도 둘 수 있습니다.
 
 ---
 
-## 설정
+## 설정 파일
 
-### 환경 변수
-```bash
-export SLACK_USER_TOKEN="xoxp-..."
-export SLACK_BOT_TOKEN="xoxb-..."
-```
+`~/.config/slack-cli/config.toml` (사용자 환경설정, 토큰 없음):
 
-### 설정 파일
-`~/.config/slack-cli/config.toml`:
 ```toml
-user_token = "xoxp-..."
-bot_token = "xoxb-..."
-
 [cache]
 ttl_users_hours = 168          # 1주일
 ttl_channels_hours = 168
@@ -187,7 +217,14 @@ timeout_seconds = 30
 
 `app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
 
-**우선순위**: CLI 옵션 > 환경변수 > 설정 파일
+### 환경변수
+
+| 변수 | 용도 |
+|---|---|
+| `SLACK_USER_TOKEN` | 저장된 프로필을 무시하고 이 토큰을 직접 사용 (CI/headless) |
+| `SLACK_BOT_TOKEN` | 위와 동일, bot 토큰 |
+| `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
+| `SLACK_CLI_CLIENT_ID` | PKCE 로그인 시 client_id (= `--client-id`) |
 
 ---
 
@@ -195,6 +232,11 @@ timeout_seconds = 30
 
 | 명령어 | 설명 |
 |--------|------|
+| `auth login` | 워크스페이스 인증 (`--method pkce\|static`) |
+| `auth logout [--all]` | 프로필 제거 (`--keep-remote`로 `auth.revoke` 생략) |
+| `auth status [--verify]` | 프로필 상태 + 선택적 토큰 검증 |
+| `auth profiles` | 저장된 프로필 목록 |
+| `auth use <name>` | 활성 프로필 전환 |
 | `users <query>` | 사용자 검색 |
 | `users --id <ids>` | ID로 조회 (쉼표 구분) |
 | `channels <query>` | 채널 검색 |
@@ -217,10 +259,13 @@ timeout_seconds = 30
 | `unbookmark <ch> <id>` | 북마크 제거 |
 | `bookmarks <ch>` | 북마크 목록 |
 | `cache stats/refresh` | 캐시 관리 |
-| `config init/show` | 설정 관리 |
+| `config show/path/edit` | 설정 관리 |
 
 ### 공통 옵션
 - `--json` — JSON 출력
+- `--profile <name>` — 1회 호출에 사용할 프로필 (env: `SLACK_PROFILE`)
+- `--config <path>` — config.toml 경로 override
+- `--verbose` — debug 로그 활성
 
 ### users/channels 옵션
 - `--limit <N>` — 결과 제한 (기본: `10`)
@@ -263,7 +308,7 @@ rm -rf ~/.config/slack-cli/cache && slack-cli cache refresh
 ```
 
 ### 권한 오류
-토큰 scope 확인 → Workspace 재설치
+토큰 scope 확인 → Workspace 재설치 → 새 scope 반영 위해 `slack-cli auth login` 재실행
 
 ### 디버그
 ```bash

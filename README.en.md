@@ -24,11 +24,14 @@
 # Install
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 
-# Configure
-slack-cli config init --user-token xoxp-your-token
-slack-cli cache refresh
+# Log in (browser OAuth)
+slack-cli auth login --client-id <your-client-id>
+
+# Or paste an existing token
+slack-cli auth login --user-token xoxp-your-token
 
 # Use
+slack-cli cache refresh
 slack-cli users "john"
 slack-cli send "#general" "Hello!"
 ```
@@ -79,10 +82,19 @@ slack-cli members "#dev-team"                     # List members
 slack-cli emoji --query "party"                   # Search emoji
 ```
 
-### Cache & Config
+### Auth, Cache & Config
 ```bash
-slack-cli cache stats                             # Check status
-slack-cli cache refresh                           # Refresh
+slack-cli auth login                              # Log into a workspace (default: PKCE)
+slack-cli auth login --method static --user-token xoxp-...  # Paste an existing token
+slack-cli auth profiles                           # List stored profiles
+slack-cli auth status --verify                    # Inspect active profile + auth.test
+slack-cli auth use work                           # Switch active profile
+slack-cli auth logout                             # Remove the active profile
+
+slack-cli --profile work users "john"             # Use a different profile for one call
+
+slack-cli cache stats                             # Cache status
+slack-cli cache refresh                           # Refresh cache
 slack-cli config show                             # Show config
 ```
 
@@ -123,48 +135,66 @@ cargo +1.95.0 build --release
 
 ---
 
-## Slack Token Setup
+## Authentication
 
-### 1. Create App
-[api.slack.com/apps](https://api.slack.com/apps) → Create New App → From scratch
+`slack-cli` stores tokens in `~/.config/slack-cli/auth.json` with `0600` permissions, keyed by named workspace profiles. `config.toml` never contains tokens.
 
-### 2. Add Permissions
+### Method 1 — PKCE OAuth (browser flow, recommended)
 
-**User Token Scopes** (recommended):
+```bash
+slack-cli auth login --client-id <client-id>
+# Or via env
+SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
+```
+
+`auth login` briefly binds a callback server on `127.0.0.1:53682`, opens the Slack authorization page in your browser, and exchanges the code for a user token. One-time setup:
+
+1. Create an app at [api.slack.com/apps](https://api.slack.com/apps)
+2. **OAuth & Permissions** → add the User Token Scopes below
+3. **Redirect URLs** → register `http://127.0.0.1:53682/callback`
+4. **Manage Distribution** → enable PKCE and copy the client id
+
+**User Token Scopes** (full feature set):
 ```
 channels:read  channels:history  groups:read  groups:history
 im:read  im:history  mpim:read  mpim:history
 users:read  users:read.email  chat:write
 reactions:read  reactions:write  pins:read  pins:write
-bookmarks:read  bookmarks:write  emoji:read
-search:read.public  search:read.private  search:read.im
-search:read.mpim  search:read.files  search:read.users
+bookmarks:read  bookmarks:write  emoji:read  search:read
 ```
 
-### 3. Install and Copy Token
-Install to Workspace → Copy `xoxp-...` token
+### Method 2 — Paste an existing token (Static)
 
-### 4. Configure CLI
+When you already have an `xoxp-` / `xoxb-` token:
+
 ```bash
-slack-cli config init --user-token xoxp-your-token
+slack-cli auth login --method static --user-token xoxp-your-token
+# Register a bot token alongside it
+slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
+
+The token is validated via `auth.test` before the profile is persisted.
+
+### Managing profiles
+
+```bash
+slack-cli auth profiles                  # List
+slack-cli auth status --verify           # Active profile + auth.test
+slack-cli auth use work                  # Switch active
+slack-cli --profile work users "john"    # Use a different profile for one call
+slack-cli auth logout                    # Remove active
+slack-cli auth logout --all              # Remove every profile
+```
+
+`--profile NAME` is a global flag — position-independent.
 
 ---
 
-## Configuration
+## Config file
 
-### Environment Variables
-```bash
-export SLACK_USER_TOKEN="xoxp-..."
-export SLACK_BOT_TOKEN="xoxb-..."
-```
+`~/.config/slack-cli/config.toml` (user preferences, no tokens):
 
-### Config File
-`~/.config/slack-cli/config.toml`:
 ```toml
-user_token = "xoxp-..."
-bot_token = "xoxb-..."
-
 [cache]
 ttl_users_hours = 168          # 1 week
 ttl_channels_hours = 168
@@ -187,7 +217,14 @@ timeout_seconds = 30
 
 Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
 
-**Priority**: CLI options > Environment variables > Config file
+### Environment variables
+
+| Variable | Purpose |
+|---|---|
+| `SLACK_USER_TOKEN` | Bypass stored profiles and use this token directly (CI / headless) |
+| `SLACK_BOT_TOKEN` | Same, bot token |
+| `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
+| `SLACK_CLI_CLIENT_ID` | PKCE login client id (same as `--client-id`) |
 
 ---
 
@@ -195,6 +232,11 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 
 | Command | Description |
 |---------|-------------|
+| `auth login` | Authenticate to a workspace (`--method pkce\|static`) |
+| `auth logout [--all]` | Remove profile (`--keep-remote` skips `auth.revoke`) |
+| `auth status [--verify]` | Profile status with optional token verification |
+| `auth profiles` | List stored profiles |
+| `auth use <name>` | Switch active profile |
 | `users <query>` | Search users |
 | `users --id <ids>` | Lookup by IDs (comma-separated) |
 | `channels <query>` | Search channels |
@@ -217,10 +259,13 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `unbookmark <ch> <id>` | Remove bookmark |
 | `bookmarks <ch>` | List bookmarks |
 | `cache stats/refresh` | Cache management |
-| `config init/show` | Config management |
+| `config show/path/edit` | Config management |
 
 ### Common Options
 - `--json` — JSON output
+- `--profile <name>` — Use a specific profile for this invocation (env: `SLACK_PROFILE`)
+- `--config <path>` — Override the config.toml path
+- `--verbose` — Enable debug logs
 
 ### users/channels Options
 - `--limit <N>` — Limit results (default: `10`)
@@ -263,7 +308,7 @@ rm -rf ~/.config/slack-cli/cache && slack-cli cache refresh
 ```
 
 ### Permission Errors
-Check token scopes → Reinstall to Workspace
+Check token scopes → Reinstall to Workspace → Re-run `slack-cli auth login` to pick up the new scopes
 
 ### Debug
 ```bash
