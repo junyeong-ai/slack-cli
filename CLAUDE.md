@@ -8,11 +8,12 @@ Rust CLI for the Slack Web API. Single crate, SQLite + FTS5 local cache, async/a
 src/
 ├── main.rs       CLI entry, command dispatch
 ├── cli.rs        clap command definitions
-├── config.rs     TOML config, env vars, token resolution
+├── config.rs     TOML config (user preferences only — no tokens)
 ├── format.rs     Output formatting (table / JSON)
 ├── lib.rs        Library re-exports
-├── slack/        See src/slack/CLAUDE.md
-└── cache/        See src/cache/CLAUDE.md
+├── auth/        See src/auth/CLAUDE.md
+├── slack/       See src/slack/CLAUDE.md
+└── cache/       See src/cache/CLAUDE.md
 ```
 
 ## Build & test
@@ -28,27 +29,8 @@ Debug a single command:
 RUST_LOG=debug cargo run -- users "john"
 ```
 
-## Cross-cutting conventions
+## Cross-cutting rules
 
-### Method naming on `Slack*Client`
-Verb-only, no noun redundancy. Match the Slack API verb when one exists.
-- `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`
-- `users.list`, `channels.list`, `channels.members`
-- `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`
-
-No `send_message`, no `fetch_all_*`, no `get_*` prefixes.
-
-### All HTTP goes through `SlackCore::api_call`
-Per-method behaviour (encoding, token policy, rate limit) is declared once in `slack/api_config.rs::API_CONFIGS`. Never call `reqwest` directly from a domain client.
-
-### Token policy
-Declared per method in `api_config.rs`:
-- `BotPreferred` — bot first, user fallback
-- `UserPreferred` — user first, bot fallback
-- `UserRequired` — user only (use when bot calls would need an `action_token` the CLI cannot supply)
-
-### Output mode flows through the CLI bridge
-`cli.json` is read in `main.rs` and used to derive request-shape options (e.g. `include_message_blocks`, `highlight` for search). Library types in `slack/` stay output-agnostic.
-
-### Fields and constants live in code
-CLI `--expand` field lists and defaults are defined in `config.rs` and `format.rs`. Do not duplicate them in docs. The README's "Available Fields" tables are the user-facing source of truth.
+- **User-facing reference is the README.** CLI flag enumerations, scope lists, and field tables live in `README.md`. Do not duplicate them in submodule docs.
+- **`cli.json` is the output-mode bridge.** `main.rs` reads `cli.json` and derives request-shape options (e.g. `include_message_blocks`, `highlight` for search) before calling library code. Library types in `slack/` stay output-agnostic.
+- **Defaults live in code, not docs.** CLI `--expand` field defaults are declared in `config.rs` and applied in `format.rs`. Adding a new default field belongs there, not in any markdown file.
