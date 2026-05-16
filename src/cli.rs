@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+use crate::auth::AuthMethod;
 use crate::slack::{
     SearchChannelType, SearchContentType, SearchOptions, SearchSort, SearchSortDirection,
 };
@@ -29,22 +30,30 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
-    #[arg(long, env = "SLACK_BOT_TOKEN", global = true, hide_env_values = true)]
-    pub token: Option<String>,
-
-    #[arg(long, env = "SLACK_USER_TOKEN", global = true, hide_env_values = true)]
-    pub user_token: Option<String>,
-
-    #[arg(long, short, global = true)]
+    #[arg(
+        long,
+        short,
+        global = true,
+        help = "Path to config.toml (default: ~/.config/slack-cli/config.toml)"
+    )]
     pub config: Option<PathBuf>,
 
-    #[arg(long, global = true)]
+    #[arg(long, global = true, help = "Override the cache directory")]
     pub data_dir: Option<PathBuf>,
 
-    #[arg(long, short, global = true)]
+    #[arg(
+        long,
+        env = "SLACK_PROFILE",
+        global = true,
+        hide_env_values = true,
+        help = "Select a stored auth profile for this invocation"
+    )]
+    pub profile: Option<String>,
+
+    #[arg(long, short, global = true, help = "Emit machine-readable JSON output")]
     pub json: bool,
 
-    #[arg(long, short, global = true)]
+    #[arg(long, short, global = true, help = "Enable debug logging")]
     pub verbose: bool,
 }
 
@@ -233,6 +242,12 @@ pub enum Command {
     #[command(about = "List bookmarks")]
     Bookmarks { channel: String },
 
+    #[command(about = "Authentication management")]
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+
     #[command(about = "Configuration management")]
     Config {
         #[command(subcommand)]
@@ -247,24 +262,91 @@ pub enum Command {
 }
 
 #[derive(Subcommand)]
-pub enum ConfigAction {
-    #[command(about = "Initialize configuration")]
-    Init {
-        #[arg(long)]
-        bot_token: Option<String>,
-        #[arg(long)]
+pub enum AuthAction {
+    #[command(
+        about = "Authenticate to a Slack workspace",
+        long_about = "Authenticate to a Slack workspace.\n\
+                      Use the global --profile to name the saved profile (default: team slug)."
+    )]
+    Login {
+        #[arg(long, value_enum, help = "Authentication method (default: pkce)")]
+        method: Option<AuthMethodArg>,
+
+        #[arg(long, help = "User token (xoxp-...) for static method")]
         user_token: Option<String>,
-        #[arg(long)]
-        force: bool,
+
+        #[arg(long, help = "Bot token (xoxb-...) for static method")]
+        bot_token: Option<String>,
+
+        #[arg(
+            long,
+            env = "SLACK_CLI_CLIENT_ID",
+            hide_env_values = true,
+            help = "OAuth client ID for PKCE method"
+        )]
+        client_id: Option<String>,
+
+        #[arg(long, help = "Loopback callback port for OAuth")]
+        port: Option<u16>,
+
+        #[arg(long, help = "Do not open a browser; print the URL instead")]
+        no_browser: bool,
     },
 
-    #[command(about = "Show current configuration (tokens masked)")]
+    #[command(
+        about = "Remove a stored authentication profile",
+        long_about = "Remove a stored authentication profile.\n\
+                      Use the global --profile to target a specific profile (default: active)."
+    )]
+    Logout {
+        #[arg(long, help = "Remove every stored profile")]
+        all: bool,
+
+        #[arg(long, help = "Skip the auth.revoke call to Slack")]
+        keep_remote: bool,
+    },
+
+    #[command(
+        about = "Show the active profile and verify the token",
+        long_about = "Show profile details.\n\
+                      Use the global --profile to inspect a specific profile (default: active)."
+    )]
+    Status {
+        #[arg(long, help = "Hit auth.test to confirm the token still works")]
+        verify: bool,
+    },
+
+    #[command(about = "List stored authentication profiles")]
+    Profiles,
+
+    #[command(about = "Switch the active profile")]
+    Use { name: String },
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum AuthMethodArg {
+    Static,
+    Pkce,
+}
+
+impl From<AuthMethodArg> for AuthMethod {
+    fn from(value: AuthMethodArg) -> Self {
+        match value {
+            AuthMethodArg::Static => AuthMethod::Static,
+            AuthMethodArg::Pkce => AuthMethod::Pkce,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+pub enum ConfigAction {
+    #[command(about = "Show current configuration")]
     Show,
 
     #[command(about = "Show configuration file path")]
     Path,
 
-    #[command(about = "Edit configuration with default editor")]
+    #[command(about = "Edit configuration with the default editor")]
     Edit,
 }
 

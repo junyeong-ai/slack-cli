@@ -494,7 +494,7 @@ main() {
     echo "" >&2
     echo "Next steps:" >&2
     echo "" >&2
-    echo "1. Initialize config:   $command_name config init" >&2
+    echo "1. Authenticate:        $command_name auth login" >&2
     echo "2. Refresh cache:       $command_name cache refresh" >&2
     echo "3. Search users:        $command_name users <query>" >&2
     echo "" >&2

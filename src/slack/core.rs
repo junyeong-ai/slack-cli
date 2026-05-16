@@ -6,6 +6,7 @@ use governor::{
     state::{InMemoryState, NotKeyed},
 };
 use reqwest::{Client as HttpClient, StatusCode};
+use secrecy::ExposeSecret;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -13,22 +14,24 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
 
+use crate::auth::Authenticator;
 use crate::config::{Config, SlackAppDistribution};
 use crate::slack::api_config::{
-    API_CONFIGS, RatePolicy, RequestEncoding, TokenPolicy, get_api_config,
+    API_CONFIGS, ApiConfig, RatePolicy, RequestEncoding, get_api_config,
 };
 
 type SimpleRateLimiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
 
 pub struct SlackCore {
     pub(crate) config: Config,
-    pub(crate) http_client: HttpClient,
+    pub(crate) auth: Arc<Authenticator>,
+    pub(crate) http: HttpClient,
     pub(crate) rate_limiters: HashMap<&'static str, SimpleRateLimiter>,
 }
 
 impl SlackCore {
-    pub fn new(config: Config) -> Result<Self> {
-        let http_client = HttpClient::builder()
+    pub fn new(config: Config, auth: Arc<Authenticator>) -> Result<Self> {
+        let http = HttpClient::builder()
             .timeout(Duration::from_secs(config.connection.timeout_seconds))
             .pool_max_idle_per_host(config.connection.max_idle_per_host as usize)
             .pool_idle_timeout(Duration::from_secs(
@@ -59,38 +62,31 @@ impl SlackCore {
 
         Ok(Self {
             config,
-            http_client,
+            auth,
+            http,
             rate_limiters,
         })
     }
 
-    pub(crate) fn get_token(&self, policy: TokenPolicy) -> Result<&str> {
-        match policy {
-            TokenPolicy::UserRequired => {
-                self.config.user_token.as_deref().ok_or_else(|| {
-                    anyhow::anyhow!("Slack user token is required for this API method")
-                })
-            }
-            TokenPolicy::UserPreferred => self
-                .config
-                .user_token
-                .as_deref()
-                .or(self.config.bot_token.as_deref())
-                .ok_or_else(|| anyhow::anyhow!("No Slack token available")),
-            TokenPolicy::BotPreferred => self
-                .config
-                .bot_token
-                .as_deref()
-                .or(self.config.user_token.as_deref())
-                .ok_or_else(|| anyhow::anyhow!("No Slack token available")),
-        }
+    pub async fn api_call(&self, method: &str, params: Value) -> Result<Value> {
+        let api_config = lookup_config(method)?;
+        let token = self.auth.token_for(api_config.token_policy).await?;
+        self.dispatch(method, api_config, params, token.expose_secret())
+            .await
     }
 
-    pub async fn api_call(&self, method: &str, mut params: Value) -> Result<Value> {
-        let api_config = get_api_config(method)
-            .ok_or_else(|| anyhow::anyhow!("Unknown API method: {}", method))?;
+    pub async fn api_call_with(&self, method: &str, params: Value, token: &str) -> Result<Value> {
+        let api_config = lookup_config(method)?;
+        self.dispatch(method, api_config, params, token).await
+    }
 
-        let token = self.get_token(api_config.token_policy)?;
+    async fn dispatch(
+        &self,
+        method: &str,
+        api_config: &'static ApiConfig,
+        mut params: Value,
+        token: &str,
+    ) -> Result<Value> {
         let rate_policy = Self::effective_rate_policy(
             &self.config.connection.app_distribution,
             method,
@@ -131,14 +127,14 @@ impl SlackCore {
                         url.push_str(&format!("?{}", query_string));
                     }
 
-                    self.http_client
+                    self.http
                         .get(&url)
                         .header("Authorization", format!("Bearer {}", token))
                         .send()
                         .await
                 }
                 RequestEncoding::Json => {
-                    self.http_client
+                    self.http
                         .post(&endpoint)
                         .header("Authorization", format!("Bearer {}", token))
                         .header("Content-Type", "application/json")
@@ -162,19 +158,12 @@ impl SlackCore {
                     ));
                 }
 
-                let wait_time = if let Some(retry_after) = headers.get("Retry-After") {
-                    if let Ok(retry_after_str) = retry_after.to_str() {
-                        if let Ok(retry_seconds) = retry_after_str.parse::<u64>() {
-                            retry_seconds * 1000
-                        } else {
-                            delay
-                        }
-                    } else {
-                        delay
-                    }
-                } else {
-                    delay
-                };
+                let wait_time = headers
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(|secs| secs * 1000)
+                    .unwrap_or(delay);
 
                 warn!(
                     "Rate limited for {}, retrying in {}ms (attempt {}/{})",
@@ -235,6 +224,10 @@ impl SlackCore {
             _ => base_policy,
         }
     }
+}
+
+fn lookup_config(method: &str) -> Result<&'static ApiConfig> {
+    get_api_config(method).ok_or_else(|| anyhow::anyhow!("Unknown API method: {}", method))
 }
 
 #[cfg(test)]

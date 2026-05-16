@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use crate::slack::ConversationType;
 
-/// Expand tilde (~) to home directory in path
 fn expand_tilde(path: &Path) -> PathBuf {
     if let Some(path_str) = path.to_str() {
         if let Some(stripped) = path_str.strip_prefix("~/") {
@@ -22,9 +21,6 @@ fn expand_tilde(path: &Path) -> PathBuf {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Config {
-    pub bot_token: Option<String>,
-    pub user_token: Option<String>,
-
     #[serde(default)]
     pub cache: CacheConfig,
 
@@ -171,11 +167,6 @@ fn default_rate_limit_per_minute() -> u32 {
     20
 }
 
-fn normalize_token(token: String) -> Option<String> {
-    let token = token.trim();
-    (!token.is_empty()).then(|| token.to_string())
-}
-
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
@@ -213,12 +204,7 @@ impl Default for ConnectionConfig {
 }
 
 impl Config {
-    pub fn load(
-        config_path: Option<PathBuf>,
-        cli_token: Option<String>,
-        cli_user_token: Option<String>,
-        cli_data_dir: Option<PathBuf>,
-    ) -> Result<Self> {
+    pub fn load(config_path: Option<PathBuf>, cli_data_dir: Option<PathBuf>) -> Result<Self> {
         let mut config = Self::default();
 
         let path = config_path.or_else(Self::default_config_path);
@@ -228,29 +214,10 @@ impl Config {
             config = toml::from_str(&content).context("Failed to parse config.toml")?;
         }
 
-        if let Ok(token) = std::env::var("SLACK_BOT_TOKEN")
-            && let Some(token) = normalize_token(token)
-        {
-            config.bot_token = Some(token);
-        }
-        if let Ok(token) = std::env::var("SLACK_USER_TOKEN")
-            && let Some(token) = normalize_token(token)
-        {
-            config.user_token = Some(token);
-        }
-
-        if let Some(token) = cli_token.and_then(normalize_token) {
-            config.bot_token = Some(token);
-        }
-        if let Some(token) = cli_user_token.and_then(normalize_token) {
-            config.user_token = Some(token);
-        }
         if let Some(dir) = cli_data_dir {
             config.cache.data_path = Some(dir);
         }
 
-        config.bot_token = config.bot_token.take().and_then(normalize_token);
-        config.user_token = config.user_token.take().and_then(normalize_token);
         config.connection.api_base_url = config
             .connection
             .api_base_url
@@ -258,37 +225,12 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
-        if config.bot_token.is_none() && config.user_token.is_none() {
-            anyhow::bail!(
-                "No Slack token found. Set via:\n\
-                 - Config file: {}\n\
-                 - Environment: SLACK_BOT_TOKEN or SLACK_USER_TOKEN\n\
-                 - CLI flag: --token\n\
-                 - Or run: slack-cli config init",
-                Self::default_config_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "~/.config/slack-cli/config.toml".to_string())
-            );
-        }
-
         config.validate()?;
 
         Ok(config)
     }
 
     fn validate(&self) -> Result<()> {
-        if self
-            .bot_token
-            .as_deref()
-            .is_some_and(|token| token.trim().is_empty())
-            || self
-                .user_token
-                .as_deref()
-                .is_some_and(|token| token.trim().is_empty())
-        {
-            anyhow::bail!("Slack tokens must not be empty");
-        }
-
         if self.cache.ttl_users_hours == 0 || self.cache.ttl_channels_hours == 0 {
             anyhow::bail!("cache TTL values must be greater than zero");
         }
@@ -341,7 +283,6 @@ impl Config {
     }
 
     pub fn default_config_path() -> Option<PathBuf> {
-        // Use XDG Base Directory or ~/.config for all platforms
         std::env::var("XDG_CONFIG_HOME")
             .ok()
             .map(PathBuf::from)
@@ -358,7 +299,6 @@ impl Config {
     }
 
     pub fn default_data_dir() -> Option<PathBuf> {
-        // Place cache under config directory for simplicity: ~/.config/slack-cli/cache
         std::env::var("XDG_CONFIG_HOME")
             .ok()
             .map(PathBuf::from)
@@ -379,7 +319,7 @@ impl Config {
             .cache
             .data_path
             .clone()
-            .map(|p| expand_tilde(&p)) // Expand ~ to home directory
+            .map(|p| expand_tilde(&p))
             .or_else(Self::default_data_dir)
             .unwrap_or_else(|| {
                 #[cfg(target_os = "macos")]
@@ -405,98 +345,79 @@ impl Config {
         path
     }
 
-    pub fn show_masked(&self, as_json: bool) -> Result<()> {
-        let mut masked = self.clone();
-
-        if let Some(token) = &masked.bot_token {
-            masked.bot_token = Some(mask_token(token));
-        }
-        if let Some(token) = &masked.user_token {
-            masked.user_token = Some(mask_token(token));
-        }
-
+    pub fn show(&self, as_json: bool) -> Result<()> {
         if as_json {
-            println!("{}", serde_json::to_string_pretty(&masked)?);
-        } else {
-            println!("Configuration:");
-            println!(
-                "  bot_token: {}",
-                masked.bot_token.as_deref().unwrap_or("-")
-            );
-            println!(
-                "  user_token: {}",
-                masked.user_token.as_deref().unwrap_or("-")
-            );
-            println!("\nCache:");
-            println!("  ttl_users_hours: {}", masked.cache.ttl_users_hours);
-            println!("  ttl_channels_hours: {}", masked.cache.ttl_channels_hours);
-            println!(
-                "  refresh_threshold_percent: {}",
-                masked.cache.refresh_threshold_percent
-            );
-            println!(
-                "  data_path: {}",
-                masked
-                    .cache
-                    .data_path
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| Self::default_data_dir()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|| "-".to_string()))
-            );
-            let channel_types: Vec<&str> = masked
-                .cache
-                .channel_types
-                .iter()
-                .map(|t| t.as_api_str())
-                .collect();
-            println!("  channel_types: {:?}", channel_types);
-            println!("\nOutput:");
-            println!("  users_fields: {:?}", masked.output.users_fields);
-            println!("  channels_fields: {:?}", masked.output.channels_fields);
-            println!("\nRetry:");
-            println!("  max_attempts: {}", masked.retry.max_attempts);
-            println!("  initial_delay_ms: {}", masked.retry.initial_delay_ms);
-            println!("  max_delay_ms: {}", masked.retry.max_delay_ms);
-            println!("  exponential_base: {}", masked.retry.exponential_base);
-            println!("\nConnection:");
-            println!("  api_base_url: {}", masked.connection.api_base_url);
-            println!("  timeout_seconds: {}", masked.connection.timeout_seconds);
-            println!(
-                "  max_idle_per_host: {}",
-                masked.connection.max_idle_per_host
-            );
-            println!(
-                "  pool_idle_timeout_seconds: {}",
-                masked.connection.pool_idle_timeout_seconds
-            );
-            println!(
-                "  rate_limit_per_minute: {}",
-                masked.connection.rate_limit_per_minute
-            );
-            println!(
-                "  app_distribution: {}",
-                match masked.connection.app_distribution {
-                    SlackAppDistribution::CommercialExternal => "commercial_external",
-                    SlackAppDistribution::MarketplaceOrInternal => "marketplace_or_internal",
-                }
-            );
+            println!("{}", serde_json::to_string_pretty(self)?);
+            return Ok(());
         }
+
+        println!("Cache:");
+        println!("  ttl_users_hours: {}", self.cache.ttl_users_hours);
+        println!("  ttl_channels_hours: {}", self.cache.ttl_channels_hours);
+        println!(
+            "  refresh_threshold_percent: {}",
+            self.cache.refresh_threshold_percent
+        );
+        println!(
+            "  data_path: {}",
+            self.cache
+                .data_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| Self::default_data_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "-".to_string()))
+        );
+        let channel_types: Vec<&str> = self
+            .cache
+            .channel_types
+            .iter()
+            .map(|t| t.as_api_str())
+            .collect();
+        println!("  channel_types: {:?}", channel_types);
+        println!("\nOutput:");
+        println!("  users_fields: {:?}", self.output.users_fields);
+        println!("  channels_fields: {:?}", self.output.channels_fields);
+        println!("\nRetry:");
+        println!("  max_attempts: {}", self.retry.max_attempts);
+        println!("  initial_delay_ms: {}", self.retry.initial_delay_ms);
+        println!("  max_delay_ms: {}", self.retry.max_delay_ms);
+        println!("  exponential_base: {}", self.retry.exponential_base);
+        println!("\nConnection:");
+        println!("  api_base_url: {}", self.connection.api_base_url);
+        println!("  timeout_seconds: {}", self.connection.timeout_seconds);
+        println!("  max_idle_per_host: {}", self.connection.max_idle_per_host);
+        println!(
+            "  pool_idle_timeout_seconds: {}",
+            self.connection.pool_idle_timeout_seconds
+        );
+        println!(
+            "  rate_limit_per_minute: {}",
+            self.connection.rate_limit_per_minute
+        );
+        println!(
+            "  app_distribution: {}",
+            match self.connection.app_distribution {
+                SlackAppDistribution::CommercialExternal => "commercial_external",
+                SlackAppDistribution::MarketplaceOrInternal => "marketplace_or_internal",
+            }
+        );
 
         Ok(())
     }
 
-    pub fn edit_config(config_path: Option<PathBuf>) -> Result<()> {
+    pub fn edit(config_path: Option<PathBuf>) -> Result<()> {
         let path = config_path
             .or_else(Self::default_config_path)
             .context("Cannot determine config path")?;
 
         if !path.exists() {
-            println!(
-                "Config file does not exist: {}\nRun: slack-cli config init",
-                path.display()
-            );
-            return Ok(());
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let default = Self::default();
+            let content = toml::to_string_pretty(&default)?;
+            std::fs::write(&path, content)?;
         }
 
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
@@ -519,16 +440,6 @@ impl Config {
         }
 
         Ok(())
-    }
-}
-
-fn mask_token(token: &str) -> String {
-    if token.len() <= 8 {
-        "*".repeat(token.len())
-    } else {
-        let prefix = &token[..4];
-        let suffix = &token[token.len() - 4..];
-        format!("{}...{}", prefix, suffix)
     }
 }
 
@@ -572,7 +483,6 @@ mod tests {
 
         #[test]
         fn handles_tilde_in_middle() {
-            // Tilde in middle should NOT be expanded
             let path = Path::new("/path/~user/test");
             let result = expand_tilde(path);
             assert_eq!(result, PathBuf::from("/path/~user/test"));
@@ -583,35 +493,6 @@ mod tests {
             let path = Path::new("");
             let result = expand_tilde(path);
             assert_eq!(result, PathBuf::from(""));
-        }
-    }
-
-    mod mask_token_tests {
-        use super::*;
-
-        #[test]
-        fn masks_short_token() {
-            assert_eq!(mask_token("abc"), "***");
-            assert_eq!(mask_token("12345678"), "********");
-        }
-
-        #[test]
-        fn masks_long_token_with_ellipsis() {
-            assert_eq!(mask_token("xoxb-123456789"), "xoxb...6789");
-            assert_eq!(mask_token("123456789"), "1234...6789");
-        }
-
-        #[test]
-        fn handles_empty_token() {
-            assert_eq!(mask_token(""), "");
-        }
-
-        #[test]
-        fn handles_exact_boundary() {
-            // 8 chars = fully masked
-            assert_eq!(mask_token("12345678"), "********");
-            // 9 chars = prefix...suffix
-            assert_eq!(mask_token("123456789"), "1234...6789");
         }
     }
 
@@ -635,99 +516,39 @@ mod tests {
         }
 
         #[test]
-        fn channel_type_deserializes_from_snake_case() {
-            #[derive(Deserialize)]
-            struct Wrapper {
-                types: Vec<ConversationType>,
-            }
-            let parsed: Wrapper = toml::from_str(
-                "types = [\"public_channel\", \"private_channel\", \"mpim\", \"im\"]",
+        fn load_normalizes_api_base_url() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(
+                &path,
+                "[connection]\napi_base_url = \" https://slack.com/api/ \"\n",
             )
             .unwrap();
-            assert_eq!(
-                parsed.types,
-                vec![
-                    ConversationType::PublicChannel,
-                    ConversationType::PrivateChannel,
-                    ConversationType::Mpim,
-                    ConversationType::Im,
-                ]
-            );
-        }
 
-        #[test]
-        fn channel_type_rejects_invalid_value() {
-            #[derive(Deserialize)]
-            struct Wrapper {
-                #[allow(dead_code)]
-                types: Vec<ConversationType>,
-            }
-            let result: Result<Wrapper, _> = toml::from_str("types = [\"invalid\"]");
-            assert!(result.is_err());
+            let config = Config::load(Some(path), None).unwrap();
+            assert_eq!(config.connection.api_base_url, "https://slack.com/api");
         }
 
         #[test]
         fn load_rejects_empty_channel_types() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            std::fs::write(
-                &path,
-                "user_token = \"xoxp-test\"\n[cache]\nchannel_types = []\n",
-            )
-            .unwrap();
+            std::fs::write(&path, "[cache]\nchannel_types = []\n").unwrap();
 
-            let err = Config::load(Some(path), None, None, None).unwrap_err();
-            let msg = err.to_string();
-            assert!(
-                msg.contains("channel_types must not be empty"),
-                "unexpected error: {msg}"
-            );
-        }
-
-        #[test]
-        fn load_rejects_whitespace_only_tokens() {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("config.toml");
-            std::fs::write(&path, "user_token = \"   \"\n").unwrap();
-
-            let err = Config::load(Some(path), None, None, None).unwrap_err();
-            let msg = err.to_string();
-            assert!(
-                msg.contains("No Slack token found"),
-                "unexpected error: {msg}"
-            );
-        }
-
-        #[test]
-        fn load_normalizes_tokens_and_api_base_url() {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("config.toml");
-            std::fs::write(
-                &path,
-                "user_token = \"  xoxp-test  \"\n[connection]\napi_base_url = \" https://slack.com/api/ \"\n",
-            )
-            .unwrap();
-
-            let config = Config::load(Some(path), None, None, None).unwrap();
-            assert_eq!(config.user_token.as_deref(), Some("xoxp-test"));
-            assert_eq!(config.connection.api_base_url, "https://slack.com/api");
+            let err = Config::load(Some(path), None).unwrap_err();
+            assert!(err.to_string().contains("channel_types must not be empty"));
         }
 
         #[test]
         fn load_rejects_invalid_connection_values() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            std::fs::write(
-                &path,
-                "user_token = \"xoxp-test\"\n[connection]\nmax_idle_per_host = -1\n",
-            )
-            .unwrap();
+            std::fs::write(&path, "[connection]\nmax_idle_per_host = -1\n").unwrap();
 
-            let err = Config::load(Some(path), None, None, None).unwrap_err();
-            let msg = err.to_string();
+            let err = Config::load(Some(path), None).unwrap_err();
             assert!(
-                msg.contains("max_idle_per_host must not be negative"),
-                "unexpected error: {msg}"
+                err.to_string()
+                    .contains("max_idle_per_host must not be negative")
             );
         }
 
@@ -735,17 +556,12 @@ mod tests {
         fn load_rejects_invalid_retry_values() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            std::fs::write(
-                &path,
-                "user_token = \"xoxp-test\"\n[retry]\nmax_attempts = 0\n",
-            )
-            .unwrap();
+            std::fs::write(&path, "[retry]\nmax_attempts = 0\n").unwrap();
 
-            let err = Config::load(Some(path), None, None, None).unwrap_err();
-            let msg = err.to_string();
+            let err = Config::load(Some(path), None).unwrap_err();
             assert!(
-                msg.contains("retry.max_attempts must be greater than zero"),
-                "unexpected error: {msg}"
+                err.to_string()
+                    .contains("retry.max_attempts must be greater than zero")
             );
         }
 
@@ -753,17 +569,12 @@ mod tests {
         fn load_rejects_invalid_cache_threshold() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            std::fs::write(
-                &path,
-                "user_token = \"xoxp-test\"\n[cache]\nrefresh_threshold_percent = 101\n",
-            )
-            .unwrap();
+            std::fs::write(&path, "[cache]\nrefresh_threshold_percent = 101\n").unwrap();
 
-            let err = Config::load(Some(path), None, None, None).unwrap_err();
-            let msg = err.to_string();
+            let err = Config::load(Some(path), None).unwrap_err();
             assert!(
-                msg.contains("refresh_threshold_percent must be between 1 and 100"),
-                "unexpected error: {msg}"
+                err.to_string()
+                    .contains("refresh_threshold_percent must be between 1 and 100")
             );
         }
 
@@ -787,22 +598,6 @@ mod tests {
             assert!(matches!(
                 config.app_distribution,
                 SlackAppDistribution::CommercialExternal
-            ));
-        }
-
-        #[test]
-        fn app_distribution_deserializes_from_snake_case() {
-            #[derive(Deserialize)]
-            struct Wrapper {
-                app_distribution: SlackAppDistribution,
-            }
-
-            let parsed: Wrapper =
-                toml::from_str("app_distribution = \"marketplace_or_internal\"").unwrap();
-
-            assert!(matches!(
-                parsed.app_distribution,
-                SlackAppDistribution::MarketplaceOrInternal
             ));
         }
     }

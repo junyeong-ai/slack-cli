@@ -1,17 +1,12 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+pub use crate::auth::TokenPolicy;
+
 #[derive(Debug, Clone, Copy)]
 pub enum RequestEncoding {
     Query,
     Json,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TokenPolicy {
-    BotPreferred,
-    UserPreferred,
-    UserRequired,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +153,15 @@ pub static API_CONFIGS: LazyLock<HashMap<&'static str, ApiConfig>> = LazyLock::n
             10,
             Some(20),
         ),
+    );
+
+    m.insert(
+        "auth.test",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::UserPreferred, 60, None),
+    );
+    m.insert(
+        "auth.revoke",
+        ApiConfig::new(RequestEncoding::Json, TokenPolicy::UserPreferred, 60, None),
     );
 
     m

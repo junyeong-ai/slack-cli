@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::auth::Authenticator;
 use crate::config::Config;
 
+use super::auth::SlackAuthClient;
 use super::bookmarks::SlackBookmarkClient;
 use super::channels::SlackChannelClient;
 use super::core::SlackCore;
@@ -15,6 +17,7 @@ use super::search::SlackSearchClient;
 use super::users::SlackUserClient;
 
 pub struct SlackClient {
+    pub auth: SlackAuthClient,
     pub messages: SlackMessageClient,
     pub users: SlackUserClient,
     pub channels: SlackChannelClient,
@@ -26,10 +29,11 @@ pub struct SlackClient {
 }
 
 impl SlackClient {
-    pub fn new(config: Config) -> Result<Self> {
-        let core = Arc::new(SlackCore::new(config)?);
+    pub fn new(config: Config, auth: Arc<Authenticator>) -> Result<Self> {
+        let core = Arc::new(SlackCore::new(config, auth)?);
 
         Ok(Self {
+            auth: SlackAuthClient::new(core.clone()),
             messages: SlackMessageClient::new(core.clone()),
             users: SlackUserClient::new(core.clone()),
             channels: SlackChannelClient::new(core.clone()),

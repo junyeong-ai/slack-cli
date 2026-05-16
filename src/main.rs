@@ -2,12 +2,11 @@ use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
 use slack_cli::{
+    auth::{self, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
     cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget},
     config, format, slack,
 };
-use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -24,29 +23,41 @@ async fn main() -> Result<()> {
 
     dotenvy::dotenv().ok();
 
+    let config = config::Config::load(cli.config.clone(), cli.data_dir.clone())?;
+
     if let Command::Config { action } = &cli.command {
-        return handle_config_action(
-            action,
-            cli.json,
-            cli.config.clone(),
-            cli.token.clone(),
-            cli.user_token.clone(),
-            cli.data_dir.clone(),
-        );
+        return handle_config_action(action, cli.json, cli.config.clone(), &config);
     }
 
-    let config = config::Config::load(cli.config, cli.token, cli.user_token, cli.data_dir)?;
+    let store_path = auth::default_store_path()
+        .context("could not determine auth store path (set XDG_CONFIG_HOME or HOME)")?;
+    let authenticator = Arc::new(Authenticator::load(AuthLoadOptions {
+        store_path,
+        overrides: EnvOverrides::capture(),
+        explicit_profile: cli.profile.clone(),
+    })?);
+
+    if let Command::Auth { action } = cli.command {
+        return auth::cli_handler::handle(
+            action,
+            cli.profile.clone(),
+            config,
+            authenticator,
+            cli.json,
+        )
+        .await;
+    }
+
+    let slack = Arc::new(slack::SlackClient::new(config.clone(), authenticator)?);
 
     let db_path = config.db_path();
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-
     let db_path_str = db_path
         .to_str()
         .context("Database path contains invalid UTF-8 characters")?;
     let cache = Arc::new(cache::SqliteCache::new(db_path_str).await?);
-    let slack = Arc::new(slack::SlackClient::new(config.clone())?);
 
     let threshold = config.cache.refresh_threshold_percent;
     let cache_status = cache.get_cache_status(
@@ -340,7 +351,7 @@ async fn main() -> Result<()> {
             }
         },
 
-        Command::Config { .. } => unreachable!(),
+        Command::Auth { .. } | Command::Config { .. } => unreachable!(),
     }
 
     if cache_status == CacheStatus::NeedsRefresh && !cli.json {
@@ -353,24 +364,11 @@ async fn main() -> Result<()> {
 fn handle_config_action(
     action: &ConfigAction,
     as_json: bool,
-    config_path: Option<PathBuf>,
-    cli_token: Option<String>,
-    cli_user_token: Option<String>,
-    cli_data_dir: Option<PathBuf>,
+    config_path: Option<std::path::PathBuf>,
+    config: &config::Config,
 ) -> Result<()> {
     match action {
-        ConfigAction::Init {
-            bot_token,
-            user_token,
-            force,
-        } => init_config(config_path, bot_token.clone(), user_token.clone(), *force),
-
-        ConfigAction::Show => {
-            let config =
-                config::Config::load(config_path, cli_token, cli_user_token, cli_data_dir)?;
-            config.show_masked(as_json)
-        }
-
+        ConfigAction::Show => config.show(as_json),
         ConfigAction::Path => {
             let path = config_path
                 .or_else(config::Config::default_config_path)
@@ -378,8 +376,7 @@ fn handle_config_action(
             println!("{}", path.display());
             Ok(())
         }
-
-        ConfigAction::Edit => config::Config::edit_config(config_path),
+        ConfigAction::Edit => config::Config::edit(config_path),
     }
 }
 
@@ -501,84 +498,6 @@ fn parse_timestamp(input: &str) -> Result<String> {
         return Ok(input.to_string());
     }
     parse_unix_seconds(input).map(|s| s.to_string())
-}
-
-fn init_config(
-    config_path: Option<PathBuf>,
-    bot_token: Option<String>,
-    user_token: Option<String>,
-    force: bool,
-) -> Result<()> {
-    let path = config_path
-        .or_else(config::Config::default_config_path)
-        .context("Cannot determine config path")?;
-
-    if path.exists() && !force {
-        anyhow::bail!(
-            "Config exists: {}\nUse --force to overwrite",
-            path.display()
-        );
-    }
-
-    let bot_token = bot_token.and_then(trim_token);
-    let user_token = user_token.and_then(trim_token);
-
-    let (bot_token, user_token) = match (bot_token, user_token) {
-        (bot_token, user_token) if bot_token.is_some() || user_token.is_some() => {
-            (bot_token, user_token)
-        }
-        _ if io::stdin().is_terminal() => {
-            let user_token = prompt_optional("User token (xoxp-..., recommended): ")?;
-            let bot_token = prompt_optional("Bot token (xoxb-..., optional): ")?;
-            (bot_token, user_token)
-        }
-        _ => anyhow::bail!(
-            "No Slack token provided. Use --user-token xoxp-... or --bot-token xoxb-..."
-        ),
-    };
-
-    if bot_token.is_none() && user_token.is_none() {
-        anyhow::bail!("At least one Slack token is required");
-    }
-
-    let config = config::Config {
-        bot_token,
-        user_token,
-        ..Default::default()
-    };
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let content = toml::to_string_pretty(&config)?;
-    std::fs::write(&path, content)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&path)?.permissions();
-        perms.set_mode(0o600);
-        std::fs::set_permissions(&path, perms)?;
-    }
-
-    println!("✓ Config saved: {}", path.display());
-    println!("\nRun: slack-cli cache refresh");
-
-    Ok(())
-}
-
-fn prompt_optional(prompt: &str) -> Result<Option<String>> {
-    print!("{}", prompt);
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let value = input.trim();
-    Ok((!value.is_empty()).then(|| value.to_string()))
-}
-
-fn trim_token(token: String) -> Option<String> {
-    let token = token.trim();
-    (!token.is_empty()).then(|| token.to_string())
 }
 
 async fn refresh_cache(

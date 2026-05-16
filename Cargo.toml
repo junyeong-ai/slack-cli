@@ -29,29 +29,36 @@ name = "slack-cli"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.6", features = ["derive", "env"] }
-tokio = { version = "1.52", default-features = false, features = ["macros", "rt-multi-thread", "time"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync", "fs", "net", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 serde_urlencoded = "0.7"
 reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
 rusqlite = { version = "0.39", features = ["bundled", "chrono", "serde_json"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.33"
-anyhow = "1.0"
-thiserror = "2.0"
+r2d2_sqlite = "0.34"
+anyhow = "1"
+thiserror = "2"
 governor = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-toml = "1.1"
+toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1.23", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+secrecy = { version = "0.10", features = ["serde"] }
+sha2 = "0.11"
+base64 = "0.22"
+rand = "0.10"
+open = "5"
+tempfile = "3"
+url = "2"
 
 [dev-dependencies]
-tokio = { version = "1.52", default-features = false, features = ["full", "test-util"] }
+tokio = { version = "1", default-features = false, features = ["full", "test-util"] }
 rstest = "0.26"
-tempfile = "3.27"
+wiremock = "0.6"
 
 [profile.release]
 opt-level = 3
