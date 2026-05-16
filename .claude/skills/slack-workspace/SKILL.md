@@ -87,14 +87,19 @@ Names resolve via the local cache. If a lookup says the name is unknown, run `sl
 
 slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for these field names with `jq`:
 
-- `users --json` → array of `{id, name, real_name, email, ...}`
-- `channels --json` → array of `{id, name, type, members}` (member count is `members`, not `num_members`)
-- `messages --json`, `thread --json` → array of message objects with `ts`, `user`, `text`, `bot_id`, optional `reply_count`
-- `send --json` → `{ts, channel}`
-- `reactions --json` → `{reactions: [{name, count, users}]}`
-- `pins --json`, `bookmarks --json` → arrays
-- `emoji --json` → `{name: url}` map
-- `search --json` → `{messages, files, channels, users}` object. Each message uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape
+- `users --json` → array. Fields are filtered by config defaults (`id, name, real_name, email`) plus anything passed to `--expand` (`avatar, title, timezone, status, status_emoji, display_name, is_admin, is_bot, deleted`). Anything outside that union is absent.
+- `channels --json` → array. Same field-filter model. Defaults `id, name, type, members`; `--expand` adds `topic, purpose, created, creator, is_member, is_archived, is_private`. Member count is `members`, not `num_members`.
+- `members --json` → array of user-id strings (`["U123", "U456", ...]`), not user objects.
+- `messages --json`, `thread --json` → array of message objects. Common fields: `ts`, `user`, `text`, `bot_id`, `username`, `thread_ts`, `reply_count`, `reactions`. Optional fields are omitted when null.
+- `send --json`, `update --json` → `{channel, ts}`.
+- `reactions --json` → `{channel, ts, reactions: [{name, count, users}]}`.
+- `pins --json` → array of `{ts, text, ...}`.
+- `bookmarks --json` (list) → array of `{id, channel_id, title, link, type, emoji?, date_created, date_updated}`.
+- `bookmark --json` (add) → single object with the same shape.
+- `emoji --json` → array of `{name, url, is_alias, alias_for}`. Iterate with `.[]`, do not subscript by emoji name.
+- `search --json` → `{messages, files, channels, users}` object. Each `.messages[]` uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape.
+- `cache stats --json` → `{users: N, channels: N}`.
+- `auth status --json` / `auth profiles --json` → metadata about stored profile(s); tokens are always masked (`xoxp...abcd`).
 
 ## `--expand` fields
 
