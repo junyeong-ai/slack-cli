@@ -1,114 +1,128 @@
 ---
 name: slack-workspace
-# Consumed by scripts/install.sh for upgrade comparison; bump with the crate version.
+# version is consumed by scripts/install.sh upgrade comparison — bump with the crate
 version: 0.4.0
-description: |
-  Execute Slack workspace workflows via slack-cli. Search Slack context with the Real-time Search API,
-  look up users/channels from the local cache, send/update/delete messages, add reactions, pin messages,
-  manage bookmarks, and list emoji.
+description: Drive a Slack workspace from the terminal via slack-cli. Use when the user wants to send/edit/delete messages, search Slack history, look up users or channels by name, read threads, add reactions, pin or bookmark messages, or list members in a channel.
 allowed-tools: Bash
 ---
 
 # slack-cli
 
-**Use `--json` for machine parsing.** Combine with `jq` for extraction.
+## Idiom: `--json | jq`
+
+Default output is human-formatted. Add `--json` whenever you need to parse or chain commands.
 
 ```bash
-# Get user ID
+# User ID from a name
 slack-cli users "john" --json | jq -r '.[0].id'
 
-# Get channel ID and send a message
+# Channel ID, then send
 ch=$(slack-cli channels "general" --json | jq -r '.[0].id')
 slack-cli send "$ch" "Hello"
 
-# Send and capture timestamp for thread reply
+# Send a parent message, then reply in the thread
 ts=$(slack-cli send "#general" "Parent" --json | jq -r '.ts')
 slack-cli send "#general" "Reply" --thread "$ts"
 
-# Search Slack context
-slack-cli search "What changed in the deploy plan?" --sort timestamp --json
+# Search workspace content (Real-time Search API)
+slack-cli search "deploy plan changes" --sort timestamp --json
 ```
+
+## Slack mrkdwn — translate before sending
+
+When the user dictates a message in Markdown, convert before passing to `send` / `update`. Markdown syntax renders literally in Slack (e.g. `**bold**` shows the asterisks).
+
+| Element | Slack | Wrong |
+|---------|-------|-------|
+| Bold | `*text*` | `**text**` |
+| Italic | `_text_` | `*text*` |
+| Strikethrough | `~text~` | `~~text~~` |
+| Inline code | `` `text` `` | (same) |
+| Link | `<url\|label>` | `[label](url)` |
+| User mention | `<@U123>` | `@user` |
+| Channel mention | `<#C123>` | `#channel` |
+| List item | `• item` (U+2022) | `- item` |
 
 ## Commands
 
 ```bash
-# Users & Channels
-slack-cli users <query> [--id U1,U2] [--expand <fields>] [--limit N] --json
-slack-cli channels <query> [--id C1,C2] [--expand <fields>] [--limit N] --json
+# Lookups (cache-backed; one-time `cache refresh` after login)
+slack-cli users    <query>   [--id U1,U2] [--expand FIELDS] [--limit N] --json
+slack-cli channels <query>   [--id C1,C2] [--expand FIELDS] [--limit N] --json
+slack-cli members  <channel>
 
 # Messages
-slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
-slack-cli thread <channel> <ts> --json
-slack-cli search <query> [--limit N] [--channel <ch>] [--before DATE] [--after DATE] [--channel-types TYPES] [--content-types TYPES] [--include-context] [--include-bots] [--include-archived] [--no-semantic] [--sort score|timestamp] [--sort-dir asc|desc] --json
-slack-cli send <channel> <text> [--thread <ts>]    # returns {ts, channel}
-slack-cli update <channel> <ts> <text>
-slack-cli delete <channel> <ts>
+slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand date,user_name] --json
+slack-cli thread   <channel> <ts> --json
+slack-cli search   <query>   [filters…] --json
+slack-cli send     <channel> <text> [--thread <ts>]      # returns {ts, channel}
+slack-cli update   <channel> <ts>   <text>
+slack-cli delete   <channel> <ts>
 
-# DATE: Unix timestamp or YYYY-MM-DD
-# --expand for messages: date, user_name
-
-# Reactions & Pins
-slack-cli react <channel> <ts> <emoji>
-slack-cli unreact <channel> <ts> <emoji>
-slack-cli reactions <channel> <ts> --json
-slack-cli pin/unpin <channel> <ts>
-slack-cli pins <channel> --json
-
-# Bookmarks
-slack-cli bookmark <channel> <title> <url> [--emoji <e>]
+# Reactions, pins, bookmarks, emoji
+slack-cli react      <channel> <ts> <emoji>
+slack-cli unreact    <channel> <ts> <emoji>
+slack-cli reactions  <channel> <ts> --json
+slack-cli pin   | unpin   <channel> <ts>
+slack-cli pins  <channel> --json
+slack-cli bookmark   <channel> <title> <url> [--emoji <e>]
 slack-cli unbookmark <channel> <bookmark_id>
-slack-cli bookmarks <channel> --json
+slack-cli bookmarks  <channel> --json
+slack-cli emoji [--query <q>] --json
 
 # Cache
 slack-cli cache refresh [users|channels|all]
 slack-cli cache stats --json
 ```
 
-## Search
+`DATE` accepts a Unix timestamp or `YYYY-MM-DD`.
 
-`slack-cli search` uses Slack's Real-time Search API (`assistant.search.context`). It requires a user token for CLI use outside the Slack client. Use granular search scopes as needed: `search:read.public`, `search:read.private`, `search:read.im`, `search:read.mpim`, `search:read.files`, `search:read.users`.
+## Channel identifiers
 
-Defaults:
+`#name` · `name` · `C…` (public/private channel) · `D…` (DM) · `G…` (private channel or MPIM)
 
-| Option | Default |
-|--------|---------|
-| `--limit` | `10` (1-100, paginated across 20-result pages) |
-| `--channel-types` | `public_channel,private_channel,mpim,im` |
-| `--content-types` | `messages` |
-| `--sort` | `score` |
-| `--sort-dir` | `desc` |
+Names resolve via the local cache. If a lookup says the name is unknown, run `slack-cli cache refresh` and retry.
 
-Filters:
+## JSON response shapes
 
-| Option | Effect |
+slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for these field names with `jq`:
+
+- `users --json` → array of `{id, name, real_name, email, ...}`
+- `channels --json` → array of `{id, name, type, members}` (member count is `members`, not `num_members`)
+- `messages --json`, `thread --json` → array of message objects with `ts`, `user`, `text`, `bot_id`, optional `reply_count`
+- `send --json` → `{ts, channel}`
+- `reactions --json` → `{reactions: [{name, count, users}]}`
+- `pins --json`, `bookmarks --json` → arrays
+- `emoji --json` → `{name: url}` map
+- `search --json` → `{messages, files, channels, users}` object. Each message uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape
+
+## `--expand` fields
+
+| Domain | Fields |
 |--------|--------|
-| `--channel <id\|name>` | Restrict to one channel (resolved via cache) |
-| `--before <ts\|YYYY-MM-DD>` | Only results before this instant |
-| `--after <ts\|YYYY-MM-DD>` | Only results after this instant |
-| `--include-archived` | Include archived channels |
-| `--no-semantic` | Force keyword-only matching (skip the API's automatic semantic mode) |
+| users | `avatar` `title` `timezone` `status` `status_emoji` `display_name` `is_admin` `is_bot` `deleted` |
+| channels | `topic` `purpose` `created` `creator` `is_member` `is_archived` `is_private` |
+| messages | `date` `user_name` |
 
-## --expand Fields
+## `search` filters
 
-| Type | Fields |
-|------|--------|
-| users | `avatar`, `title`, `timezone`, `status`, `status_emoji`, `display_name`, `is_admin`, `is_bot`, `deleted` |
-| channels | `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private` |
-| messages | `date`, `user_name` |
+`assistant.search.context` (Slack Real-time Search). Auto-paginates up to `--limit`.
 
-## Channel Format
+| Option | Default | Effect |
+|--------|---------|--------|
+| `--limit` | `10` | total cap, 1–100 |
+| `--channel <id\|name>` | — | restrict to one channel |
+| `--before <ts\|YYYY-MM-DD>` | — | upper time bound |
+| `--after <ts\|YYYY-MM-DD>` | — | lower time bound |
+| `--channel-types` | all | `public_channel,private_channel,mpim,im` |
+| `--content-types` | `messages` | comma-separated |
+| `--include-context` | off | surrounding messages |
+| `--include-bots` | off | include bot-authored |
+| `--include-archived` | off | include archived channels |
+| `--no-semantic` | off | keyword-only matching |
+| `--sort` | `score` | or `timestamp` |
+| `--sort-dir` | `desc` | or `asc` |
 
-`#name`, `name`, `C...` (public/private channel), `D...` (DM), `G...` (private channel or MPIM)
+## Multi-workspace
 
-## Slack mrkdwn (NOT Markdown)
-
-| Element | Slack Syntax | Wrong |
-|---------|--------------|-------|
-| Bold | `*text*` | `**text**` |
-| Italic | `_text_` | `*text*` |
-| Link | `<url\|label>` | `[label](url)` |
-| User mention | `<@U123>` | `@user` |
-| Channel mention | `<#C123>` | `#channel` |
-| List item | `• item` | `- item` |
-
-**Critical**: Markdown syntax renders literally in Slack.
+`slack-cli --profile <name> <command>` runs a single command against a specific stored workspace. The flag is global, position-independent.
