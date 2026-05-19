@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-19
+
+### Added
+
+- Introduce `MessagePayload`, the unified content surface for `chat.postMessage` and `chat.update` (text, blocks, attachments, metadata). The CLI exposes it via `-t/--text`, `-b/--blocks`, `-a/--attachments`, `-m/--metadata`; each JSON-source flag accepts `-` (stdin, max one per call), `@path.json`, or inline JSON, with array-vs-object shape validated before any HTTP call
+- `slack-cli permalink <channel> <ts>` and `messages.permalink(channel, ts)` wrap `chat.getPermalink`
+- `SlackMessage` exposes a typed `metadata` field; `conversations.history` and `conversations.replies` always request `include_all_metadata=true` so idempotency markers round-trip without an extra flag
+- `SlackAuthIdentity` surfaces `url`, `bot_id`, `enterprise_id`, `enterprise_name`, and `is_enterprise_install` from `auth.test`; PKCE user-scope set gains `metadata.message:read`
+- `[output] messages_fields` config key with a lean AI-first default (`ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`); rich fields are opt-in via `--expand` on `messages` and `thread`, both of which now also accept `--exclude-bots` for symmetry
+- `<channel>` arguments accept `U…` / `W…` user IDs and auto-resolve to that user's cached DM channel (requires `im` in `cache.channel_types`)
+
+### Changed
+
+- **BREAKING**: `slack-cli send <channel> <text>` is now `slack-cli send <channel> -t <text>` (at least one of `text` / `blocks` / `attachments` required). `slack-cli update` mirrors the same shape minus `--thread`
+- **BREAKING**: `slack-cli messages --json` projects through `messages_fields`; previously-implicit `blocks` / `attachments` / `reactions` / `permalink` fields require `--expand`
+- **BREAKING**: `SlackMessageClient::{send, update}` library signatures take a `MessagePayload`
+- **BREAKING**: `config.toml` rejects unknown keys (`deny_unknown_fields`); stale entries (`user_token`, `bot_token`, `connection.max_idle_per_host`, `connection.pool_idle_timeout_seconds`) now surface as explicit parse errors instead of being silently ignored
+- **BREAKING**: HTTP connection-pool tuning (`max_idle_per_host`, `pool_idle_timeout_seconds`) is no longer a `[connection]` knob — the previous defaults are internal constants inside the Slack core
+
+### Fixed
+
+- `SlackChannel.name` and `MessageChannel.name` are now `Option<String>` — DM channels from `conversations.list?types=im` arrive without a `name` field, which previously crashed `cache refresh` with `missing field 'name'`. DMs round-trip through the cache cleanly, and `SlackChannel.user` exposes the DM peer
+
+### Documentation
+
+- Align README (KO + EN), the `slack-workspace` skill, and the per-module `CLAUDE.md` files with the new send / update / permalink surface, the channel-identifier table covering `U…` user IDs, the JSON source forms, and the lean `messages_fields` default
+
 ## [0.5.0] - 2026-05-16
 
 ### Added
