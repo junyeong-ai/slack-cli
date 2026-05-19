@@ -33,25 +33,42 @@ slack-cli auth login --user-token xoxp-your-token
 # 사용
 slack-cli cache refresh
 slack-cli users "john"
-slack-cli send "#general" "Hello!"
+slack-cli send "#general" -t "Hello!"
 ```
 
 ---
 
 ## 주요 기능
 
+### 채널 식별자 (`<channel>` 인자)
+
+`#name` · `name` (캐시 lookup) · `C…/G…` 채널 ID · `D…` DM ID · `U…/W…` 유저 ID (해당 유저와의 DM 채널로 자동 해석 — `cache refresh` 시점에 `channel_types` 에 `im` 포함 필요)
+
 ### 메시지
 ```bash
-slack-cli send "#general" "공지사항입니다"      # 전송
-slack-cli update "#general" 1234.5678 "수정됨"  # 수정
-slack-cli delete "#general" 1234.5678           # 삭제
-slack-cli messages "#general" --limit 15        # 조회
-slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31  # 날짜 필터
-slack-cli messages "#general" --exclude-bots    # 봇 메시지 제외
-slack-cli messages "#general" --expand date,user_name  # 날짜/이름 확장
-slack-cli thread "#general" 1234.5678           # 스레드
-slack-cli search "키워드" --sort timestamp     # Real-time Search
+slack-cli send "#general" -t "공지사항입니다"           # 전송 (텍스트)
+slack-cli send U123ABCDEF -t "DM by user-id"           # 유저 ID → DM 자동 해석
+slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + 폴백 텍스트
+slack-cli send "#general" -m @meta.json -t "deploy done" # 멱등 metadata 첨부
+echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
+slack-cli update "#general" 1234.5678 -t "수정됨"       # 수정 (text/blocks/attachments/metadata)
+slack-cli delete "#general" 1234.5678                   # 삭제
+slack-cli permalink "#general" 1234.5678                # permalink URL 조회
+slack-cli messages "#general" --limit 15                # 조회 (lean 기본 필드)
+slack-cli messages "#general" --expand blocks,reactions # 필드 확장
+slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31
+slack-cli messages "#general" --exclude-bots            # 봇 메시지 제외
+slack-cli thread "#general" 1234.5678                   # 스레드
+slack-cli search "키워드" --sort timestamp              # Real-time Search
 ```
+
+**JSON 입력**: `--blocks` / `--attachments` / `--metadata`는 세 가지 입력 형태를 지원합니다.
+
+| 형식 | 의미 |
+|---|---|
+| `-` | stdin 에서 읽기 (한 호출에 최대 1회) |
+| `@path.json` | 파일에서 읽기 |
+| 그 외 | inline JSON 리터럴 |
 
 ### 리액션
 ```bash
@@ -158,7 +175,7 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 ```
 channels:read  channels:history  groups:read  groups:history
 im:read  im:history  mpim:read  mpim:history
-users:read  users:read.email  chat:write
+users:read  users:read.email  chat:write  metadata.message:read
 reactions:read  reactions:write  pins:read  pins:write
 bookmarks:read  bookmarks:write  emoji:read  search:read
 ```
@@ -205,8 +222,9 @@ channel_types = ["public_channel", "private_channel"]
                                # 허용 값: public_channel, private_channel, mpim, im
 
 [output]
-users_fields = ["id", "name", "real_name", "email"]
+users_fields    = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
+messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "metadata"]
 
 [connection]
 api_base_url = "https://slack.com/api"
@@ -214,6 +232,8 @@ rate_limit_per_minute = 20
 app_distribution = "commercial_external"
 timeout_seconds = 30
 ```
+
+알 수 없는 키는 무시되지 않고 오류로 처리됩니다 — 이전 버전의 잔여 키(`user_token`, `bot_token`, `max_idle_per_host`, `pool_idle_timeout_seconds`)가 있으면 명시적 에러로 표면화되니 제거하세요.
 
 `app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
 
@@ -241,9 +261,10 @@ timeout_seconds = 30
 | `users --id <ids>` | ID로 조회 (쉼표 구분) |
 | `channels <query>` | 채널 검색 |
 | `channels --id <ids>` | ID로 조회 (쉼표 구분) |
-| `send <ch> <text>` | 메시지 전송 |
-| `update <ch> <ts> <text>` | 메시지 수정 |
+| `send <ch> [-t -b -a -m --thread]` | 메시지 전송 (text/blocks/attachments/metadata 중 ≥1 필수) |
+| `update <ch> <ts> [-t -b -a -m]` | 메시지 수정 (text/blocks/attachments/metadata 중 ≥1 필수) |
 | `delete <ch> <ts>` | 메시지 삭제 |
+| `permalink <ch> <ts>` | 메시지 permalink URL 조회 |
 | `messages <ch>` | 메시지 조회 |
 | `thread <ch> <ts>` | 스레드 조회 |
 | `members <ch>` | 멤버 목록 |
@@ -270,19 +291,29 @@ timeout_seconds = 30
 ### users/channels 옵션
 - `--limit <N>` — 결과 제한 (기본: `10`)
 - `--id <ids>` — ID로 조회 (쉼표 구분)
-- `--expand <fields>` — 추가 필드
-  - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
-  - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
+- `--expand <fields>` — 기본 필드 외 추가로 노출할 필드
+  - users: `display_name`, `status`, `status_emoji`, `avatar`, `title`, `timezone`, `is_admin`, `is_bot`, `deleted`
+  - channels: `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private`, `user` (DM 의 상대 user id)
 
-### send 옵션
-- `--thread <ts>` — 스레드 답장
+### send / update 옵션
+- `-t, --text <TEXT>` — 메시지 텍스트 (blocks 동반 시 알림 폴백)
+- `-b, --blocks <SOURCE>` — Block Kit blocks (JSON array). `-` / `@file` / inline
+- `-a, --attachments <SOURCE>` — Legacy attachments (JSON array). 동일 SOURCE 어휘
+- `-m, --metadata <SOURCE>` — Message metadata `{event_type, event_payload}` (JSON object). 동일 SOURCE 어휘
+- `--thread <ts>` — (send 전용) 스레드 답장
+
+`text`/`blocks`/`attachments` 중 최소 하나는 반드시 제공해야 합니다. 같은 호출에서 `-` (stdin) 은 최대 한 플래그에만 사용 가능합니다.
 
 ### messages/thread 옵션
 - `--limit <N>` — 결과 제한 (기본: `15`)
-- `--oldest <date>` — 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
-- `--latest <date>` — 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
-- `--exclude-bots` — 봇 메시지 제외
-- `--expand <fields>` — 추가 필드: `date`, `user_name`
+- `--oldest <date>` — (messages 전용) 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
+- `--latest <date>` — (messages 전용) 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
+- `--exclude-bots` — 봇 메시지 제외 (messages·thread 공통)
+- `--expand <fields>` — 기본 필드에 추가로 노출할 필드
+  - 계산 필드: `date`, `user_name`
+  - 응답 필드: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
+
+`messages_fields` 기본값(lean): `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. AI 에이전트 컨텍스트 절약을 위해 기본 출력은 가볍게 유지하며, 풍부한 필드는 `--expand` 로 명시 opt-in 합니다.
 
 ### search 옵션
 - `--limit <N>` — 총 결과 수 (1-100, 기본: `10`. 20개 단위 페이지로 자동 페이징)

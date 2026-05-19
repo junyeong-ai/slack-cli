@@ -6,12 +6,27 @@ Facade pattern: `SlackClient` owns one `Slack{Domain}Client` per domain. All cli
 
 Verb-only, no noun redundancy. Match the Slack API verb when one exists.
 
-- `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`
+- `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`, `messages.permalink`
 - `users.list`, `channels.list`, `channels.members`
 - `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`
 - `auth.test`, `auth.revoke`
 
-Never `send_message`, `fetch_all_*`, `get_*`.
+Never `send_message`, `fetch_all_*`, `get_*`. When the Slack API verb is `getX` (e.g. `chat.getPermalink`), drop the `get` prefix so the method reads as a noun.
+
+## Message payload model (`MessagePayload`)
+
+`chat.postMessage` and `chat.update` share the same payload surface (text, blocks, attachments, metadata). `MessagePayload` captures this once:
+
+```rust
+messages.send(channel, payload, thread_ts)   // post
+messages.update(channel, ts, payload)         // edit (no thread routing)
+```
+
+- `payload.validate()` enforces ≥1 of text / blocks / attachments before any HTTP call.
+- `into_post_json` adds `thread_ts` only on send; `into_update_json` never carries thread routing.
+- New send/update fields belong on `MessagePayload`, not on call sites.
+
+Metadata is a first-class field on `MessagePayload` and on `SlackMessage`. `conversations.history` and `conversations.replies` always request `include_all_metadata=true` so round-tripping idempotency markers needs no extra flag.
 
 ## API call flow (core.rs)
 

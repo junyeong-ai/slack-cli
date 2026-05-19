@@ -33,25 +33,42 @@ slack-cli auth login --user-token xoxp-your-token
 # Use
 slack-cli cache refresh
 slack-cli users "john"
-slack-cli send "#general" "Hello!"
+slack-cli send "#general" -t "Hello!"
 ```
 
 ---
 
 ## Key Features
 
+### Channel identifier (`<channel>` argument)
+
+`#name` · `name` (cache lookup) · `C…/G…` channel ID · `D…` DM ID · `U…/W…` user ID (auto-resolves to that user's DM channel — requires `im` in `channel_types` at the next `cache refresh`)
+
 ### Messages
 ```bash
-slack-cli send "#general" "Announcement"          # Send
-slack-cli update "#general" 1234.5678 "Edited"    # Update
-slack-cli delete "#general" 1234.5678             # Delete
-slack-cli messages "#general" --limit 15          # List
-slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31  # Date filter
-slack-cli messages "#general" --exclude-bots      # Exclude bot messages
-slack-cli messages "#general" --expand date,user_name  # Expand date/name
-slack-cli thread "#general" 1234.5678             # Thread
-slack-cli search "keyword" --sort timestamp       # Real-time Search
+slack-cli send "#general" -t "Announcement"             # Send (text)
+slack-cli send U123ABCDEF -t "DM by user-id"            # User ID → DM auto-resolution
+slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + fallback text
+slack-cli send "#general" -m @meta.json -t "deploy done" # Attach idempotent metadata
+echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
+slack-cli update "#general" 1234.5678 -t "Edited"       # Update (text/blocks/attachments/metadata)
+slack-cli delete "#general" 1234.5678                   # Delete
+slack-cli permalink "#general" 1234.5678                # Fetch permalink URL
+slack-cli messages "#general" --limit 15                # List (lean default fields)
+slack-cli messages "#general" --expand blocks,reactions # Expand fields
+slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31
+slack-cli messages "#general" --exclude-bots            # Exclude bot messages
+slack-cli thread "#general" 1234.5678                   # Thread
+slack-cli search "keyword" --sort timestamp             # Real-time Search
 ```
+
+**JSON input** — `--blocks` / `--attachments` / `--metadata` accept three source forms:
+
+| Form | Meaning |
+|---|---|
+| `-` | Read from stdin (at most one flag per invocation) |
+| `@path.json` | Read from a file |
+| anything else | Inline JSON literal |
 
 ### Reactions
 ```bash
@@ -158,7 +175,7 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 ```
 channels:read  channels:history  groups:read  groups:history
 im:read  im:history  mpim:read  mpim:history
-users:read  users:read.email  chat:write
+users:read  users:read.email  chat:write  metadata.message:read
 reactions:read  reactions:write  pins:read  pins:write
 bookmarks:read  bookmarks:write  emoji:read  search:read
 ```
@@ -205,8 +222,13 @@ channel_types = ["public_channel", "private_channel"]
                                # Allowed: public_channel, private_channel, mpim, im
 
 [output]
-users_fields = ["id", "name", "real_name", "email"]
+users_fields    = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
+messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "metadata"]
+
+# Unknown keys are rejected (not silently ignored). Stale keys from prior
+# versions (`user_token`, `bot_token`, `max_idle_per_host`,
+# `pool_idle_timeout_seconds`) surface as explicit errors — remove them.
 
 [connection]
 api_base_url = "https://slack.com/api"
@@ -241,9 +263,10 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `users --id <ids>` | Lookup by IDs (comma-separated) |
 | `channels <query>` | Search channels |
 | `channels --id <ids>` | Lookup by IDs (comma-separated) |
-| `send <ch> <text>` | Send message |
-| `update <ch> <ts> <text>` | Update message |
-| `delete <ch> <ts>` | Delete message |
+| `send <ch> [-t -b -a -m --thread]` | Send a message (≥1 of text/blocks/attachments required) |
+| `update <ch> <ts> [-t -b -a -m]` | Update a message (≥1 of text/blocks/attachments required) |
+| `delete <ch> <ts>` | Delete a message |
+| `permalink <ch> <ts>` | Fetch the permalink URL for a message |
 | `messages <ch>` | List messages |
 | `thread <ch> <ts>` | List thread |
 | `members <ch>` | List members |
@@ -270,19 +293,29 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 ### users/channels Options
 - `--limit <N>` — Limit results (default: `10`)
 - `--id <ids>` — Lookup by IDs (comma-separated)
-- `--expand <fields>` — Extra fields
-  - users: `avatar`, `title`, `timezone`, `status`, `is_admin`, `is_bot`, `deleted`
-  - channels: `topic`, `purpose`, `created`, `creator`, `is_archived`, `is_private`
+- `--expand <fields>` — Extra fields beyond the defaults
+  - users: `display_name`, `status`, `status_emoji`, `avatar`, `title`, `timezone`, `is_admin`, `is_bot`, `deleted`
+  - channels: `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private`, `user` (the DM peer's user id)
 
-### send Options
-- `--thread <ts>` — Thread reply
+### send / update Options
+- `-t, --text <TEXT>` — Message text (also used as the notification fallback when blocks are present)
+- `-b, --blocks <SOURCE>` — Block Kit blocks (JSON array). `-` / `@file` / inline
+- `-a, --attachments <SOURCE>` — Legacy attachments (JSON array). Same source vocabulary
+- `-m, --metadata <SOURCE>` — Message metadata `{event_type, event_payload}` (JSON object). Same source vocabulary
+- `--thread <ts>` — (send only) Post as a reply in the given thread
+
+At least one of `text` / `blocks` / `attachments` must be provided. Only one flag per invocation may read from stdin (`-`).
 
 ### messages/thread Options
 - `--limit <N>` — Limit results (default: `15`)
-- `--oldest <date>` — Start time (Unix timestamp or YYYY-MM-DD)
-- `--latest <date>` — End time (Unix timestamp or YYYY-MM-DD)
-- `--exclude-bots` — Exclude bot messages
-- `--expand <fields>` — Extra fields: `date`, `user_name`
+- `--oldest <date>` — (messages only) Start time (Unix timestamp or YYYY-MM-DD)
+- `--latest <date>` — (messages only) End time (Unix timestamp or YYYY-MM-DD)
+- `--exclude-bots` — Exclude bot messages (messages and thread)
+- `--expand <fields>` — Extra fields beyond the lean default
+  - Computed: `date`, `user_name`
+  - Response: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
+
+The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. The default output is intentionally compact so AI agents pay no extra context tax; rich fields are opt-in via `--expand`.
 
 ### search Options
 - `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)

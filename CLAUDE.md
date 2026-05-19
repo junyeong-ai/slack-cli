@@ -31,6 +31,6 @@ RUST_LOG=debug cargo run -- users "john"
 
 ## Cross-cutting rules
 
-- **User-facing reference is the README.** CLI flag enumerations, scope lists, and field tables live in `README.md`. Do not duplicate them in submodule docs.
-- **`cli.json` is the output-mode bridge.** `main.rs` reads `cli.json` and derives request-shape options (e.g. `include_message_blocks`, `highlight` for search) before calling library code. Library types in `slack/` stay output-agnostic.
-- **Defaults live in code, not docs.** CLI `--expand` field defaults are declared in `config.rs` and applied in `format.rs`. Adding a new default field belongs there, not in any markdown file.
+- **User-facing reference is the README.** CLI flag enumerations, scope lists, and field tables live in `README.md`. Do not duplicate them in submodule `CLAUDE.md` files.
+- **`--json` is the output-mode bridge.** When output mode changes what the library should request from Slack (e.g. `include_message_blocks=true` and `highlight=false` for `search.context`), `main.rs` derives the request-shape options from the parsed `--json` flag and passes them to library code. Library types in `slack/` stay output-agnostic.
+- **Defaults live in code, not docs.** Per-command field defaults (`users_fields`, `channels_fields`, `messages_fields`) are declared in `config.rs` and applied in `format.rs`. `--expand` adds opt-in fields on top. Lean-by-default keeps AI agent context costs predictable; adding a new default field belongs there, not in any markdown file.
