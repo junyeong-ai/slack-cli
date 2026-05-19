@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use crate::auth::AuthMethod;
@@ -94,16 +94,24 @@ pub enum Command {
             long,
             value_delimiter = ',',
             value_name = "FIELDS",
-            help = "Additional fields to include [id,name,type,members,topic,purpose,created,creator,is_member,is_archived,is_private]"
+            help = "Additional fields to include [id,name,type,members,topic,purpose,created,creator,is_member,is_archived,is_private,user]"
         )]
         expand: Option<Vec<String>>,
     },
 
-    #[command(about = "Send message to channel or DM")]
+    #[command(
+        about = "Send a message to a channel or DM",
+        long_about = "Send a message to a channel or DM.\n\
+                      JSON sources for --blocks/--attachments/--metadata accept:\n  \
+                        -          read from stdin (allowed for at most one flag)\n  \
+                        @path.json read from file\n  \
+                        <inline>   inline JSON literal"
+    )]
     Send {
         channel: String,
-        text: String,
-        #[arg(long)]
+        #[command(flatten)]
+        content: MessageContent,
+        #[arg(long, help = "Post as a reply in the given thread ts")]
         thread: Option<String>,
     },
 
@@ -111,11 +119,15 @@ pub enum Command {
     Update {
         channel: String,
         ts: String,
-        text: String,
+        #[command(flatten)]
+        content: MessageContent,
     },
 
     #[command(about = "Delete a message")]
     Delete { channel: String, ts: String },
+
+    #[command(about = "Get the permalink URL for a message")]
+    Permalink { channel: String, ts: String },
 
     #[command(about = "Get channel messages")]
     Messages {
@@ -134,7 +146,8 @@ pub enum Command {
             long,
             value_delimiter = ',',
             value_name = "FIELDS",
-            help = "Additional fields [date,user_name]"
+            help = "Additional fields beyond the lean default \
+                    [blocks,attachments,reactions,edited,parent_user_id,reply_users,reply_users_count,latest_reply,channel,permalink,date,user_name]"
         )]
         expand: Option<Vec<String>>,
     },
@@ -145,6 +158,15 @@ pub enum Command {
         ts: String,
         #[arg(long, default_value = "15")]
         limit: usize,
+        #[arg(long, help = "Exclude bot-authored replies")]
+        exclude_bots: bool,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "FIELDS",
+            help = "Additional fields beyond the lean default (same vocabulary as `messages --expand`)"
+        )]
+        expand: Option<Vec<String>>,
     },
 
     #[command(about = "List channel members")]
@@ -259,6 +281,47 @@ pub enum Command {
         #[command(subcommand)]
         action: CacheAction,
     },
+}
+
+// `MessageContent` is the content surface shared by `chat.postMessage` and
+// `chat.update`. Adding a new payload field (e.g. `unfurl_links`, `mrkdwn`)
+// belongs here, in `MessagePayload`, and in `main::build_payload` — never
+// on individual command variants.
+#[derive(Args, Debug, Clone)]
+#[command(
+    group(ArgGroup::new("message_content")
+        .required(true)
+        .multiple(true)
+        .args(["text", "blocks", "attachments"])),
+)]
+pub struct MessageContent {
+    #[arg(
+        long,
+        short = 't',
+        help = "Message text (also used as the notification fallback when blocks are present)"
+    )]
+    pub text: Option<String>,
+
+    #[arg(
+        long,
+        short = 'b',
+        help = "Block Kit blocks (JSON array): -, @path.json, or inline"
+    )]
+    pub blocks: Option<String>,
+
+    #[arg(
+        long,
+        short = 'a',
+        help = "Legacy attachments (JSON array): -, @path.json, or inline"
+    )]
+    pub attachments: Option<String>,
+
+    #[arg(
+        long,
+        short = 'm',
+        help = "Message metadata {event_type, event_payload} (JSON object): -, @path.json, or inline"
+    )]
+    pub metadata: Option<String>,
 }
 
 #[derive(Subcommand)]

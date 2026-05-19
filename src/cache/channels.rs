@@ -4,7 +4,6 @@ use crate::slack::types::SlackChannel;
 use chrono::Utc;
 use rusqlite::params;
 
-#[allow(unused_imports)]
 use rusqlite::OptionalExtension;
 
 impl SqliteCache {
@@ -122,6 +121,21 @@ impl SqliteCache {
         Ok(channels)
     }
 
+    /// Locate the IM channel cached for the given user id (`U…` / `W…`).
+    /// Returns the `D…` channel id if one is cached, or `None` otherwise.
+    pub fn find_dm_by_user(&self, user_id: &str) -> CacheResult<Option<String>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT id FROM channels
+             WHERE is_im = 1 AND json_extract(data, '$.user') = ?1
+             LIMIT 1",
+        )?;
+        let result: Option<String> = stmt
+            .query_row(params![user_id], |row| row.get(0))
+            .optional()?;
+        Ok(result)
+    }
+
     pub fn search_channels(&self, query: &str, limit: usize) -> CacheResult<Vec<SlackChannel>> {
         let conn = self.pool.get()?;
 
@@ -229,7 +243,8 @@ mod tests {
     ) -> SlackChannel {
         SlackChannel {
             id: id.to_string(),
-            name: name.to_string(),
+            name: Some(name.to_string()),
+            user: None,
             is_channel: !is_im && !is_mpim,
             is_im,
             is_mpim,
@@ -243,6 +258,27 @@ mod tests {
             topic: None,
             purpose: None,
             num_members: Some(10),
+        }
+    }
+
+    fn create_test_dm(id: &str, user_id: &str) -> SlackChannel {
+        SlackChannel {
+            id: id.to_string(),
+            name: None,
+            user: Some(user_id.to_string()),
+            is_channel: false,
+            is_im: true,
+            is_mpim: false,
+            is_group: false,
+            is_private: true,
+            is_archived: false,
+            is_general: false,
+            is_member: true,
+            created: None,
+            creator: None,
+            topic: None,
+            purpose: None,
+            num_members: None,
         }
     }
 
@@ -275,7 +311,7 @@ mod tests {
         let channels = cache.get_channels().unwrap();
         assert_eq!(channels.len(), 1);
         assert_eq!(channels[0].id, "C123");
-        assert_eq!(channels[0].name, "general");
+        assert_eq!(channels[0].name.as_deref(), Some("general"));
     }
 
     #[tokio::test]
@@ -314,7 +350,7 @@ mod tests {
         assert_eq!(all_channels.len(), 2);
 
         let general = all_channels.iter().find(|c| c.id == "C123").unwrap();
-        assert_eq!(general.name, "general-updated");
+        assert_eq!(general.name.as_deref(), Some("general-updated"));
 
         assert!(all_channels.iter().all(|c| c.id != "C456"));
     }
@@ -346,9 +382,9 @@ mod tests {
 
         let sorted_channels = cache.get_channels().unwrap();
         assert_eq!(sorted_channels.len(), 3);
-        assert_eq!(sorted_channels[0].name, "alpha");
-        assert_eq!(sorted_channels[1].name, "beta");
-        assert_eq!(sorted_channels[2].name, "zebra");
+        assert_eq!(sorted_channels[0].name.as_deref(), Some("alpha"));
+        assert_eq!(sorted_channels[1].name.as_deref(), Some("beta"));
+        assert_eq!(sorted_channels[2].name.as_deref(), Some("zebra"));
     }
 
     #[tokio::test]
@@ -458,7 +494,7 @@ mod tests {
 
         let results = cache.search_channels("general*@#$", 10).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "general");
+        assert_eq!(results[0].name.as_deref(), Some("general"));
     }
 
     #[tokio::test]
@@ -566,7 +602,7 @@ mod tests {
 
         let results = cache.search_channels("general", 10).unwrap();
         assert_eq!(results.len(), 3);
-        assert_eq!(results[0].name, "general");
+        assert_eq!(results[0].name.as_deref(), Some("general"));
     }
 
     #[tokio::test]
@@ -580,8 +616,16 @@ mod tests {
 
         let results = cache.search_channels("dev", 10).unwrap();
         assert_eq!(results.len(), 2);
-        assert!(results.iter().any(|c| c.name == "dev-team"));
-        assert!(results.iter().any(|c| c.name == "dev-backend"));
+        assert!(
+            results
+                .iter()
+                .any(|c| c.name.as_deref() == Some("dev-team"))
+        );
+        assert!(
+            results
+                .iter()
+                .any(|c| c.name.as_deref() == Some("dev-backend"))
+        );
     }
 
     #[tokio::test]
@@ -595,5 +639,46 @@ mod tests {
 
         let results = cache.search_channels("xyz", 10).unwrap();
         assert_eq!(results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_find_dm_by_user_returns_im_id() {
+        let cache = setup_cache().await;
+        let channels = vec![
+            create_test_channel("C100", "general", false, false, false, false),
+            create_test_dm("D200", "U999"),
+            create_test_dm("D300", "U777"),
+        ];
+        cache.save_channels(channels).await.unwrap();
+
+        assert_eq!(
+            cache.find_dm_by_user("U999").unwrap().as_deref(),
+            Some("D200")
+        );
+        assert_eq!(
+            cache.find_dm_by_user("U777").unwrap().as_deref(),
+            Some("D300")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_dm_by_user_missing_returns_none() {
+        let cache = setup_cache().await;
+        let channels = vec![create_test_dm("D200", "U999")];
+        cache.save_channels(channels).await.unwrap();
+
+        assert!(cache.find_dm_by_user("U_unknown").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_dm_by_user_ignores_non_im_channels() {
+        let cache = setup_cache().await;
+        let channels = vec![
+            create_test_channel("C100", "general", false, false, false, false),
+            // Public channel happens to have user field — must still not match.
+        ];
+        cache.save_channels(channels).await.unwrap();
+
+        assert!(cache.find_dm_by_user("U_anyone").unwrap().is_none());
     }
 }

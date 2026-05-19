@@ -20,6 +20,7 @@ fn expand_tilde(path: &Path) -> PathBuf {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub cache: CacheConfig,
@@ -35,6 +36,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CacheConfig {
     #[serde(default = "default_ttl_hours")]
     pub ttl_users_hours: u64,
@@ -45,6 +47,7 @@ pub struct CacheConfig {
     #[serde(default = "default_refresh_threshold_percent")]
     pub refresh_threshold_percent: u64,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_path: Option<PathBuf>,
 
     #[serde(default = "default_channel_types")]
@@ -52,12 +55,16 @@ pub struct CacheConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutputConfig {
     #[serde(default = "default_users_fields")]
     pub users_fields: Vec<String>,
 
     #[serde(default = "default_channels_fields")]
     pub channels_fields: Vec<String>,
+
+    #[serde(default = "default_messages_fields")]
+    pub messages_fields: Vec<String>,
 }
 
 fn default_users_fields() -> Vec<String> {
@@ -74,16 +81,35 @@ fn default_channels_fields() -> Vec<String> {
         .collect()
 }
 
+fn default_messages_fields() -> Vec<String> {
+    vec![
+        "ts",
+        "user",
+        "bot_id",
+        "username",
+        "text",
+        "thread_ts",
+        "reply_count",
+        "subtype",
+        "metadata",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 impl Default for OutputConfig {
     fn default() -> Self {
         Self {
             users_fields: default_users_fields(),
             channels_fields: default_channels_fields(),
+            messages_fields: default_messages_fields(),
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetryConfig {
     #[serde(default = "default_max_attempts")]
     pub max_attempts: u32,
@@ -107,18 +133,13 @@ pub enum SlackAppDistribution {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConnectionConfig {
     #[serde(default = "default_api_base_url")]
     pub api_base_url: String,
 
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: u64,
-
-    #[serde(default = "default_max_idle_per_host")]
-    pub max_idle_per_host: i32,
-
-    #[serde(default = "default_pool_idle_timeout_seconds")]
-    pub pool_idle_timeout_seconds: u64,
 
     #[serde(default = "default_rate_limit_per_minute")]
     pub rate_limit_per_minute: u32,
@@ -157,12 +178,6 @@ fn default_timeout_seconds() -> u64 {
 fn default_api_base_url() -> String {
     "https://slack.com/api".to_string()
 }
-fn default_max_idle_per_host() -> i32 {
-    10
-}
-fn default_pool_idle_timeout_seconds() -> u64 {
-    90
-}
 fn default_rate_limit_per_minute() -> u32 {
     20
 }
@@ -195,8 +210,6 @@ impl Default for ConnectionConfig {
         Self {
             api_base_url: default_api_base_url(),
             timeout_seconds: 30,
-            max_idle_per_host: 10,
-            pool_idle_timeout_seconds: 90,
             rate_limit_per_minute: 20,
             app_distribution: SlackAppDistribution::default(),
         }
@@ -268,15 +281,8 @@ impl Config {
             anyhow::bail!("connection.api_base_url must not be empty");
         }
 
-        if self.connection.timeout_seconds == 0
-            || self.connection.pool_idle_timeout_seconds == 0
-            || self.connection.rate_limit_per_minute == 0
-        {
+        if self.connection.timeout_seconds == 0 || self.connection.rate_limit_per_minute == 0 {
             anyhow::bail!("connection timeout and rate limit values must be greater than zero");
-        }
-
-        if self.connection.max_idle_per_host < 0 {
-            anyhow::bail!("connection.max_idle_per_host must not be negative");
         }
 
         Ok(())
@@ -378,6 +384,7 @@ impl Config {
         println!("\nOutput:");
         println!("  users_fields: {:?}", self.output.users_fields);
         println!("  channels_fields: {:?}", self.output.channels_fields);
+        println!("  messages_fields: {:?}", self.output.messages_fields);
         println!("\nRetry:");
         println!("  max_attempts: {}", self.retry.max_attempts);
         println!("  initial_delay_ms: {}", self.retry.initial_delay_ms);
@@ -386,11 +393,6 @@ impl Config {
         println!("\nConnection:");
         println!("  api_base_url: {}", self.connection.api_base_url);
         println!("  timeout_seconds: {}", self.connection.timeout_seconds);
-        println!("  max_idle_per_host: {}", self.connection.max_idle_per_host);
-        println!(
-            "  pool_idle_timeout_seconds: {}",
-            self.connection.pool_idle_timeout_seconds
-        );
         println!(
             "  rate_limit_per_minute: {}",
             self.connection.rate_limit_per_minute
@@ -543,13 +545,30 @@ mod tests {
         fn load_rejects_invalid_connection_values() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            std::fs::write(&path, "[connection]\nmax_idle_per_host = -1\n").unwrap();
+            std::fs::write(&path, "[connection]\ntimeout_seconds = 0\n").unwrap();
 
             let err = Config::load(Some(path), None).unwrap_err();
             assert!(
                 err.to_string()
-                    .contains("max_idle_per_host must not be negative")
+                    .contains("connection timeout and rate limit values must be greater than zero")
             );
+        }
+
+        #[test]
+        fn load_rejects_obsolete_top_level_tokens() {
+            // v0.5.0 removed user_token / bot_token from config.toml; deny_unknown_fields
+            // surfaces stale configs instead of silently ignoring them.
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.toml");
+            std::fs::write(&path, "user_token = \"xoxp-stale\"\n").unwrap();
+
+            let err = Config::load(Some(path), None).unwrap_err();
+            let chain: String = err
+                .chain()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            assert!(chain.contains("user_token"), "chain: {chain}");
         }
 
         #[test]
@@ -592,8 +611,6 @@ mod tests {
             let config = ConnectionConfig::default();
             assert_eq!(config.api_base_url, "https://slack.com/api");
             assert_eq!(config.timeout_seconds, 30);
-            assert_eq!(config.max_idle_per_host, 10);
-            assert_eq!(config.pool_idle_timeout_seconds, 90);
             assert_eq!(config.rate_limit_per_minute, 20);
             assert!(matches!(
                 config.app_distribution,

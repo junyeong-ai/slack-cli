@@ -406,12 +406,8 @@ fn print_status_json(
     });
     match verification {
         Some(Ok(identity)) => {
-            payload["verified"] = serde_json::json!({
-                "team": identity.team,
-                "team_id": identity.team_id,
-                "user": identity.user,
-                "user_id": identity.user_id,
-            });
+            payload["verified"] =
+                serde_json::to_value(&identity).unwrap_or(serde_json::Value::Null);
         }
         Some(Err(err)) => {
             payload["verified"] = serde_json::json!({"error": err.to_string()});

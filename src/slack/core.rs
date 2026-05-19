@@ -22,6 +22,13 @@ use crate::slack::api_config::{
 
 type SimpleRateLimiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
 
+/// HTTP connection pool tuning. Internal — no user-facing knob.
+/// A CLI process is short-lived: 10 idle slots is generous for any realistic
+/// concurrent call pattern, and a 90 s pool timeout outlives every single
+/// invocation, so callers never observe the difference.
+const HTTP_POOL_MAX_IDLE_PER_HOST: usize = 10;
+const HTTP_POOL_IDLE_TIMEOUT_SECONDS: u64 = 90;
+
 pub struct SlackCore {
     pub(crate) config: Config,
     pub(crate) auth: Arc<Authenticator>,
@@ -33,10 +40,8 @@ impl SlackCore {
     pub fn new(config: Config, auth: Arc<Authenticator>) -> Result<Self> {
         let http = HttpClient::builder()
             .timeout(Duration::from_secs(config.connection.timeout_seconds))
-            .pool_max_idle_per_host(config.connection.max_idle_per_host as usize)
-            .pool_idle_timeout(Duration::from_secs(
-                config.connection.pool_idle_timeout_seconds,
-            ))
+            .pool_max_idle_per_host(HTTP_POOL_MAX_IDLE_PER_HOST)
+            .pool_idle_timeout(Duration::from_secs(HTTP_POOL_IDLE_TIMEOUT_SECONDS))
             .build()
             .context("Failed to create Slack HTTP client")?;
 

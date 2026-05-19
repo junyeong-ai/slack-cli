@@ -1,12 +1,15 @@
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
+use serde_json::Value;
 use slack_cli::{
     auth::{self, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
-    cli::{CacheAction, Cli, Command, ConfigAction, RefreshTarget},
+    cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget},
     config, format, slack,
+    slack::{MessageMetadata, MessagePayload},
 };
+use std::io::Read;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -101,11 +104,12 @@ async fn main() -> Result<()> {
 
         Command::Send {
             channel,
-            text,
+            content,
             thread,
         } => {
+            let payload = build_payload(content)?;
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let result = slack.messages.send(&id, &text, thread.as_deref()).await?;
+            let result = slack.messages.send(&id, payload, thread.as_deref()).await?;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -114,9 +118,14 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Update { channel, ts, text } => {
+        Command::Update {
+            channel,
+            ts,
+            content,
+        } => {
+            let payload = build_payload(content)?;
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let result = slack.messages.update(&id, &ts, &text).await?;
+            let result = slack.messages.update(&id, &ts, payload).await?;
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -133,6 +142,17 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 println!("✓ Deleted: {}", result.ts);
+            }
+        }
+
+        Command::Permalink { channel, ts } => {
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
+            let link = slack.messages.permalink(&id, &ts).await?;
+
+            if cli.json {
+                println!("{}", serde_json::json!({ "permalink": link }));
+            } else {
+                println!("{}", link);
             }
         }
 
@@ -165,14 +185,24 @@ async fn main() -> Result<()> {
                 messages.retain(|m| m.bot_id.is_none());
             }
 
-            let expand_fields = expand.unwrap_or_default();
-            format::print_messages(&messages, cli.json, &expand_fields, Some(&cache));
+            let fields = merge_fields(&config.output.messages_fields, expand.as_deref());
+            format::print_messages(&messages, cli.json, &fields, Some(&cache));
         }
 
-        Command::Thread { channel, ts, limit } => {
+        Command::Thread {
+            channel,
+            ts,
+            limit,
+            exclude_bots,
+            expand,
+        } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let messages = slack.messages.replies(&id, &ts, limit).await?;
-            format::print_messages(&messages, cli.json, &[], None);
+            let mut messages = slack.messages.replies(&id, &ts, limit).await?;
+            if exclude_bots {
+                messages.retain(|m| m.bot_id.is_none());
+            }
+            let fields = merge_fields(&config.output.messages_fields, expand.as_deref());
+            format::print_messages(&messages, cli.json, &fields, Some(&cache));
         }
 
         Command::Members { channel } => {
@@ -402,6 +432,16 @@ async fn resolve_channel(
         return Ok(input.to_string());
     }
 
+    if is_slack_user_id(input) {
+        if let Some(dm_id) = cache.find_dm_by_user(input)? {
+            return Ok(dm_id);
+        }
+        anyhow::bail!(
+            "No DM cached for user {}. Add \"im\" to `cache.channel_types` and run `slack-cli cache refresh`.",
+            input
+        );
+    }
+
     let name = input.trim_start_matches('#').trim_start_matches('@');
     let mut channels = cache.search_channels(name, 2)?;
 
@@ -410,28 +450,54 @@ async fn resolve_channel(
         channels = cache.search_channels(name, 2)?;
     }
 
-    if channels.len() > 1 && !channels.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
-        let matches = channels
+    let name_matches: Vec<&slack::SlackChannel> = channels
+        .iter()
+        .filter(|c| {
+            c.name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+        .collect();
+
+    if channels.len() > 1 && name_matches.is_empty() {
+        let suggestions = channels
             .iter()
-            .map(|c| format!("#{} ({})", c.name, c.id))
+            .map(|c| match c.name.as_deref() {
+                Some(name) => format!("#{name} ({})", c.id),
+                None => c.id.clone(),
+            })
             .collect::<Vec<_>>()
             .join(", ");
-        anyhow::bail!("Channel name is ambiguous: {}. Matches: {}", input, matches);
+        anyhow::bail!(
+            "Channel name is ambiguous: {}. Matches: {}",
+            input,
+            suggestions
+        );
     }
 
-    channels
-        .iter()
-        .find(|c| c.name.eq_ignore_ascii_case(name))
+    name_matches
+        .first()
+        .copied()
         .or_else(|| channels.first())
         .map(|c| c.id.clone())
         .context(format!("Channel not found: {}", input))
 }
 
 fn is_slack_conversation_id(input: &str) -> bool {
+    is_slack_id_with_prefix(input, |c| matches!(c, 'C' | 'D' | 'G'))
+}
+
+fn is_slack_user_id(input: &str) -> bool {
+    is_slack_id_with_prefix(input, |c| matches!(c, 'U' | 'W'))
+}
+
+fn is_slack_id_with_prefix(input: &str, allow: impl Fn(char) -> bool) -> bool {
     let mut chars = input.chars();
-    matches!(chars.next(), Some('C' | 'D' | 'G'))
-        && chars.clone().count() >= 8
-        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    match chars.next() {
+        Some(first) if allow(first) => {}
+        _ => return false,
+    }
+    chars.clone().count() >= 8 && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 async fn ensure_users_cache(
@@ -500,6 +566,104 @@ fn parse_timestamp(input: &str) -> Result<String> {
     parse_unix_seconds(input).map(|s| s.to_string())
 }
 
+fn build_payload(content: MessageContent) -> Result<MessagePayload> {
+    let MessageContent {
+        text,
+        blocks,
+        attachments,
+        metadata,
+    } = content;
+
+    let stdin_sources = [
+        ("blocks", blocks.as_deref()),
+        ("attachments", attachments.as_deref()),
+        ("metadata", metadata.as_deref()),
+    ]
+    .into_iter()
+    .filter(|(_, src)| matches!(*src, Some("-")))
+    .map(|(label, _)| label)
+    .collect::<Vec<_>>();
+
+    if stdin_sources.len() > 1 {
+        anyhow::bail!(
+            "only one flag may read from stdin per invocation; got: {}",
+            stdin_sources.join(", ")
+        );
+    }
+
+    let blocks = blocks.as_deref().map(parse_blocks_source).transpose()?;
+    let attachments = attachments
+        .as_deref()
+        .map(parse_attachments_source)
+        .transpose()?;
+    let metadata = metadata.as_deref().map(parse_metadata_source).transpose()?;
+
+    Ok(MessagePayload {
+        text,
+        blocks,
+        attachments,
+        metadata,
+    })
+}
+
+fn parse_blocks_source(source: &str) -> Result<Vec<Value>> {
+    match read_json_source("blocks", source)? {
+        Value::Array(arr) => Ok(arr),
+        _ => anyhow::bail!("--blocks must be a JSON array"),
+    }
+}
+
+fn parse_attachments_source(source: &str) -> Result<Vec<Value>> {
+    match read_json_source("attachments", source)? {
+        Value::Array(arr) => Ok(arr),
+        _ => anyhow::bail!("--attachments must be a JSON array"),
+    }
+}
+
+fn parse_metadata_source(source: &str) -> Result<MessageMetadata> {
+    let value = read_json_source("metadata", source)?;
+    let obj = value.as_object().ok_or_else(|| {
+        anyhow::anyhow!("--metadata must be a JSON object {{event_type, event_payload}}")
+    })?;
+
+    let event_type = obj
+        .get("event_type")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--metadata.event_type must be a non-empty string"))?
+        .to_string();
+
+    let event_payload = obj
+        .get("event_payload")
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("--metadata.event_payload is required"))?;
+    if !event_payload.is_object() {
+        anyhow::bail!("--metadata.event_payload must be a JSON object");
+    }
+
+    Ok(MessageMetadata {
+        event_type,
+        event_payload,
+    })
+}
+
+fn read_json_source(label: &str, source: &str) -> Result<Value> {
+    let body = if source == "-" {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .with_context(|| format!("--{label}: failed to read from stdin"))?;
+        buf
+    } else if let Some(path) = source.strip_prefix('@') {
+        std::fs::read_to_string(path)
+            .with_context(|| format!("--{label}: failed to read {path}"))?
+    } else {
+        source.to_string()
+    };
+
+    serde_json::from_str(&body).with_context(|| format!("--{label}: invalid JSON"))
+}
+
 async fn refresh_cache(
     slack: &slack::SlackClient,
     cache: &cache::SqliteCache,
@@ -541,4 +705,91 @@ async fn refresh_cache(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn build_payload_rejects_two_stdin_sources() {
+        let err = build_payload(MessageContent {
+            text: None,
+            blocks: Some("-".into()),
+            attachments: Some("-".into()),
+            metadata: None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("only one flag"));
+    }
+
+    #[test]
+    fn parse_blocks_inline_array_succeeds() {
+        let blocks = parse_blocks_source(r#"[{"type":"section"}]"#).unwrap();
+        assert_eq!(blocks[0]["type"], json!("section"));
+    }
+
+    #[test]
+    fn parse_blocks_rejects_object_root() {
+        let err = parse_blocks_source(r#"{"type":"section"}"#).unwrap_err();
+        assert!(err.to_string().contains("must be a JSON array"));
+    }
+
+    #[test]
+    fn parse_blocks_rejects_invalid_json() {
+        let err = parse_blocks_source("not json").unwrap_err();
+        assert!(err.to_string().contains("invalid JSON"));
+    }
+
+    #[test]
+    fn parse_metadata_inline_object_succeeds() {
+        let metadata = parse_metadata_source(
+            r#"{"event_type":"deploy_done","event_payload":{"version":"1.2.3"}}"#,
+        )
+        .unwrap();
+        assert_eq!(metadata.event_type, "deploy_done");
+        assert_eq!(metadata.event_payload["version"], json!("1.2.3"));
+    }
+
+    #[test]
+    fn parse_metadata_rejects_array_root() {
+        let err = parse_metadata_source("[]").unwrap_err();
+        assert!(err.to_string().contains("must be a JSON object"));
+    }
+
+    #[test]
+    fn parse_metadata_rejects_missing_event_type() {
+        let err = parse_metadata_source(r#"{"event_payload":{}}"#).unwrap_err();
+        assert!(err.to_string().contains("event_type"));
+    }
+
+    #[test]
+    fn parse_metadata_rejects_missing_event_payload() {
+        let err = parse_metadata_source(r#"{"event_type":"x"}"#).unwrap_err();
+        assert!(err.to_string().contains("event_payload"));
+    }
+
+    #[test]
+    fn parse_metadata_rejects_non_object_event_payload() {
+        let err =
+            parse_metadata_source(r#"{"event_type":"x","event_payload":"oops"}"#).unwrap_err();
+        assert!(err.to_string().contains("event_payload"));
+    }
+
+    #[test]
+    fn read_json_source_reads_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("blocks.json");
+        std::fs::write(&path, r#"[{"type":"section"}]"#).unwrap();
+        let arg = format!("@{}", path.display());
+        let value = read_json_source("blocks", &arg).unwrap();
+        assert!(value.is_array());
+    }
+
+    #[test]
+    fn read_json_source_missing_file_errors() {
+        let err = read_json_source("blocks", "@/definitely/missing/path.json").unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
 }

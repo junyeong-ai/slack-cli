@@ -15,6 +15,7 @@ pub const REQUIRED_USER_SCOPES: &[&str] = &[
     "im:read",
     "im:history",
     "chat:write",
+    "metadata.message:read",
     "reactions:read",
     "reactions:write",
     "pins:read",

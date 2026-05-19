@@ -3,6 +3,7 @@ use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchResults};
 use chrono::DateTime;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
     if users.is_empty() {
@@ -208,6 +209,9 @@ fn filter_channel_fields(ch: &SlackChannel, fields: &[String]) -> Value {
             "name" => {
                 obj.insert("name".to_string(), json!(ch.name));
             }
+            "user" => {
+                obj.insert("user".to_string(), json!(ch.user));
+            }
             "type" => {
                 let typ = get_channel_type(ch);
                 obj.insert("type".to_string(), json!(typ));
@@ -260,7 +264,8 @@ fn get_channel_type(ch: &SlackChannel) -> &'static str {
 fn get_channel_field(ch: &SlackChannel, field: &str) -> String {
     match field {
         "id" => ch.id.clone(),
-        "name" => ch.name.clone(),
+        "name" => ch.name.clone().unwrap_or_else(|| "-".to_string()),
+        "user" => ch.user.clone().unwrap_or_else(|| "-".to_string()),
         "type" => get_channel_type(ch).to_string(),
         "members" => ch
             .num_members
@@ -297,42 +302,17 @@ fn get_channel_field(ch: &SlackChannel, field: &str) -> String {
 pub fn print_messages(
     messages: &[SlackMessage],
     as_json: bool,
-    expand: &[String],
+    fields: &[String],
     cache: Option<&SqliteCache>,
 ) {
-    let expand_date = expand.iter().any(|f| f == "date");
-    let expand_user_name = expand.iter().any(|f| f == "user_name");
+    let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
 
     if as_json {
-        // Fast path: no expand fields, direct serialization
-        if !expand_date && !expand_user_name {
-            match serde_json::to_string_pretty(messages) {
-                Ok(json) => println!("{}", json),
-                Err(e) => eprintln!("Error serializing messages: {}", e),
-            }
-            return;
-        }
-
-        // Slow path: expand fields require Value transformation
-        let expanded: Vec<Value> = messages
+        let projected: Vec<Value> = messages
             .iter()
-            .map(|msg| {
-                let mut obj = serde_json::to_value(msg).unwrap_or(json!({}));
-                if let Some(map) = obj.as_object_mut() {
-                    if expand_date && let Some(date_str) = format_timestamp(&msg.ts) {
-                        map.insert("date".to_string(), json!(date_str));
-                    }
-                    if expand_user_name
-                        && let Some(user_id) = &msg.user
-                        && let Some(name) = resolve_user_name(user_id, cache)
-                    {
-                        map.insert("user_name".to_string(), json!(name));
-                    }
-                }
-                obj
-            })
+            .map(|msg| project_message(msg, &allowed, cache))
             .collect();
-        match serde_json::to_string_pretty(&expanded) {
+        match serde_json::to_string_pretty(&projected) {
             Ok(json) => println!("{}", json),
             Err(e) => eprintln!("Error serializing messages: {}", e),
         }
@@ -343,6 +323,9 @@ pub fn print_messages(
         println!("No messages found");
         return;
     }
+
+    let expand_date = allowed.contains("date");
+    let expand_user_name = allowed.contains("user_name");
 
     for msg in messages {
         // Priority: user > username (bot display name) > bot_id > "system"
@@ -381,6 +364,30 @@ pub fn print_messages(
             println!("  └─ {} replies", count);
         }
     }
+}
+
+fn project_message(
+    msg: &SlackMessage,
+    allowed: &HashSet<&str>,
+    cache: Option<&SqliteCache>,
+) -> Value {
+    let mut value = serde_json::to_value(msg).unwrap_or_else(|_| json!({}));
+    if let Value::Object(map) = &mut value {
+        map.retain(|key, _| allowed.contains(key.as_str()));
+
+        if allowed.contains("date")
+            && let Some(date_str) = format_timestamp(&msg.ts)
+        {
+            map.insert("date".to_string(), json!(date_str));
+        }
+        if allowed.contains("user_name")
+            && let Some(user_id) = &msg.user
+            && let Some(name) = resolve_user_name(user_id, cache)
+        {
+            map.insert("user_name".to_string(), json!(name));
+        }
+    }
+    value
 }
 
 fn format_timestamp(ts: &str) -> Option<String> {
@@ -651,5 +658,80 @@ pub fn print_search_results(results: &SearchResults, as_json: bool) {
         if let Some(permalink) = &user.permalink {
             println!("  {}", permalink);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::slack::types::{MessageMetadata, SlackMessage};
+
+    fn sample_message_with_blocks_and_metadata() -> SlackMessage {
+        SlackMessage {
+            ts: "1700000000.000100".into(),
+            user: Some("U123".into()),
+            bot_id: None,
+            username: None,
+            text: "hello".into(),
+            channel: None,
+            thread_ts: None,
+            reply_count: Some(2),
+            reply_users: None,
+            reply_users_count: None,
+            latest_reply: None,
+            parent_user_id: None,
+            reactions: None,
+            subtype: None,
+            edited: None,
+            blocks: Some(vec![json!({"type": "section"})]),
+            attachments: None,
+            permalink: Some("https://acme.slack.com/archives/C123/p1".into()),
+            metadata: Some(MessageMetadata {
+                event_type: "deploy_done".into(),
+                event_payload: json!({"version": "1.2.3"}),
+            }),
+        }
+    }
+
+    fn lean_fields() -> Vec<String> {
+        ["ts", "user", "text", "reply_count", "metadata"]
+            .into_iter()
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn project_message_drops_fields_outside_allowed_set() {
+        let msg = sample_message_with_blocks_and_metadata();
+        let fields = lean_fields();
+        let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+        let projected = project_message(&msg, &allowed, None);
+
+        assert!(projected.get("blocks").is_none());
+        assert!(projected.get("permalink").is_none());
+        assert_eq!(projected["ts"], json!("1700000000.000100"));
+        assert_eq!(projected["metadata"]["event_type"], json!("deploy_done"));
+    }
+
+    #[test]
+    fn project_message_includes_blocks_when_allowed() {
+        let msg = sample_message_with_blocks_and_metadata();
+        let mut fields = lean_fields();
+        fields.push("blocks".into());
+        let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+        let projected = project_message(&msg, &allowed, None);
+
+        assert_eq!(projected["blocks"][0]["type"], json!("section"));
+    }
+
+    #[test]
+    fn project_message_adds_computed_date_when_requested() {
+        let msg = sample_message_with_blocks_and_metadata();
+        let mut fields = lean_fields();
+        fields.push("date".into());
+        let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+        let projected = project_message(&msg, &allowed, None);
+
+        assert!(projected.get("date").is_some());
     }
 }

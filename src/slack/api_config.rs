@@ -100,6 +100,10 @@ pub static API_CONFIGS: LazyLock<HashMap<&'static str, ApiConfig>> = LazyLock::n
         "chat.delete",
         ApiConfig::new(RequestEncoding::Json, TokenPolicy::BotPreferred, 60, None),
     );
+    m.insert(
+        "chat.getPermalink",
+        ApiConfig::new(RequestEncoding::Query, TokenPolicy::BotPreferred, 100, None),
+    );
 
     m.insert(
         "reactions.add",

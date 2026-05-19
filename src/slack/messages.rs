@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::core::SlackCore;
-use crate::slack::SlackMessage;
+use crate::slack::{MessageMetadata, SlackMessage};
 
 const REPLIES_PAGE_SIZE: usize = 1000;
 
@@ -12,6 +12,75 @@ const REPLIES_PAGE_SIZE: usize = 1000;
 pub struct MessageResponse {
     pub channel: String,
     pub ts: String,
+}
+
+/// Content of a `chat.postMessage` or `chat.update` call.
+///
+/// `chat.postMessage` and `chat.update` share the same payload surface in
+/// the Slack API. This type captures that surface in one place so callers
+/// can build a payload once and route it through either endpoint.
+#[derive(Debug, Default, Clone)]
+pub struct MessagePayload {
+    pub text: Option<String>,
+    pub blocks: Option<Vec<Value>>,
+    pub attachments: Option<Vec<Value>>,
+    pub metadata: Option<MessageMetadata>,
+}
+
+impl MessagePayload {
+    /// True when at least one of the content fields (`text`, `blocks`,
+    /// `attachments`) is *provided*. Empty values count: `Some(vec![])`
+    /// on `chat.update` is Slack's explicit "clear this field" intent.
+    /// `metadata` alone is not a content field — it decorates content.
+    pub fn has_content(&self) -> bool {
+        self.text.is_some() || self.blocks.is_some() || self.attachments.is_some()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if !self.has_content() {
+            anyhow::bail!(
+                "message payload must provide at least one of --text, --blocks, --attachments"
+            );
+        }
+        Ok(())
+    }
+
+    fn into_fields(self) -> serde_json::Map<String, Value> {
+        let mut map = serde_json::Map::new();
+        if let Some(text) = self.text {
+            map.insert("text".into(), Value::String(text));
+        }
+        if let Some(blocks) = self.blocks {
+            map.insert("blocks".into(), Value::Array(blocks));
+        }
+        if let Some(attachments) = self.attachments {
+            map.insert("attachments".into(), Value::Array(attachments));
+        }
+        if let Some(metadata) = self.metadata {
+            map.insert(
+                "metadata".into(),
+                serde_json::to_value(metadata)
+                    .expect("MessageMetadata serializes to JSON infallibly"),
+            );
+        }
+        map
+    }
+
+    pub fn into_post_json(self, channel: &str, thread_ts: Option<&str>) -> Value {
+        let mut map = self.into_fields();
+        map.insert("channel".into(), Value::String(channel.to_string()));
+        if let Some(ts) = thread_ts {
+            map.insert("thread_ts".into(), Value::String(ts.to_string()));
+        }
+        Value::Object(map)
+    }
+
+    pub fn into_update_json(self, channel: &str, ts: &str) -> Value {
+        let mut map = self.into_fields();
+        map.insert("channel".into(), Value::String(channel.to_string()));
+        map.insert("ts".into(), Value::String(ts.to_string()));
+        Value::Object(map)
+    }
 }
 
 pub struct SlackMessageClient {
@@ -26,36 +95,30 @@ impl SlackMessageClient {
     pub async fn send(
         &self,
         channel: &str,
-        text: &str,
+        payload: MessagePayload,
         thread_ts: Option<&str>,
     ) -> Result<MessageResponse> {
-        let mut params = json!({
-            "channel": channel,
-            "text": text,
-        });
-        if let Some(ts) = thread_ts {
-            params["thread_ts"] = json!(ts);
-        }
-
+        payload.validate()?;
+        let params = payload.into_post_json(channel, thread_ts);
         let response = self.core.api_call("chat.postMessage", params).await?;
 
         let ts = response["ts"]
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Missing timestamp in response"))?;
-
+            .ok_or_else(|| anyhow!("Missing timestamp in response"))?;
         Ok(MessageResponse {
-            channel: channel.to_string(),
+            channel: response["channel"].as_str().unwrap_or(channel).to_string(),
             ts: ts.to_string(),
         })
     }
 
-    pub async fn update(&self, channel: &str, ts: &str, text: &str) -> Result<MessageResponse> {
-        let params = json!({
-            "channel": channel,
-            "ts": ts,
-            "text": text,
-        });
-
+    pub async fn update(
+        &self,
+        channel: &str,
+        ts: &str,
+        payload: MessagePayload,
+    ) -> Result<MessageResponse> {
+        payload.validate()?;
+        let params = payload.into_update_json(channel, ts);
         let response = self.core.api_call("chat.update", params).await?;
 
         Ok(MessageResponse {
@@ -78,6 +141,20 @@ impl SlackMessageClient {
         })
     }
 
+    pub async fn permalink(&self, channel: &str, message_ts: &str) -> Result<String> {
+        let params = json!({
+            "channel": channel,
+            "message_ts": message_ts,
+        });
+
+        let response = self.core.api_call("chat.getPermalink", params).await?;
+
+        response["permalink"]
+            .as_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| anyhow!("Missing permalink in response"))
+    }
+
     pub async fn history(
         &self,
         channel: &str,
@@ -89,6 +166,7 @@ impl SlackMessageClient {
         let mut params = json!({
             "channel": channel,
             "limit": limit,
+            "include_all_metadata": true,
         });
 
         if let Some(cursor) = cursor {
@@ -107,7 +185,7 @@ impl SlackMessageClient {
             .get_mut("messages")
             .and_then(|v| v.as_array_mut())
             .map(std::mem::take)
-            .ok_or_else(|| anyhow::anyhow!("Missing messages in conversations.history response"))?;
+            .ok_or_else(|| anyhow!("Missing messages in conversations.history response"))?;
 
         let messages = raw_messages
             .into_iter()
@@ -137,6 +215,7 @@ impl SlackMessageClient {
                 "channel": channel,
                 "ts": thread_ts,
                 "limit": page_limit,
+                "include_all_metadata": true,
             });
 
             if let Some(c) = &cursor {
@@ -149,9 +228,7 @@ impl SlackMessageClient {
                 .get_mut("messages")
                 .and_then(|v| v.as_array_mut())
                 .map(std::mem::take)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Missing messages in conversations.replies response")
-                })?;
+                .ok_or_else(|| anyhow!("Missing messages in conversations.replies response"))?;
 
             let mut page_messages = raw_messages
                 .into_iter()
@@ -172,5 +249,109 @@ impl SlackMessageClient {
 
         all_messages.truncate(limit);
         Ok(all_messages)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn metadata_fixture() -> MessageMetadata {
+        MessageMetadata {
+            event_type: "task_created".into(),
+            event_payload: json!({ "id": "T-42", "owner": "alice" }),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_default_payload() {
+        assert!(MessagePayload::default().validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_metadata_only_payload() {
+        // metadata alone is decoration; Slack requires ≥1 content field.
+        let payload = MessagePayload {
+            metadata: Some(metadata_fixture()),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_empty_blocks_as_clear_intent() {
+        // `chat.update` accepts `blocks: []` to clear blocks. The library
+        // must not block that.
+        let payload = MessagePayload {
+            blocks: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_empty_attachments_as_clear_intent() {
+        let payload = MessagePayload {
+            attachments: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_text_only() {
+        let payload = MessagePayload {
+            text: Some("hello".into()),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_blocks_only() {
+        let payload = MessagePayload {
+            blocks: Some(vec![json!({"type": "section"})]),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
+    fn post_json_includes_thread_and_metadata() {
+        let payload = MessagePayload {
+            text: Some("hi".into()),
+            blocks: Some(vec![json!({"type": "section"})]),
+            attachments: None,
+            metadata: Some(metadata_fixture()),
+        };
+        let value = payload.into_post_json("C123", Some("1700000000.000100"));
+        assert_eq!(value["channel"], json!("C123"));
+        assert_eq!(value["text"], json!("hi"));
+        assert_eq!(value["blocks"][0]["type"], json!("section"));
+        assert_eq!(value["thread_ts"], json!("1700000000.000100"));
+        assert_eq!(value["metadata"]["event_type"], json!("task_created"));
+        assert_eq!(value["metadata"]["event_payload"]["id"], json!("T-42"));
+    }
+
+    #[test]
+    fn post_json_omits_thread_when_absent() {
+        let payload = MessagePayload {
+            text: Some("hi".into()),
+            ..Default::default()
+        };
+        let value = payload.into_post_json("C123", None);
+        assert!(value.get("thread_ts").is_none());
+    }
+
+    #[test]
+    fn update_json_omits_thread_even_if_caller_wanted_it() {
+        let payload = MessagePayload {
+            text: Some("hi".into()),
+            ..Default::default()
+        };
+        let value = payload.into_update_json("C123", "1700000000.000100");
+        assert!(value.get("thread_ts").is_none());
+        assert_eq!(value["ts"], json!("1700000000.000100"));
     }
 }

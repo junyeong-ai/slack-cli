@@ -56,7 +56,10 @@ pub struct SlackUser {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlackChannel {
     pub id: String,
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     #[serde(default)]
     pub is_channel: bool,
     #[serde(default)]
@@ -102,7 +105,8 @@ pub struct ChannelPurpose {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageChannel {
     pub id: String,
-    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,12 +145,21 @@ pub struct SlackMessage {
     pub attachments: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permalink: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub metadata: Option<MessageMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditedInfo {
     pub user: String,
     pub ts: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageMetadata {
+    pub event_type: String,
+    #[serde(default)]
+    pub event_payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

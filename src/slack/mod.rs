@@ -16,6 +16,7 @@ pub use auth::SlackAuthIdentity;
 pub use bookmarks::Bookmark;
 pub use client::SlackClient;
 pub use emoji::CustomEmoji;
+pub use messages::{MessagePayload, MessageResponse};
 pub use pins::PinnedMessage;
 pub use reactions::MessageReactions;
 pub use search::{
