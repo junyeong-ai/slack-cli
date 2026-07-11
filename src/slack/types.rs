@@ -102,11 +102,35 @@ pub struct ChannelPurpose {
     pub last_set: i64,
 }
 
+/// `conversations.history` emits `channel` either as a bare id string or as
+/// an `{id, name}` object depending on the message shape; both deserialize
+/// here, and output always serializes the object form.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "MessageChannelRepr")]
 pub struct MessageChannel {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MessageChannelRepr {
+    Full {
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    Id(String),
+}
+
+impl From<MessageChannelRepr> for MessageChannel {
+    fn from(repr: MessageChannelRepr) -> Self {
+        match repr {
+            MessageChannelRepr::Full { id, name } => Self { id, name },
+            MessageChannelRepr::Id(id) => Self { id, name: None },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,4 +191,48 @@ pub struct Reaction {
     pub name: String,
     pub users: Vec<String>,
     pub count: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn message_channel_deserializes_from_object() {
+        let msg: SlackMessage = serde_json::from_value(json!({
+            "ts": "1700000000.000100",
+            "text": "hi",
+            "channel": {"id": "C123", "name": "general"},
+        }))
+        .unwrap();
+        let channel = msg.channel.unwrap();
+        assert_eq!(channel.id, "C123");
+        assert_eq!(channel.name.as_deref(), Some("general"));
+    }
+
+    #[test]
+    fn message_channel_deserializes_from_bare_id_string() {
+        let msg: SlackMessage = serde_json::from_value(json!({
+            "ts": "1700000000.000100",
+            "text": "hi",
+            "channel": "C048DJ9BWGK",
+        }))
+        .unwrap();
+        let channel = msg.channel.unwrap();
+        assert_eq!(channel.id, "C048DJ9BWGK");
+        assert_eq!(channel.name, None);
+    }
+
+    #[test]
+    fn message_channel_serializes_as_object_regardless_of_input() {
+        let msg: SlackMessage = serde_json::from_value(json!({
+            "ts": "1700000000.000100",
+            "text": "hi",
+            "channel": "C123",
+        }))
+        .unwrap();
+        let out = serde_json::to_value(&msg).unwrap();
+        assert_eq!(out["channel"], json!({"id": "C123"}));
+    }
 }
