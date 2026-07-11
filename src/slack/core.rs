@@ -19,6 +19,7 @@ use crate::config::{Config, SlackAppDistribution};
 use crate::slack::api_config::{
     API_CONFIGS, ApiConfig, RatePolicy, RequestEncoding, get_api_config,
 };
+use crate::slack::error::SlackApiError;
 
 type SimpleRateLimiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
 
@@ -149,18 +150,18 @@ impl SlackCore {
                 }
             };
 
-            let response = response.map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+            let response = response.map_err(|source| SlackApiError::Transport { source })?;
             let status = response.status();
             let headers = response.headers().clone();
 
             if status == StatusCode::TOO_MANY_REQUESTS {
                 retry_count += 1;
                 if retry_count >= max_attempts {
-                    return Err(anyhow::anyhow!(
-                        "Rate limit exceeded for {} after {} attempts",
-                        method,
-                        max_attempts
-                    ));
+                    return Err(SlackApiError::RateLimitExhausted {
+                        method: method.to_string(),
+                        attempts: max_attempts,
+                    }
+                    .into());
                 }
 
                 let wait_time = headers
@@ -187,26 +188,29 @@ impl SlackCore {
             let response_text = response
                 .text()
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+                .map_err(|source| SlackApiError::Transport { source })?;
 
             if !status.is_success() {
-                return Err(anyhow::anyhow!(
-                    "Slack API HTTP error for {}: {} {}",
-                    method,
+                return Err(SlackApiError::Http {
+                    method: method.to_string(),
                     status,
-                    response_text
-                ));
+                    body: response_text,
+                }
+                .into());
             }
 
             let json_response: Value = serde_json::from_str(&response_text)
                 .map_err(|e| anyhow::anyhow!("Failed to parse JSON response: {}", e))?;
 
             if let Some(false) = json_response.get("ok").and_then(|v| v.as_bool()) {
-                let error = json_response
+                let code = json_response
                     .get("error")
                     .and_then(|e| e.as_str())
                     .unwrap_or("unknown_error");
-                return Err(anyhow::anyhow!("Slack API error: {}", error));
+                return Err(SlackApiError::Api {
+                    code: code.to_string(),
+                }
+                .into());
             }
 
             return Ok(json_response);

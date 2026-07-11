@@ -22,25 +22,34 @@ pub struct MessageResponse {
 #[derive(Debug, Default, Clone)]
 pub struct MessagePayload {
     pub text: Option<String>,
+    /// Standard-markdown message body, rendered by Slack itself. Slack
+    /// rejects it alongside `text` or `blocks` (`markdown_text_conflict`).
+    pub markdown_text: Option<String>,
     pub blocks: Option<Vec<Value>>,
     pub attachments: Option<Vec<Value>>,
     pub metadata: Option<MessageMetadata>,
 }
 
 impl MessagePayload {
-    /// True when at least one of the content fields (`text`, `blocks`,
-    /// `attachments`) is *provided*. Empty values count: `Some(vec![])`
-    /// on `chat.update` is Slack's explicit "clear this field" intent.
-    /// `metadata` alone is not a content field — it decorates content.
+    /// True when at least one of the content fields (`text`, `markdown_text`,
+    /// `blocks`, `attachments`) is *provided*. Empty values count:
+    /// `Some(vec![])` on `chat.update` is Slack's explicit "clear this field"
+    /// intent. `metadata` alone is not a content field — it decorates content.
     pub fn has_content(&self) -> bool {
-        self.text.is_some() || self.blocks.is_some() || self.attachments.is_some()
+        self.text.is_some()
+            || self.markdown_text.is_some()
+            || self.blocks.is_some()
+            || self.attachments.is_some()
     }
 
     pub fn validate(&self) -> Result<()> {
         if !self.has_content() {
             anyhow::bail!(
-                "message payload must provide at least one of --text, --blocks, --attachments"
+                "message payload must provide at least one of --text, --markdown-text, --blocks, --attachments"
             );
+        }
+        if self.markdown_text.is_some() && (self.text.is_some() || self.blocks.is_some()) {
+            anyhow::bail!("--markdown-text cannot be combined with --text or --blocks");
         }
         Ok(())
     }
@@ -49,6 +58,9 @@ impl MessagePayload {
         let mut map = serde_json::Map::new();
         if let Some(text) = self.text {
             map.insert("text".into(), Value::String(text));
+        }
+        if let Some(markdown_text) = self.markdown_text {
+            map.insert("markdown_text".into(), Value::String(markdown_text));
         }
         if let Some(blocks) = self.blocks {
             map.insert("blocks".into(), Value::Array(blocks));
@@ -318,12 +330,62 @@ mod tests {
     }
 
     #[test]
+    fn validate_accepts_markdown_text_only() {
+        let payload = MessagePayload {
+            markdown_text: Some("**hello**".into()),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_markdown_text_with_attachments() {
+        let payload = MessagePayload {
+            markdown_text: Some("**hello**".into()),
+            attachments: Some(vec![]),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_markdown_text_with_text() {
+        let payload = MessagePayload {
+            text: Some("hi".into()),
+            markdown_text: Some("**hi**".into()),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_markdown_text_with_blocks() {
+        let payload = MessagePayload {
+            markdown_text: Some("**hi**".into()),
+            blocks: Some(vec![json!({"type": "section"})]),
+            ..Default::default()
+        };
+        assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn post_json_includes_markdown_text() {
+        let payload = MessagePayload {
+            markdown_text: Some("**hi**".into()),
+            ..Default::default()
+        };
+        let value = payload.into_post_json("C123", None);
+        assert_eq!(value["markdown_text"], json!("**hi**"));
+        assert!(value.get("text").is_none());
+    }
+
+    #[test]
     fn post_json_includes_thread_and_metadata() {
         let payload = MessagePayload {
             text: Some("hi".into()),
             blocks: Some(vec![json!({"type": "section"})]),
-            attachments: None,
             metadata: Some(metadata_fixture()),
+            ..Default::default()
         };
         let value = payload.into_post_json("C123", Some("1700000000.000100"));
         assert_eq!(value["channel"], json!("C123"));

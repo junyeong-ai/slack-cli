@@ -91,11 +91,11 @@ async fn send_posts_blocks_metadata_and_thread() {
         blocks: Some(vec![
             json!({"type": "section", "text": {"type": "mrkdwn", "text": "*hello*"}}),
         ]),
-        attachments: None,
         metadata: Some(MessageMetadata {
             event_type: "deploy_done".into(),
             event_payload: json!({"version": "1.2.3"}),
         }),
+        ..Default::default()
     };
 
     let result = client
@@ -114,6 +114,40 @@ async fn send_posts_blocks_metadata_and_thread() {
     assert_eq!(body["thread_ts"], json!("1700000000.000100"));
     assert_eq!(body["metadata"]["event_type"], json!("deploy_done"));
     assert_eq!(body["metadata"]["event_payload"]["version"], json!("1.2.3"));
+}
+
+#[tokio::test]
+async fn send_posts_markdown_text_verbatim() {
+    let server = MockServer::start().await;
+    let (responder, mut rx) = capture(json!({
+        "ok": true,
+        "channel": "C123",
+        "ts": "1700000000.000200",
+    }));
+    Mock::given(method("POST"))
+        .and(path("/chat.postMessage"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let payload = MessagePayload {
+        markdown_text: Some("**bold** and [link](https://example.com)".into()),
+        ..Default::default()
+    };
+    client
+        .messages
+        .send("C123", payload, None)
+        .await
+        .expect("markdown send succeeds");
+
+    let body = rx.recv().await.unwrap();
+    assert_eq!(
+        body["markdown_text"],
+        json!("**bold** and [link](https://example.com)")
+    );
+    assert!(body.get("text").is_none());
+    assert!(body.get("blocks").is_none());
 }
 
 #[tokio::test]
@@ -259,6 +293,63 @@ async fn history_always_requests_include_all_metadata() {
     let metadata = messages[0].metadata.as_ref().expect("metadata present");
     assert_eq!(metadata.event_type, "deploy_done");
     assert_eq!(metadata.event_payload["version"], json!("1.2.3"));
+}
+
+#[tokio::test]
+async fn history_surfaces_next_cursor() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.history"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "messages": [
+                {"ts": "1700000000.000300", "user": "U123", "text": "newest"}
+            ],
+            "response_metadata": {"next_cursor": "dXNlcjpVMDYxTkZUVDI="},
+        })))
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let (messages, next_cursor) = client
+        .messages
+        .history("C123", 1, None, None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(next_cursor.as_deref(), Some("dXNlcjpVMDYxTkZUVDI="));
+}
+
+#[tokio::test]
+async fn api_error_surfaces_slack_error_code_as_typed_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat.postMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": false,
+            "error": "channel_not_found",
+        })))
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let payload = MessagePayload {
+        text: Some("hi".into()),
+        ..Default::default()
+    };
+    let err = client
+        .messages
+        .send("C404", payload, None)
+        .await
+        .unwrap_err();
+
+    match err.downcast_ref::<slack_cli::slack::SlackApiError>() {
+        Some(slack_cli::slack::SlackApiError::Api { code }) => {
+            assert_eq!(code, "channel_not_found");
+        }
+        other => panic!("expected SlackApiError::Api, got {other:?}"),
+    }
 }
 
 #[tokio::test]

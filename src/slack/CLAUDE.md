@@ -15,14 +15,14 @@ Never `send_message`, `fetch_all_*`, `get_*`. When the Slack API verb is `getX` 
 
 ## Message payload model (`MessagePayload`)
 
-`chat.postMessage` and `chat.update` share the same payload surface (text, blocks, attachments, metadata). `MessagePayload` captures this once:
+`chat.postMessage` and `chat.update` share the same payload surface (text, markdown_text, blocks, attachments, metadata). `MessagePayload` captures this once:
 
 ```rust
 messages.send(channel, payload, thread_ts)   // post
 messages.update(channel, ts, payload)         // edit (no thread routing)
 ```
 
-- `payload.validate()` enforces ≥1 of text / blocks / attachments before any HTTP call.
+- `payload.validate()` enforces ≥1 content field before any HTTP call, and rejects markdown_text alongside text or blocks (Slack's `markdown_text_conflict`).
 - `into_post_json` adds `thread_ts` only on send; `into_update_json` never carries thread routing.
 - New send/update fields belong on `MessagePayload`, not on call sites.
 

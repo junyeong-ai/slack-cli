@@ -3,17 +3,18 @@ use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
 use serde_json::Value;
 use slack_cli::{
-    auth::{self, AuthLoadOptions, Authenticator, EnvOverrides},
+    auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
     cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget},
     config, format, slack,
-    slack::{MessageMetadata, MessagePayload},
+    slack::{MessageMetadata, MessagePayload, SlackApiError},
 };
 use std::io::Read;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let level = if cli.verbose { "debug" } else { "warn" };
@@ -26,6 +27,25 @@ async fn main() -> Result<()> {
 
     dotenvy::dotenv().ok();
 
+    let as_json = cli.json;
+    match run(cli).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let (code, exit) = classify_error(&err);
+            if as_json {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({ "error": { "code": code, "message": format!("{err:#}") } })
+                );
+            } else {
+                eprintln!("Error: {err:?}");
+            }
+            ExitCode::from(exit)
+        }
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let config = config::Config::load(cli.config.clone(), cli.data_dir.clone())?;
 
     if let Command::Config { action } = &cli.command {
@@ -170,7 +190,7 @@ async fn main() -> Result<()> {
             let oldest_ts = oldest.map(|o| parse_timestamp(&o)).transpose()?;
             let latest_ts = latest.map(|l| parse_timestamp(&l)).transpose()?;
 
-            let (mut messages, _) = slack
+            let (mut messages, next_cursor) = slack
                 .messages
                 .history(
                     &id,
@@ -186,7 +206,13 @@ async fn main() -> Result<()> {
             }
 
             let fields = merge_fields(&config.output.messages_fields, expand.as_deref());
-            format::print_messages(&messages, cli.json, &fields, Some(&cache));
+            format::print_history(
+                &messages,
+                next_cursor.as_deref(),
+                cli.json,
+                &fields,
+                Some(&cache),
+            );
         }
 
         Command::Thread {
@@ -391,6 +417,46 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Slack Web API error codes that mean the token, not the request, is the
+/// problem (Slack's documented common errors shared across methods). They
+/// exit with code 3 so a caller knows to re-authenticate instead of retrying.
+const AUTH_ERROR_CODES: &[&str] = &[
+    "not_authed",
+    "invalid_auth",
+    "account_inactive",
+    "token_revoked",
+    "token_expired",
+    "no_permission",
+    "missing_scope",
+    "not_allowed_token_type",
+    "ekm_access_denied",
+];
+
+/// Machine identity of a failure: the `code` for the `--json` error envelope
+/// and the process exit code. Exit codes encode the coarse classes a caller
+/// branches on — 0 ok, 1 generic, 2 usage (clap), 3 auth, 4 rate limit — while
+/// `code` keeps Slack's own error vocabulary for API failures.
+fn classify_error(err: &anyhow::Error) -> (String, u8) {
+    if let Some(api) = err.downcast_ref::<SlackApiError>() {
+        return match api {
+            SlackApiError::Api { code } if code == "ratelimited" => (code.clone(), 4),
+            SlackApiError::Api { code } if AUTH_ERROR_CODES.contains(&code.as_str()) => {
+                (code.clone(), 3)
+            }
+            SlackApiError::Api { code } => (code.clone(), 1),
+            SlackApiError::RateLimitExhausted { .. } => ("rate_limited".to_string(), 4),
+            SlackApiError::Http { .. } => ("http_error".to_string(), 1),
+            SlackApiError::Transport { .. } => ("network_error".to_string(), 1),
+        };
+    }
+
+    if err.downcast_ref::<AuthError>().is_some() {
+        return ("auth_error".to_string(), 3);
+    }
+
+    ("error".to_string(), 1)
+}
+
 fn handle_config_action(
     action: &ConfigAction,
     as_json: bool,
@@ -569,6 +635,7 @@ fn parse_timestamp(input: &str) -> Result<String> {
 fn build_payload(content: MessageContent) -> Result<MessagePayload> {
     let MessageContent {
         text,
+        markdown_text,
         blocks,
         attachments,
         metadata,
@@ -600,6 +667,7 @@ fn build_payload(content: MessageContent) -> Result<MessagePayload> {
 
     Ok(MessagePayload {
         text,
+        markdown_text,
         blocks,
         attachments,
         metadata,
@@ -713,9 +781,61 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn classify_error_keeps_slack_code_for_generic_api_errors() {
+        let err = anyhow::Error::from(SlackApiError::Api {
+            code: "channel_not_found".to_string(),
+        });
+        assert_eq!(classify_error(&err), ("channel_not_found".to_string(), 1));
+    }
+
+    #[test]
+    fn classify_error_maps_slack_auth_codes_to_exit_3() {
+        let err = anyhow::Error::from(SlackApiError::Api {
+            code: "invalid_auth".to_string(),
+        });
+        assert_eq!(classify_error(&err), ("invalid_auth".to_string(), 3));
+    }
+
+    #[test]
+    fn classify_error_maps_rate_limits_to_exit_4() {
+        let exhausted = anyhow::Error::from(SlackApiError::RateLimitExhausted {
+            method: "conversations.history".to_string(),
+            attempts: 3,
+        });
+        assert_eq!(classify_error(&exhausted), ("rate_limited".to_string(), 4));
+
+        let in_body = anyhow::Error::from(SlackApiError::Api {
+            code: "ratelimited".to_string(),
+        });
+        assert_eq!(classify_error(&in_body), ("ratelimited".to_string(), 4));
+    }
+
+    #[test]
+    fn classify_error_survives_context_wrapping() {
+        let err = anyhow::Error::from(SlackApiError::Api {
+            code: "invalid_auth".to_string(),
+        })
+        .context("sending message");
+        assert_eq!(classify_error(&err).1, 3);
+    }
+
+    #[test]
+    fn classify_error_maps_auth_errors_to_exit_3() {
+        let err = anyhow::Error::from(AuthError::NotConfigured);
+        assert_eq!(classify_error(&err), ("auth_error".to_string(), 3));
+    }
+
+    #[test]
+    fn classify_error_defaults_to_generic() {
+        let err = anyhow::anyhow!("boom");
+        assert_eq!(classify_error(&err), ("error".to_string(), 1));
+    }
+
+    #[test]
     fn build_payload_rejects_two_stdin_sources() {
         let err = build_payload(MessageContent {
             text: None,
+            markdown_text: None,
             blocks: Some("-".into()),
             attachments: Some("-".into()),
             metadata: None,

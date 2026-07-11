@@ -308,10 +308,7 @@ pub fn print_messages(
     let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
 
     if as_json {
-        let projected: Vec<Value> = messages
-            .iter()
-            .map(|msg| project_message(msg, &allowed, cache))
-            .collect();
+        let projected = project_messages(messages, &allowed, cache);
         match serde_json::to_string_pretty(&projected) {
             Ok(json) => println!("{}", json),
             Err(e) => eprintln!("Error serializing messages: {}", e),
@@ -319,6 +316,57 @@ pub fn print_messages(
         return;
     }
 
+    render_messages(messages, &allowed, cache);
+}
+
+/// One page of `conversations.history` plus the cursor to the next page.
+/// The JSON shape is an envelope — `{messages, next_cursor}` with a null
+/// cursor on the last page — because following the cursor is the caller's
+/// job for this command. Internally-paginating commands (`thread`) keep the
+/// bare array shape of `print_messages`.
+pub fn print_history(
+    messages: &[SlackMessage],
+    next_cursor: Option<&str>,
+    as_json: bool,
+    fields: &[String],
+    cache: Option<&SqliteCache>,
+) {
+    let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+
+    if as_json {
+        let envelope = json!({
+            "messages": project_messages(messages, &allowed, cache),
+            "next_cursor": next_cursor,
+        });
+        match serde_json::to_string_pretty(&envelope) {
+            Ok(json) => println!("{}", json),
+            Err(e) => eprintln!("Error serializing messages: {}", e),
+        }
+        return;
+    }
+
+    render_messages(messages, &allowed, cache);
+    if let Some(cursor) = next_cursor {
+        eprintln!("More messages available: rerun with --cursor {}", cursor);
+    }
+}
+
+fn project_messages(
+    messages: &[SlackMessage],
+    allowed: &HashSet<&str>,
+    cache: Option<&SqliteCache>,
+) -> Vec<Value> {
+    messages
+        .iter()
+        .map(|msg| project_message(msg, allowed, cache))
+        .collect()
+}
+
+fn render_messages(
+    messages: &[SlackMessage],
+    allowed: &HashSet<&str>,
+    cache: Option<&SqliteCache>,
+) {
     if messages.is_empty() {
         println!("No messages found");
         return;

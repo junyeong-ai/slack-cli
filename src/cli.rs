@@ -292,7 +292,7 @@ pub enum Command {
     group(ArgGroup::new("message_content")
         .required(true)
         .multiple(true)
-        .args(["text", "blocks", "attachments"])),
+        .args(["text", "markdown_text", "blocks", "attachments"])),
 )]
 pub struct MessageContent {
     #[arg(
@@ -301,6 +301,13 @@ pub struct MessageContent {
         help = "Message text (also used as the notification fallback when blocks are present)"
     )]
     pub text: Option<String>,
+
+    #[arg(
+        long,
+        conflicts_with_all = ["text", "blocks"],
+        help = "Standard-markdown message body, rendered by Slack (no mrkdwn translation needed)"
+    )]
+    pub markdown_text: Option<String>,
 
     #[arg(
         long,
