@@ -24,7 +24,7 @@ Any user-supplied query MUST pass through `helpers::process_fts_query` before re
 
 ## Schema versioning
 
-`schema::SCHEMA_VERSION` gates auto-migration on cache open. **Bump it whenever the cached column set or FTS5 table definition changes** — adding a generated column, changing tokenizer, renaming a JSON path. Existing caches with a lower version are rebuilt; without a bump they deserialize against a stale schema and silently return wrong data.
+`schema::SCHEMA_VERSION` gates auto-migration on cache open. **Bump it whenever the cached column set or FTS5 table definition changes** — adding a generated column, changing tokenizer, renaming a JSON path. Any stored version other than the current one (older *or* newer — cache contents are refetchable, so rebuild is always safe) drops and recreates every table; without a bump the cache deserializes against a stale schema and silently returns wrong data.
 
 ## Distributed locking
 

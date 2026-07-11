@@ -33,15 +33,15 @@ impl SqliteCache {
         } else {
             SqliteConnectionManager::file(path)
         }
-        .with_init(move |conn| {
-            // Enable WAL mode for better concurrency (skip for in-memory)
-            if !is_memory {
-                conn.execute_batch("PRAGMA journal_mode = WAL;")?;
-            }
+        .with_init(|conn| {
+            // Connection-local pragmas only. WAL is set once in `new` — the
+            // journal-mode switch takes an exclusive lock that SQLite does
+            // not route through the busy handler, so concurrent per-connection
+            // switches race each other and the schema setup.
             conn.execute_batch(
-                "PRAGMA synchronous = NORMAL;
+                "PRAGMA busy_timeout = 5000;
+                     PRAGMA synchronous = NORMAL;
                      PRAGMA foreign_keys = ON;
-                     PRAGMA busy_timeout = 5000;
                      PRAGMA cache_size = -64000;", // 64MB cache
             )?;
             Ok(())
@@ -54,6 +54,15 @@ impl SqliteCache {
             .build(manager)?;
 
         let cache = Self { pool, instance_id };
+
+        // WAL mode persists in the database file: switch it once, before any
+        // other database activity, instead of per connection (skip in-memory).
+        if !is_memory {
+            cache
+                .pool
+                .get()?
+                .execute_batch("PRAGMA journal_mode = WAL;")?;
+        }
 
         schema::initialize_schema(&cache.pool).await?;
         Ok(cache)
