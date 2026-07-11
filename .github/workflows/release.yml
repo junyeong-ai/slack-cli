@@ -212,9 +212,19 @@ jobs:
           prefix="slack-cli-v${version}-"
           cd dist
           shopt -s nullglob
+          # Checksum files are regenerated, not copied: a copied .sha256 still
+          # references the versioned archive name and fails verification
+          # against the alias. Signature bundles copy as-is — they bind to the
+          # blob digest, which renaming does not change.
           for f in "${prefix}"*; do
-            suffix="${f#"${prefix}"}"
-            cp "$f" "slack-cli-${suffix}"
+            case "$f" in
+              *.sha256) continue ;;
+            esac
+            alias_name="slack-cli-${f#"${prefix}"}"
+            cp "$f" "$alias_name"
+            case "$alias_name" in
+              *.tar.gz|*.zip) sha256sum "$alias_name" > "${alias_name}.sha256" ;;
+            esac
           done
 
       - name: Publish GitHub release
