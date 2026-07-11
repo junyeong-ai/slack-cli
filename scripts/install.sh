@@ -204,9 +204,10 @@ download_binary() {
     echo "$binary_path"
 }
 
-# Sigstore verification of the release signature. Opportunistic by design:
-# skipped with a note when cosign is not installed, but a present cosign that
-# fails to verify is a hard failure — never fall back past a bad signature.
+# Sigstore verification of the release signature. Skipped with a note when
+# cosign is not installed; with cosign present, a missing bundle or a failed
+# verification is fatal — a stripped signature must not downgrade the install
+# to checksum-only trust. Releases are signed from v0.4.0 onward.
 verify_signature() {
     local url="$1"
     local archive="$2"
@@ -218,8 +219,10 @@ verify_signature() {
 
     echo "🔏 Verifying sigstore signature..." >&2
     if ! (cd "$BINARY_TMP_DIR" && curl -fsSLO "${url}.bundle"); then
-        echo "⚠️  Signature bundle not published for this release; skipping" >&2
-        return 0
+        echo "❌ Signature bundle missing for $archive" >&2
+        echo "   Releases v0.4.0 and later ship a sigstore bundle; a missing bundle" >&2
+        echo "   means the assets should not be trusted." >&2
+        return 1
     fi
 
     if ! cosign verify-blob \
