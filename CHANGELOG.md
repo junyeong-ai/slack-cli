@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-11
+
+### Added
+
+- `--markdown-text` on `send` and `update`: standard-Markdown message body rendered by Slack itself (`chat.postMessage`/`chat.update` `markdown_text`, max 12,000 chars) — no mrkdwn hand-translation needed. Mutually exclusive with `--text`/`--blocks`, enforced at both the clap and payload-validation boundaries
+- Typed `SlackApiError` (`Api`, `RateLimitExhausted`, `Http`, `Transport`) replaces string-only Slack core errors; the CLI boundary classifies failures by downcast into differentiated exit codes — `0` ok, `1` generic, `2` usage (clap), `3` auth, `4` rate-limited — and `--json` mode prints an `{"error": {code, message}}` envelope to stderr for runtime failures, with Slack's own error string preserved verbatim as `code`
+- `scripts/install.sh` verifies release signatures with cosign (sigstore bundle pinned to the tag-triggered release workflow identity) when cosign is installed, compares SHA-256 digests directly, and auto-detects glibc vs musl on Linux
+
+### Changed
+
+- **BREAKING**: `slack-cli messages --json` now emits a `{messages, next_cursor}` envelope instead of a bare array, exposing the `conversations.history` cursor so channel history is actually pageable via `--cursor`; `next_cursor` is `null` on the last page. `thread --json` keeps its bare-array shape (it paginates internally)
+- Rust toolchain 1.95.0 → 1.97.0 (`rust-toolchain.toml` is the single pin; the duplicate `.tool-versions` that overrode it via `RUSTUP_TOOLCHAIN` is removed) and rusqlite 0.39 → 0.40 / r2d2_sqlite 0.34 → 0.35, picking up rusqlite's tainted-SAVEPOINT SQL-injection fix
+
+### Fixed
+
+- Cache schema migration actually runs: the stored `schema_version` is compared on open and any mismatch rebuilds every cache object inside a single `BEGIN IMMEDIATE` transaction, so concurrent processes serialize instead of interleaving DROP/CREATE; a non-integer stored version rebuilds instead of failing the open
+- First-open `database is locked` races: the WAL switch happens once at pool creation (not per connection) with a bounded busy retry, since SQLite journal-mode transitions bypass the busy handler
+- Release "latest" alias assets get regenerated `.sha256` files; the copied checksums previously referenced the versioned filenames and could never verify
+
+### Documentation
+
+- README (KO + EN), the `slack-workspace` skill, and module guides document the pagination envelope, `--markdown-text`, the exit-code / error-envelope contract (usage errors exit `2` with clap diagnostics by design), and the install verification chain; the skill's `allowed-tools` narrows from blanket `Bash` to `Bash(slack-cli *)` + `Bash(jq *)`
+
 ## [0.6.0] - 2026-05-19
 
 ### Added
