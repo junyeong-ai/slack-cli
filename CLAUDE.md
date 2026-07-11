@@ -18,10 +18,13 @@ src/
 
 ## Build & test
 
+The toolchain is pinned by `rust-toolchain.toml` (single source of truth —
+rustup picks it up automatically; don't restate the version in commands).
+
 ```bash
-cargo +1.97.0 nextest run --profile ci --all-features --workspace
-cargo +1.97.0 clippy --all-targets --all-features -- -D warnings
-cargo +1.97.0 fmt --all -- --check
+cargo nextest run --profile ci --all-features --workspace
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
 ```
 
 Debug a single command:

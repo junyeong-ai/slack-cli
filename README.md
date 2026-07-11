@@ -126,7 +126,7 @@ slack-cli config show                           # 설정 표시
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh`는 GitHub Release의 사전 빌드 바이너리와 SHA-256 체크섬을 내려받아 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다.
+`install.sh`는 GitHub Release의 사전 빌드 바이너리를 내려받아 SHA-256 체크섬을 검증하고, `cosign`이 설치돼 있으면 sigstore 서명까지 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. Linux에서는 glibc/musl을 자동 감지합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다.
 
 ```bash
 # 특정 릴리스 설치
@@ -147,10 +147,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### 소스 빌드
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo +1.97.0 build --release
+cargo build --release   # rust-toolchain.toml이 1.97.0 툴체인을 자동 선택
 ```
 
-**요구사항**: Rust 1.97.0+
+**요구사항**: Rust 1.97.0+ (rustup)
 
 ---
 

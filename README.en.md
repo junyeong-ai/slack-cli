@@ -126,7 +126,7 @@ slack-cli config show                             # Show config
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum, and installs it to `~/.local/bin/slack-cli`. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required.
+`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required.
 
 ```bash
 # Install a specific release
@@ -147,10 +147,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### Build from Source
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo +1.97.0 build --release
+cargo build --release   # rust-toolchain.toml selects the 1.97.0 toolchain
 ```
 
-**Requirements**: Rust 1.97.0+
+**Requirements**: Rust 1.97.0+ (rustup)
 
 ---
 
