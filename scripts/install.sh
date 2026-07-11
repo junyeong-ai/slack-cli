@@ -75,7 +75,13 @@ detect_platform() {
     arch=$(uname -m)
 
     case "$os" in
-        linux) os="unknown-linux-gnu" ;;
+        linux)
+            if is_musl_system; then
+                os="unknown-linux-musl"
+            else
+                os="unknown-linux-gnu"
+            fi
+            ;;
         darwin) os="apple-darwin" ;;
         *) echo "Unsupported OS: $os"; exit 1 ;;
     esac
@@ -87,6 +93,23 @@ detect_platform() {
     esac
 
     echo "${arch}-${os}"
+}
+
+is_musl_system() {
+    [ -f /etc/alpine-release ] && return 0
+    ldd --version 2>&1 | grep -qi musl
+}
+
+compute_sha256() {
+    local file="$1"
+
+    if command -v sha256sum >/dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        return 1
+    fi
 }
 
 get_latest_version() {
@@ -140,21 +163,30 @@ download_binary() {
         return 1
     fi
 
-    if command -v sha256sum >/dev/null; then
-        (cd "$BINARY_TMP_DIR" && sha256sum -c "${archive}.sha256") >&2 || {
-            rm -rf "$BINARY_TMP_DIR"
-            return 1
-        }
-    elif command -v shasum >/dev/null; then
-        (cd "$BINARY_TMP_DIR" && shasum -a 256 -c "${archive}.sha256") >&2 || {
-            rm -rf "$BINARY_TMP_DIR"
-            return 1
-        }
-    else
-        echo "❌ No checksum tool found" >&2
+    # Compare digests directly instead of `sha256sum -c`: the "latest" alias
+    # assets share the digest of their versioned originals, so the filename
+    # inside the .sha256 file must not participate in verification.
+    local expected
+    local actual
+    expected=$(awk '{print $1; exit}' "$BINARY_TMP_DIR/${archive}.sha256")
+    actual=$(compute_sha256 "$BINARY_TMP_DIR/$archive") || {
+        echo "❌ No checksum tool found (need sha256sum or shasum)" >&2
+        rm -rf "$BINARY_TMP_DIR"
+        return 1
+    }
+    if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+        echo "❌ Checksum mismatch for $archive" >&2
+        echo "   expected: ${expected:-<empty>}" >&2
+        echo "   actual:   $actual" >&2
         rm -rf "$BINARY_TMP_DIR"
         return 1
     fi
+    echo "   ✅ SHA-256 verified" >&2
+
+    verify_signature "$url" "$archive" || {
+        rm -rf "$BINARY_TMP_DIR"
+        return 1
+    }
 
     echo "📦 Extracting..." >&2
     if ! (cd "$BINARY_TMP_DIR" && tar -xzf "$archive") >&2; then
@@ -172,14 +204,43 @@ download_binary() {
     echo "$binary_path"
 }
 
+# Sigstore verification of the release signature. Opportunistic by design:
+# skipped with a note when cosign is not installed, but a present cosign that
+# fails to verify is a hard failure — never fall back past a bad signature.
+verify_signature() {
+    local url="$1"
+    local archive="$2"
+
+    if ! command -v cosign >/dev/null; then
+        echo "ℹ️  cosign not found; skipping signature verification (SHA-256 already checked)" >&2
+        return 0
+    fi
+
+    echo "🔏 Verifying sigstore signature..." >&2
+    if ! (cd "$BINARY_TMP_DIR" && curl -fsSLO "${url}.bundle"); then
+        echo "⚠️  Signature bundle not published for this release; skipping" >&2
+        return 0
+    fi
+
+    if ! cosign verify-blob \
+        --bundle "$BINARY_TMP_DIR/${archive}.bundle" \
+        --certificate-identity-regexp "^https://github.com/$REPO/" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+        "$BINARY_TMP_DIR/$archive" >&2; then
+        echo "❌ Signature verification failed for $archive" >&2
+        return 1
+    fi
+    echo "   ✅ Signature verified" >&2
+}
+
 build_from_source() {
     if [ ! -f "$PROJECT_ROOT/Cargo.toml" ]; then
         echo "❌ Source build requires running inside a slack-cli checkout" >&2
         exit 1
     fi
 
-    echo "🔨 Building from source..." >&2
-    if ! (cd "$PROJECT_ROOT" && cargo +1.97.0 build --release) >&2; then
+    echo "🔨 Building from source (rustup uses the toolchain pinned in rust-toolchain.toml)..." >&2
+    if ! (cd "$PROJECT_ROOT" && cargo build --release) >&2; then
         echo "❌ Build failed" >&2
         exit 1
     fi
@@ -432,7 +493,7 @@ main() {
         echo "" >&2
         echo "Installation method:" >&2
         echo "  [1] Download prebuilt binary (RECOMMENDED - fast)" >&2
-        echo "  [2] Build from source (requires Rust 1.97.0 toolchain)" >&2
+        echo "  [2] Build from source (requires rustup; uses the repo's pinned toolchain)" >&2
         echo "" >&2
         method=$(prompt_choice "Choose [1-2] (default: 1): " "1")
 
