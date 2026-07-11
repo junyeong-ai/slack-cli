@@ -161,7 +161,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 
 ## Message metadata (idempotency)
 
-Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cli` exposes it as a first-class field on input (`-m`) and output (`metadata` is in the lean message default). Use it when a job may retry: read recent history with `messages --json | jq '.[].metadata'`, dedupe by your own key inside `event_payload`, skip re-sending.
+Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cli` exposes it as a first-class field on input (`-m`) and output (`metadata` is in the lean message default). Use it when a job may retry: read recent history with `messages --json | jq '.messages[].metadata'`, dedupe by your own key inside `event_payload`, skip re-sending.
 
 `conversations.history` and `conversations.replies` always request `include_all_metadata=true`, so no extra flag is needed to see the field.
 
