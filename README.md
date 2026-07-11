@@ -1,7 +1,7 @@
 # Slack CLI
 
 [![CI](https://github.com/junyeong-ai/slack-cli/workflows/CI/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
-[![Rust](https://img.shields.io/badge/rust-1.95.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.97.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-junyeong--ai%2Fslack--cli-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/junyeong-ai/slack-cli)
 
 > **[English](README.en.md)** | **한국어**
@@ -47,17 +47,19 @@ slack-cli send "#general" -t "Hello!"
 ### 메시지
 ```bash
 slack-cli send "#general" -t "공지사항입니다"           # 전송 (텍스트)
+slack-cli send "#general" --markdown-text "**볼드**"    # 전송 (표준 Markdown, Slack이 렌더링)
 slack-cli send U123ABCDEF -t "DM by user-id"           # 유저 ID → DM 자동 해석
 slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + 폴백 텍스트
 slack-cli send "#general" -m @meta.json -t "deploy done" # 멱등 metadata 첨부
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
-slack-cli update "#general" 1234.5678 -t "수정됨"       # 수정 (text/blocks/attachments/metadata)
+slack-cli update "#general" 1234.5678 -t "수정됨"       # 수정 (text/markdown_text/blocks/attachments/metadata)
 slack-cli delete "#general" 1234.5678                   # 삭제
 slack-cli permalink "#general" 1234.5678                # permalink URL 조회
 slack-cli messages "#general" --limit 15                # 조회 (lean 기본 필드)
 slack-cli messages "#general" --expand blocks,reactions # 필드 확장
 slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31
 slack-cli messages "#general" --exclude-bots            # 봇 메시지 제외
+slack-cli messages "#general" --cursor <next_cursor>    # 다음 페이지 (JSON 출력의 next_cursor)
 slack-cli thread "#general" 1234.5678                   # 스레드
 slack-cli search "키워드" --sort timestamp              # Real-time Search
 ```
@@ -145,10 +147,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### 소스 빌드
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo +1.95.0 build --release
+cargo +1.97.0 build --release
 ```
 
-**요구사항**: Rust 1.95.0+
+**요구사항**: Rust 1.97.0+
 
 ---
 
@@ -261,8 +263,8 @@ timeout_seconds = 30
 | `users --id <ids>` | ID로 조회 (쉼표 구분) |
 | `channels <query>` | 채널 검색 |
 | `channels --id <ids>` | ID로 조회 (쉼표 구분) |
-| `send <ch> [-t -b -a -m --thread]` | 메시지 전송 (text/blocks/attachments/metadata 중 ≥1 필수) |
-| `update <ch> <ts> [-t -b -a -m]` | 메시지 수정 (text/blocks/attachments/metadata 중 ≥1 필수) |
+| `send <ch> [-t -b -a -m --markdown-text --thread]` | 메시지 전송 (content 필드 ≥1 필수) |
+| `update <ch> <ts> [-t -b -a -m --markdown-text]` | 메시지 수정 (content 필드 ≥1 필수) |
 | `delete <ch> <ts>` | 메시지 삭제 |
 | `permalink <ch> <ts>` | 메시지 permalink URL 조회 |
 | `messages <ch>` | 메시지 조회 |
@@ -297,15 +299,17 @@ timeout_seconds = 30
 
 ### send / update 옵션
 - `-t, --text <TEXT>` — 메시지 텍스트 (blocks 동반 시 알림 폴백)
+- `--markdown-text <TEXT>` — 표준 Markdown 본문 (Slack이 렌더링, 최대 12,000자). `--text`/`--blocks` 와 동시 사용 불가
 - `-b, --blocks <SOURCE>` — Block Kit blocks (JSON array). `-` / `@file` / inline
 - `-a, --attachments <SOURCE>` — Legacy attachments (JSON array). 동일 SOURCE 어휘
 - `-m, --metadata <SOURCE>` — Message metadata `{event_type, event_payload}` (JSON object). 동일 SOURCE 어휘
 - `--thread <ts>` — (send 전용) 스레드 답장
 
-`text`/`blocks`/`attachments` 중 최소 하나는 반드시 제공해야 합니다. 같은 호출에서 `-` (stdin) 은 최대 한 플래그에만 사용 가능합니다.
+`text`/`markdown_text`/`blocks`/`attachments` 중 최소 하나는 반드시 제공해야 합니다. 같은 호출에서 `-` (stdin) 은 최대 한 플래그에만 사용 가능합니다.
 
 ### messages/thread 옵션
 - `--limit <N>` — 결과 제한 (기본: `15`)
+- `--cursor <cursor>` — (messages 전용) 이전 응답의 `next_cursor` 로 다음 페이지 조회
 - `--oldest <date>` — (messages 전용) 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--latest <date>` — (messages 전용) 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--exclude-bots` — 봇 메시지 제외 (messages·thread 공통)
@@ -314,6 +318,20 @@ timeout_seconds = 30
   - 응답 필드: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
 
 `messages_fields` 기본값(lean): `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. AI 에이전트 컨텍스트 절약을 위해 기본 출력은 가볍게 유지하며, 풍부한 필드는 `--expand` 로 명시 opt-in 합니다.
+
+`messages --json` 출력은 `{messages: [...], next_cursor}` 봉투입니다. `next_cursor` 가 `null` 이 아니면 같은 명령에 `--cursor` 로 넘겨 다음 페이지를 조회합니다. `thread --json` 은 `--limit` 까지 내부 페이징하므로 배열 그대로입니다.
+
+### 종료 코드 & 오류 출력
+
+| 코드 | 의미 |
+|---|---|
+| `0` | 성공 |
+| `1` | 일반 오류 |
+| `2` | 사용법 오류 (clap) |
+| `3` | 인증 오류 (재로그인 필요 — `invalid_auth`, `missing_scope` 등) |
+| `4` | 레이트리밋 (재시도 소진) |
+
+`--json` 모드의 실패는 stderr 로 `{"error": {"code", "message"}}` 봉투를 출력합니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. stdout 은 항상 "파싱 가능한 데이터 또는 빈 값"을 유지합니다.
 
 ### search 옵션
 - `--limit <N>` — 총 결과 수 (1-100, 기본: `10`. 20개 단위 페이지로 자동 페이징)

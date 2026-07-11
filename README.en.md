@@ -1,7 +1,7 @@
 # Slack CLI
 
 [![CI](https://github.com/junyeong-ai/slack-cli/workflows/CI/badge.svg)](https://github.com/junyeong-ai/slack-cli/actions)
-[![Rust](https://img.shields.io/badge/rust-1.95.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.97.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-junyeong--ai%2Fslack--cli-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/junyeong-ai/slack-cli)
 
 > **English** | **[한국어](README.md)**
@@ -47,17 +47,19 @@ slack-cli send "#general" -t "Hello!"
 ### Messages
 ```bash
 slack-cli send "#general" -t "Announcement"             # Send (text)
+slack-cli send "#general" --markdown-text "**bold**"    # Send (standard Markdown, rendered by Slack)
 slack-cli send U123ABCDEF -t "DM by user-id"            # User ID → DM auto-resolution
 slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + fallback text
 slack-cli send "#general" -m @meta.json -t "deploy done" # Attach idempotent metadata
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
-slack-cli update "#general" 1234.5678 -t "Edited"       # Update (text/blocks/attachments/metadata)
+slack-cli update "#general" 1234.5678 -t "Edited"       # Update (text/markdown_text/blocks/attachments/metadata)
 slack-cli delete "#general" 1234.5678                   # Delete
 slack-cli permalink "#general" 1234.5678                # Fetch permalink URL
 slack-cli messages "#general" --limit 15                # List (lean default fields)
 slack-cli messages "#general" --expand blocks,reactions # Expand fields
 slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31
 slack-cli messages "#general" --exclude-bots            # Exclude bot messages
+slack-cli messages "#general" --cursor <next_cursor>    # Next page (next_cursor from JSON output)
 slack-cli thread "#general" 1234.5678                   # Thread
 slack-cli search "keyword" --sort timestamp             # Real-time Search
 ```
@@ -145,10 +147,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### Build from Source
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo +1.95.0 build --release
+cargo +1.97.0 build --release
 ```
 
-**Requirements**: Rust 1.95.0+
+**Requirements**: Rust 1.97.0+
 
 ---
 
@@ -263,8 +265,8 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `users --id <ids>` | Lookup by IDs (comma-separated) |
 | `channels <query>` | Search channels |
 | `channels --id <ids>` | Lookup by IDs (comma-separated) |
-| `send <ch> [-t -b -a -m --thread]` | Send a message (≥1 of text/blocks/attachments required) |
-| `update <ch> <ts> [-t -b -a -m]` | Update a message (≥1 of text/blocks/attachments required) |
+| `send <ch> [-t -b -a -m --markdown-text --thread]` | Send a message (≥1 content field required) |
+| `update <ch> <ts> [-t -b -a -m --markdown-text]` | Update a message (≥1 content field required) |
 | `delete <ch> <ts>` | Delete a message |
 | `permalink <ch> <ts>` | Fetch the permalink URL for a message |
 | `messages <ch>` | List messages |
@@ -299,15 +301,17 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 
 ### send / update Options
 - `-t, --text <TEXT>` — Message text (also used as the notification fallback when blocks are present)
+- `--markdown-text <TEXT>` — Standard-markdown body, rendered by Slack (max 12,000 chars). Not combinable with `--text`/`--blocks`
 - `-b, --blocks <SOURCE>` — Block Kit blocks (JSON array). `-` / `@file` / inline
 - `-a, --attachments <SOURCE>` — Legacy attachments (JSON array). Same source vocabulary
 - `-m, --metadata <SOURCE>` — Message metadata `{event_type, event_payload}` (JSON object). Same source vocabulary
 - `--thread <ts>` — (send only) Post as a reply in the given thread
 
-At least one of `text` / `blocks` / `attachments` must be provided. Only one flag per invocation may read from stdin (`-`).
+At least one of `text` / `markdown_text` / `blocks` / `attachments` must be provided. Only one flag per invocation may read from stdin (`-`).
 
 ### messages/thread Options
 - `--limit <N>` — Limit results (default: `15`)
+- `--cursor <cursor>` — (messages only) Fetch the next page using `next_cursor` from the previous response
 - `--oldest <date>` — (messages only) Start time (Unix timestamp or YYYY-MM-DD)
 - `--latest <date>` — (messages only) End time (Unix timestamp or YYYY-MM-DD)
 - `--exclude-bots` — Exclude bot messages (messages and thread)
@@ -316,6 +320,20 @@ At least one of `text` / `blocks` / `attachments` must be provided. Only one fla
   - Response: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
 
 The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. The default output is intentionally compact so AI agents pay no extra context tax; rich fields are opt-in via `--expand`.
+
+`messages --json` emits a `{messages: [...], next_cursor}` envelope. When `next_cursor` is not `null`, pass it back via `--cursor` for the next page. `thread --json` paginates internally up to `--limit`, so it stays a bare array.
+
+### Exit Codes & Error Output
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Generic error |
+| `2` | Usage error (clap) |
+| `3` | Auth error (re-login needed — `invalid_auth`, `missing_scope`, …) |
+| `4` | Rate limited (retries exhausted) |
+
+Failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. stdout always stays "parseable data or empty".
 
 ### search Options
 - `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)

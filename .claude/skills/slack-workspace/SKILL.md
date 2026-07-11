@@ -24,13 +24,33 @@ slack-cli send "$ch" -t "Hello"
 ts=$(slack-cli send "#general" -t "Parent" --json | jq -r '.ts')
 slack-cli send "#general" -t "Reply" --thread "$ts"
 
+# Page through channel history until next_cursor is null
+page=$(slack-cli messages "#general" --json)
+echo "$page" | jq '.messages[]'
+cursor=$(echo "$page" | jq -r '.next_cursor // empty')
+[ -n "$cursor" ] && slack-cli messages "#general" --cursor "$cursor" --json
+
 # Search workspace content (Real-time Search API)
 slack-cli search "deploy plan changes" --sort timestamp --json
 ```
 
-## Slack mrkdwn — translate before sending
+## Errors and exit codes
 
-When the user dictates a message in Markdown, convert before passing to `send` / `update`. Markdown syntax renders literally in Slack (e.g. `**bold**` shows the asterisks).
+stdout is always parseable data or empty. Failures print to stderr — in `--json` mode as an `{"error": {"code", "message"}}` envelope. `code` is Slack's error string verbatim for API failures (`channel_not_found`, `missing_scope`, …), otherwise `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`.
+
+Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (re-run `slack-cli auth login`) · `4` rate-limited (back off before retrying).
+
+## Markdown: prefer `--markdown-text`
+
+`send`/`update` accept `--markdown-text` — standard Markdown that Slack renders server-side (max 12,000 chars). Use it whenever the whole message body is Markdown; no translation needed. It cannot be combined with `-t`/`-b` (attachments and metadata are fine).
+
+```bash
+slack-cli send "#general" --markdown-text "**Deploy done** — see [runbook](https://example.com)"
+```
+
+## Slack mrkdwn — translate when using `-t` or blocks
+
+Inside `-t` text or Block Kit `text` objects, Markdown renders literally (e.g. `**bold**` shows the asterisks). Convert first:
 
 | Element | Slack | Wrong |
 |---------|-------|-------|
@@ -57,9 +77,9 @@ slack-cli thread   <channel> <ts> [--limit N] [--exclude-bots] [--expand FIELDS]
 slack-cli search   <query>   [filters…] --json
 slack-cli permalink <channel> <ts> --json
 
-# Writing  (≥1 of -t / -b / -a is required)
-slack-cli send   <channel> [-t TEXT] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] [--thread <ts>] --json
-slack-cli update <channel> <ts> [-t TEXT] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] --json
+# Writing  (≥1 of -t / --markdown-text / -b / -a is required)
+slack-cli send   <channel> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] [--thread <ts>] --json
+slack-cli update <channel> <ts> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] --json
 slack-cli delete <channel> <ts>
 
 # Reactions, pins, bookmarks, emoji
@@ -126,7 +146,8 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `users --json` → array. Fields filtered by config defaults (`id, name, real_name, email`) plus anything passed to `--expand` (`avatar, title, timezone, status, status_emoji, display_name, is_admin, is_bot, deleted`). Anything outside that union is absent.
 - `channels --json` → array. Same field-filter model. Defaults `id, name, type, members`; `--expand` adds `topic, purpose, created, creator, is_member, is_archived, is_private`. Member count is `members`, not `num_members`.
 - `members --json` → array of user-id strings (`["U123", "U456", ...]`), not user objects.
-- `messages --json`, `thread --json` → array of message objects projected through the `messages_fields` whitelist. **Lean default**: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, metadata`. Use `--expand` to opt in to verbose fields (`blocks, attachments, reactions, edited, parent_user_id, reply_users, reply_users_count, latest_reply, channel, permalink`) or computed fields (`date, user_name`). Optional struct fields are omitted when absent.
+- `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. Message objects are projected through the `messages_fields` whitelist. **Lean default**: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, metadata`. Use `--expand` to opt in to verbose fields (`blocks, attachments, reactions, edited, parent_user_id, reply_users, reply_users_count, latest_reply, channel, permalink`) or computed fields (`date, user_name`). Optional struct fields are omitted when absent.
+- `thread --json` → bare array of message objects (paginates internally up to `--limit`); same field model as `messages`.
 - `send --json`, `update --json` → `{channel, ts}`.
 - `permalink --json` → `{permalink}`. Non-JSON output is the URL alone.
 - `reactions --json` → `{channel, ts, reactions: [{name, count, users}]}`.
