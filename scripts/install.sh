@@ -224,7 +224,7 @@ verify_signature() {
 
     if ! cosign verify-blob \
         --bundle "$BINARY_TMP_DIR/${archive}.bundle" \
-        --certificate-identity-regexp "^https://github.com/$REPO/" \
+        --certificate-identity-regexp "^https://github.com/$REPO/\.github/workflows/release\.yml@refs/tags/" \
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
         "$BINARY_TMP_DIR/$archive" >&2; then
         echo "❌ Signature verification failed for $archive" >&2
