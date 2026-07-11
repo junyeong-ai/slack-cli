@@ -19,9 +19,9 @@ src/
 ## Build & test
 
 ```bash
-cargo +1.95.0 nextest run --profile ci --all-features --workspace
-cargo +1.95.0 clippy --all-targets --all-features -- -D warnings
-cargo +1.95.0 fmt --all -- --check
+cargo +1.97.0 nextest run --profile ci --all-features --workspace
+cargo +1.97.0 clippy --all-targets --all-features -- -D warnings
+cargo +1.97.0 fmt --all -- --check
 ```
 
 Debug a single command:

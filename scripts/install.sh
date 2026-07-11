@@ -179,7 +179,7 @@ build_from_source() {
     fi
 
     echo "🔨 Building from source..." >&2
-    if ! (cd "$PROJECT_ROOT" && cargo +1.95.0 build --release) >&2; then
+    if ! (cd "$PROJECT_ROOT" && cargo +1.97.0 build --release) >&2; then
         echo "❌ Build failed" >&2
         exit 1
     fi
@@ -432,7 +432,7 @@ main() {
         echo "" >&2
         echo "Installation method:" >&2
         echo "  [1] Download prebuilt binary (RECOMMENDED - fast)" >&2
-        echo "  [2] Build from source (requires Rust 1.95.0 toolchain)" >&2
+        echo "  [2] Build from source (requires Rust 1.97.0 toolchain)" >&2
         echo "" >&2
         method=$(prompt_choice "Choose [1-2] (default: 1): " "1")
 

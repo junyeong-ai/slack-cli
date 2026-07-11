@@ -2,7 +2,7 @@
 name = "slack-cli"
 version = "0.6.0"
 edition = "2024"
-rust-version = "1.95.0"
+rust-version = "1.97.0"
 authors = ["Slack CLI Contributors"]
 description = "Fast Slack CLI with FTS5 cache and local search"
 license = "MIT"
@@ -35,9 +35,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
-rusqlite = { version = "0.39", features = ["bundled", "chrono", "serde_json"] }
+rusqlite = { version = "0.40", features = ["bundled", "chrono", "serde_json"] }
 r2d2 = "0.8"
-r2d2_sqlite = "0.34"
+r2d2_sqlite = "0.35"
 anyhow = "1"
 thiserror = "2"
 governor = "0.10"
