@@ -39,7 +39,7 @@ slack-cli search "deploy plan changes" --sort timestamp --json
 
 stdout is always parseable data or empty. Failures print to stderr — in `--json` mode as an `{"error": {"code", "message"}}` envelope. `code` is Slack's error string verbatim for API failures (`channel_not_found`, `missing_scope`, …), otherwise `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`.
 
-Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (re-run `slack-cli auth login`) · `4` rate-limited (back off before retrying).
+Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (re-run `slack-cli auth login`) · `4` rate-limited (back off before retrying). Exit `2` comes from clap at parse time and prints plain diagnostic text, not the JSON envelope — branch on the exit code.
 
 ## Markdown: prefer `--markdown-text`
 

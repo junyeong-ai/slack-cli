@@ -331,7 +331,7 @@ timeout_seconds = 30
 | `3` | 인증 오류 (재로그인 필요 — `invalid_auth`, `missing_scope` 등) |
 | `4` | 레이트리밋 (재시도 소진) |
 
-`--json` 모드의 실패는 stderr 로 `{"error": {"code", "message"}}` 봉투를 출력합니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. stdout 은 항상 "파싱 가능한 데이터 또는 빈 값"을 유지합니다.
+`--json` 모드의 런타임 실패는 stderr 로 `{"error": {"code", "message"}}` 봉투를 출력합니다. 사용법 오류(종료 코드 `2`)는 파싱 단계에서 발생하므로 clap 의 진단 텍스트가 그대로 출력됩니다 — 종료 코드만으로 구분하면 됩니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. stdout 은 항상 "파싱 가능한 데이터 또는 빈 값"을 유지합니다.
 
 ### search 옵션
 - `--limit <N>` — 총 결과 수 (1-100, 기본: `10`. 20개 단위 페이지로 자동 페이징)

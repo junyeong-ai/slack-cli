@@ -333,7 +333,7 @@ The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`
 | `3` | Auth error (re-login needed — `invalid_auth`, `missing_scope`, …) |
 | `4` | Rate limited (retries exhausted) |
 
-Failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. stdout always stays "parseable data or empty".
+Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. stdout always stays "parseable data or empty".
 
 ### search Options
 - `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)
