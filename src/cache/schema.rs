@@ -1,6 +1,6 @@
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params, types::Value};
 
 use super::error::CacheResult;
 
@@ -129,28 +129,36 @@ const SCHEMA_TEARDOWN: &str = "
 ";
 
 pub async fn initialize_schema(pool: &Pool<SqliteConnectionManager>) -> CacheResult<()> {
-    let conn = pool.get()?;
-    apply_schema(&conn)
+    let mut conn = pool.get()?;
+    apply_schema(&mut conn)
 }
 
 #[cfg(test)]
 pub fn initialize_schema_sync(pool: &Pool<SqliteConnectionManager>) -> CacheResult<()> {
-    let conn = pool.get()?;
-    apply_schema(&conn)
+    let mut conn = pool.get()?;
+    apply_schema(&mut conn)
 }
 
-fn apply_schema(conn: &Connection) -> CacheResult<()> {
-    if stored_schema_version(conn)? != Some(SCHEMA_VERSION) {
-        conn.execute_batch(SCHEMA_TEARDOWN)?;
+fn apply_schema(conn: &mut Connection) -> CacheResult<()> {
+    // The whole check-teardown-rebuild sequence runs in one IMMEDIATE
+    // transaction: concurrent openers serialize on the write lock (via the
+    // busy handler), and the version is re-read under that lock so the losers
+    // of the race see the winner's rebuild and skip their own. busy_timeout is
+    // set here rather than assumed from pool init so the serialization holds
+    // for any connection this runs on.
+    conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+    if stored_schema_version(&tx)? != Some(SCHEMA_VERSION) {
+        tx.execute_batch(SCHEMA_TEARDOWN)?;
+        tx.execute_batch(SCHEMA_DDL)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', json(?))",
+            params![SCHEMA_VERSION],
+        )?;
     }
 
-    conn.execute_batch(SCHEMA_DDL)?;
-
-    conn.execute(
-        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', json(?))",
-        params![SCHEMA_VERSION],
-    )?;
-
+    tx.commit()?;
     Ok(())
 }
 
@@ -164,14 +172,20 @@ fn stored_schema_version(conn: &Connection) -> CacheResult<Option<i32>> {
         return Ok(None);
     }
 
+    // Anything other than an integer counts as "no valid version" and takes
+    // the rebuild path — cache contents are refetchable, so rebuilding on a
+    // corrupt value is strictly safer than failing the open.
     let version = conn
         .query_row(
             "SELECT value FROM metadata WHERE key = 'schema_version'",
             [],
-            |row| row.get(0),
+            |row| row.get::<_, Value>(0),
         )
         .optional()?;
-    Ok(version)
+    Ok(match version {
+        Some(Value::Integer(v)) => i32::try_from(v).ok(),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -184,8 +198,8 @@ mod tests {
 
     #[test]
     fn fresh_database_gets_current_version() {
-        let conn = open_connection();
-        apply_schema(&conn).unwrap();
+        let mut conn = open_connection();
+        apply_schema(&mut conn).unwrap();
 
         assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
     }
@@ -198,15 +212,15 @@ mod tests {
 
     #[test]
     fn matching_version_preserves_cached_data() {
-        let conn = open_connection();
-        apply_schema(&conn).unwrap();
+        let mut conn = open_connection();
+        apply_schema(&mut conn).unwrap();
         conn.execute(
             "INSERT INTO users (id, data) VALUES ('U1', json('{\"name\":\"alice\"}'))",
             [],
         )
         .unwrap();
 
-        apply_schema(&conn).unwrap();
+        apply_schema(&mut conn).unwrap();
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
@@ -216,8 +230,8 @@ mod tests {
 
     #[test]
     fn outdated_version_rebuilds_from_scratch() {
-        let conn = open_connection();
-        apply_schema(&conn).unwrap();
+        let mut conn = open_connection();
+        apply_schema(&mut conn).unwrap();
         conn.execute(
             "INSERT INTO users (id, data) VALUES ('U1', json('{\"name\":\"alice\"}'))",
             [],
@@ -229,7 +243,7 @@ mod tests {
         )
         .unwrap();
 
-        apply_schema(&conn).unwrap();
+        apply_schema(&mut conn).unwrap();
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
@@ -239,8 +253,24 @@ mod tests {
     }
 
     #[test]
+    fn non_integer_version_reads_as_no_version_and_rebuilds() {
+        let mut conn = open_connection();
+        apply_schema(&mut conn).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', json('\"corrupt\"'))",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(stored_schema_version(&conn).unwrap(), None);
+
+        apply_schema(&mut conn).unwrap();
+        assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+    }
+
+    #[test]
     fn legacy_table_layout_is_replaced_by_current_ddl() {
-        let conn = open_connection();
+        let mut conn = open_connection();
         conn.execute_batch(
             "CREATE TABLE users (id TEXT PRIMARY KEY, data JSON NOT NULL);
              CREATE TABLE metadata (key TEXT PRIMARY KEY, value JSON NOT NULL);
@@ -248,7 +278,7 @@ mod tests {
         )
         .unwrap();
 
-        apply_schema(&conn).unwrap();
+        apply_schema(&mut conn).unwrap();
 
         let generated_columns: i64 = conn
             .query_row(
@@ -259,5 +289,45 @@ mod tests {
             .unwrap();
         assert_eq!(generated_columns, 1);
         assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn concurrent_opens_serialize_the_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.db");
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            apply_schema(&mut conn).unwrap();
+            conn.execute(
+                "INSERT INTO users (id, data) VALUES ('U1', json('{\"name\":\"alice\"}'))",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', json(?))",
+                params![SCHEMA_VERSION - 1],
+            )
+            .unwrap();
+        }
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let mut conn = Connection::open(&path)?;
+                    apply_schema(&mut conn)
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

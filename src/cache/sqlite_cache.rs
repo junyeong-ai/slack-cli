@@ -7,10 +7,26 @@ use r2d2_sqlite::SqliteConnectionManager;
 use super::error::CacheResult;
 use super::schema;
 
+/// Retry budget for the one-time WAL switch: SQLite returns SQLITE_BUSY
+/// without consulting the busy handler on journal-mode transitions, so a
+/// concurrent process creating the same file needs a brief retry loop.
+const WAL_SWITCH_MAX_ATTEMPTS: u32 = 10;
+const WAL_SWITCH_RETRY_DELAY_MS: u64 = 50;
+
 #[derive(Debug, Clone)]
 pub struct SqliteCache {
     pub(super) pool: Pool<SqliteConnectionManager>,
     pub(super) instance_id: String,
+}
+
+fn is_busy(err: &rusqlite::Error) -> bool {
+    matches!(
+        err,
+        rusqlite::Error::SqliteFailure(e, _) if matches!(
+            e.code,
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+        )
+    )
 }
 
 impl SqliteCache {
@@ -58,10 +74,15 @@ impl SqliteCache {
         // WAL mode persists in the database file: switch it once, before any
         // other database activity, instead of per connection (skip in-memory).
         if !is_memory {
-            cache
-                .pool
-                .get()?
-                .execute_batch("PRAGMA journal_mode = WAL;")?;
+            let conn = cache.pool.get()?;
+            let mut attempts = 0u32;
+            while let Err(err) = conn.execute_batch("PRAGMA journal_mode = WAL;") {
+                if attempts >= WAL_SWITCH_MAX_ATTEMPTS || !is_busy(&err) {
+                    return Err(err.into());
+                }
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(WAL_SWITCH_RETRY_DELAY_MS)).await;
+            }
         }
 
         schema::initialize_schema(&cache.pool).await?;
