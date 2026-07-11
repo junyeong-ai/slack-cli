@@ -506,7 +506,7 @@ main() {
                 ;;
             1|"")
                 binary_path=$(download_binary "$version" "$target") || {
-                    echo "⚠️  Download failed, falling back to source build" >&2
+                    echo "⚠️  Download or verification failed, falling back to source build" >&2
                     binary_path=$(build_from_source)
                 }
                 binary_dir="$(dirname "$binary_path")"
