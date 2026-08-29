@@ -1,6 +1,8 @@
 use crate::cache::SqliteCache;
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
-use crate::slack::{Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchResults};
+use crate::slack::{
+    Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchCapabilities, SearchResults,
+};
 use chrono::DateTime;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -640,6 +642,25 @@ pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) {
         let emoji = b.emoji.as_deref().unwrap_or("");
         println!("{} {} - {} (id: {})", emoji, b.title, b.link, b.id);
     }
+}
+
+pub fn print_search_capabilities(capabilities: &SearchCapabilities, as_json: bool) {
+    if as_json {
+        println!(
+            "{}",
+            json!({ "is_ai_search_enabled": capabilities.is_ai_search_enabled })
+        );
+        return;
+    }
+
+    println!(
+        "semantic search: {}",
+        if capabilities.is_ai_search_enabled {
+            "enabled"
+        } else {
+            "unavailable (keyword matching only)"
+        }
+    );
 }
 
 pub fn print_search_results(results: &SearchResults, as_json: bool) {

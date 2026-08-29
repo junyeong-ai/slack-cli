@@ -9,6 +9,7 @@ pub mod error;
 pub mod messages;
 pub mod pins;
 pub mod reactions;
+pub mod scopes;
 pub mod search;
 pub mod types;
 pub mod users;
@@ -22,7 +23,7 @@ pub use messages::{MessagePayload, MessageResponse};
 pub use pins::PinnedMessage;
 pub use reactions::MessageReactions;
 pub use search::{
-    SearchChannelType, SearchContentType, SearchOptions, SearchResults, SearchSort,
-    SearchSortDirection,
+    SearchCapabilities, SearchChannelType, SearchContentType, SearchOptions, SearchResults,
+    SearchSort, SearchSortDirection,
 };
 pub use types::*;

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use super::profile::Profile;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthState {
@@ -39,13 +39,20 @@ impl AuthState {
         }
         removed
     }
+
+    /// The profile an invocation acts on: the one named explicitly, otherwise
+    /// the active one.
+    pub fn resolve<'a>(&'a self, explicit: Option<&'a str>) -> Option<&'a str> {
+        explicit.or(self.active_profile.as_deref())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::credential::TokenSet;
     use crate::auth::method::AuthMethod;
-    use crate::auth::profile::{TokenSet, WorkspaceInfo};
+    use crate::auth::profile::WorkspaceInfo;
     use chrono::Utc;
 
     fn empty_profile(team: &str) -> Profile {
@@ -57,8 +64,7 @@ mod tests {
                 user_id: None,
             },
             tokens: TokenSet::default(),
-            scopes: vec![],
-            client_id: None,
+            client: None,
             authorized_at: Utc::now(),
         }
     }
@@ -103,5 +109,14 @@ mod tests {
         s.upsert("b", empty_profile("B"), false);
         s.remove("b");
         assert_eq!(s.active_profile.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn resolve_prefers_the_explicit_profile() {
+        let mut s = AuthState::default();
+        s.upsert("a", empty_profile("A"), true);
+        assert_eq!(s.resolve(Some("b")), Some("b"));
+        assert_eq!(s.resolve(None), Some("a"));
+        assert_eq!(AuthState::default().resolve(None), None);
     }
 }

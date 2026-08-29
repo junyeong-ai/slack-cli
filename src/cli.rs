@@ -34,7 +34,7 @@ pub struct Cli {
         long,
         short,
         global = true,
-        help = "Path to config.toml (default: ~/.config/slack-cli/config.toml)"
+        help = "Path to config.toml (default: the platform config directory)"
     )]
     pub config: Option<PathBuf>,
 
@@ -174,7 +174,16 @@ pub enum Command {
 
     #[command(about = "Search Slack context with Real-time Search API")]
     Search {
-        query: String,
+        #[arg(required_unless_present = "capabilities")]
+        query: Option<String>,
+
+        #[arg(
+            long,
+            conflicts_with = "query",
+            help = "Report what this workspace supports instead of running a query"
+        )]
+        capabilities: bool,
+
         #[arg(
             long,
             default_value = "10",
@@ -204,6 +213,13 @@ pub enum Command {
         include_context_messages: bool,
         #[arg(long, help = "Include bot-authored messages")]
         include_bots: bool,
+        #[arg(
+            long = "include-deleted-users",
+            help = "Include deleted users in results"
+        )]
+        include_deleted_users: bool,
+        #[arg(long, help = "Search modifiers, e.g. \"has:pin from:@alice\"")]
+        modifiers: Option<String>,
         #[arg(long = "include-archived", help = "Include archived channels")]
         include_archived_channels: bool,
         #[arg(long = "no-semantic", help = "Force keyword-only matching")]
@@ -352,9 +368,17 @@ pub enum AuthAction {
             long,
             env = "SLACK_CLI_CLIENT_ID",
             hide_env_values = true,
-            help = "OAuth client ID for PKCE method"
+            help = "OAuth client ID for the browser methods"
         )]
         client_id: Option<String>,
+
+        #[arg(
+            long,
+            env = "SLACK_CLI_CLIENT_SECRET",
+            hide_env_values = true,
+            help = "OAuth client secret for the client-secret method"
+        )]
+        client_secret: Option<String>,
 
         #[arg(long, help = "Loopback callback port for OAuth")]
         port: Option<u16>,
@@ -391,12 +415,21 @@ pub enum AuthAction {
 
     #[command(about = "Switch the active profile")]
     Use { name: String },
+
+    #[command(
+        about = "Print the OAuth scopes this CLI needs",
+        long_about = "Print the OAuth scopes this CLI needs.\n\
+                      Derived from the Slack methods the CLI calls, so the list is \n\
+                      always what `auth login` requests."
+    )]
+    Scopes,
 }
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 pub enum AuthMethodArg {
     Static,
     Pkce,
+    ClientSecret,
 }
 
 impl From<AuthMethodArg> for AuthMethod {
@@ -404,6 +437,7 @@ impl From<AuthMethodArg> for AuthMethod {
         match value {
             AuthMethodArg::Static => AuthMethod::Static,
             AuthMethodArg::Pkce => AuthMethod::Pkce,
+            AuthMethodArg::ClientSecret => AuthMethod::ClientSecret,
         }
     }
 }

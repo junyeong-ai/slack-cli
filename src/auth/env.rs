@@ -1,8 +1,12 @@
+use super::credential::TokenKind;
 use super::secret::{self, Secret};
 
 const ENV_USER_TOKEN: &str = "SLACK_USER_TOKEN";
 const ENV_BOT_TOKEN: &str = "SLACK_BOT_TOKEN";
 
+/// Tokens supplied directly by the environment. They bypass the store
+/// entirely, so the CLI never renews or persists them — their lifetime is the
+/// caller's to manage.
 #[derive(Debug, Clone, Default)]
 pub struct EnvOverrides {
     pub user_token: Option<Secret>,
@@ -19,6 +23,13 @@ impl EnvOverrides {
 
     pub fn has_inline_tokens(&self) -> bool {
         self.user_token.is_some() || self.bot_token.is_some()
+    }
+
+    pub fn get(&self, kind: TokenKind) -> Option<&Secret> {
+        match kind {
+            TokenKind::User => self.user_token.as_ref(),
+            TokenKind::Bot => self.bot_token.as_ref(),
+        }
     }
 }
 

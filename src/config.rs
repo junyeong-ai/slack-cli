@@ -1,23 +1,9 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+use crate::paths::{self, AppPaths};
 use crate::slack::ConversationType;
-
-fn expand_tilde(path: &Path) -> PathBuf {
-    if let Some(path_str) = path.to_str() {
-        if let Some(stripped) = path_str.strip_prefix("~/") {
-            if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(home).join(stripped);
-            }
-        } else if path_str == "~"
-            && let Ok(home) = std::env::var("HOME")
-        {
-            return PathBuf::from(home);
-        }
-    }
-    path.to_path_buf()
-}
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -217,13 +203,17 @@ impl Default for ConnectionConfig {
 }
 
 impl Config {
-    pub fn load(config_path: Option<PathBuf>, cli_data_dir: Option<PathBuf>) -> Result<Self> {
+    pub fn load(
+        paths: &AppPaths,
+        config_path: Option<PathBuf>,
+        cli_data_dir: Option<PathBuf>,
+    ) -> Result<Self> {
         let mut config = Self::default();
 
-        let path = config_path.or_else(Self::default_config_path);
-        if let Some(p) = path.filter(|p| p.exists()) {
-            let content = std::fs::read_to_string(&p)
-                .context(format!("Failed to read config: {}", p.display()))?;
+        let path = config_path.unwrap_or_else(|| paths.config_file());
+        if path.exists() {
+            let content = std::fs::read_to_string(&path)
+                .context(format!("Failed to read config: {}", path.display()))?;
             config = toml::from_str(&content).context("Failed to parse config.toml")?;
         }
 
@@ -288,70 +278,16 @@ impl Config {
         Ok(())
     }
 
-    pub fn default_config_path() -> Option<PathBuf> {
-        std::env::var("XDG_CONFIG_HOME")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var("HOME")
-                    .ok()
-                    .map(|home| PathBuf::from(home).join(".config"))
-            })
-            .map(|mut p| {
-                p.push("slack-cli");
-                p.push("config.toml");
-                p
-            })
-    }
-
-    pub fn default_data_dir() -> Option<PathBuf> {
-        std::env::var("XDG_CONFIG_HOME")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var("HOME")
-                    .ok()
-                    .map(|home| PathBuf::from(home).join(".config"))
-            })
-            .map(|mut p| {
-                p.push("slack-cli");
-                p.push("cache");
-                p
-            })
-    }
-
-    pub fn db_path(&self) -> PathBuf {
-        let mut path = self
-            .cache
+    pub fn db_path(&self, paths: &AppPaths) -> PathBuf {
+        self.cache
             .data_path
-            .clone()
-            .map(|p| expand_tilde(&p))
-            .or_else(Self::default_data_dir)
-            .unwrap_or_else(|| {
-                #[cfg(target_os = "macos")]
-                let fallback = std::path::PathBuf::from(
-                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
-                )
-                .join("Library/Application Support/slack-cli/cache");
-
-                #[cfg(not(target_os = "macos"))]
-                let fallback = std::path::PathBuf::from(
-                    std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()),
-                )
-                .join(".local/share/slack-cli/cache");
-
-                fallback
-            });
-
-        if let Ok(canonical) = path.canonicalize() {
-            path = canonical;
-        }
-
-        path.push("slack.db");
-        path
+            .as_deref()
+            .map(paths::expand_home)
+            .unwrap_or_else(|| paths.cache_dir())
+            .join("slack.db")
     }
 
-    pub fn show(&self, as_json: bool) -> Result<()> {
+    pub fn show(&self, paths: &AppPaths, as_json: bool) -> Result<()> {
         if as_json {
             println!("{}", serde_json::to_string_pretty(self)?);
             return Ok(());
@@ -366,13 +302,10 @@ impl Config {
         );
         println!(
             "  data_path: {}",
-            self.cache
-                .data_path
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| Self::default_data_dir()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "-".to_string()))
+            self.db_path(paths)
+                .parent()
+                .unwrap_or(&PathBuf::new())
+                .display()
         );
         let channel_types: Vec<&str> = self
             .cache
@@ -408,10 +341,8 @@ impl Config {
         Ok(())
     }
 
-    pub fn edit(config_path: Option<PathBuf>) -> Result<()> {
-        let path = config_path
-            .or_else(Self::default_config_path)
-            .context("Cannot determine config path")?;
+    pub fn edit(paths: &AppPaths, config_path: Option<PathBuf>) -> Result<()> {
+        let path = config_path.unwrap_or_else(|| paths.config_file());
 
         if !path.exists() {
             if let Some(parent) = path.parent() {
@@ -448,54 +379,9 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
 
-    mod expand_tilde_tests {
-        use super::*;
-
-        #[test]
-        fn expands_tilde_prefix() {
-            let home = env::var("HOME").unwrap();
-            let path = Path::new("~/test/path");
-            let result = expand_tilde(path);
-            assert_eq!(result, PathBuf::from(home).join("test/path"));
-        }
-
-        #[test]
-        fn expands_tilde_only() {
-            let home = env::var("HOME").unwrap();
-            let path = Path::new("~");
-            let result = expand_tilde(path);
-            assert_eq!(result, PathBuf::from(home));
-        }
-
-        #[test]
-        fn preserves_absolute_path() {
-            let path = Path::new("/absolute/path");
-            let result = expand_tilde(path);
-            assert_eq!(result, PathBuf::from("/absolute/path"));
-        }
-
-        #[test]
-        fn preserves_relative_path() {
-            let path = Path::new("relative/path");
-            let result = expand_tilde(path);
-            assert_eq!(result, PathBuf::from("relative/path"));
-        }
-
-        #[test]
-        fn handles_tilde_in_middle() {
-            let path = Path::new("/path/~user/test");
-            let result = expand_tilde(path);
-            assert_eq!(result, PathBuf::from("/path/~user/test"));
-        }
-
-        #[test]
-        fn handles_empty_path() {
-            let path = Path::new("");
-            let result = expand_tilde(path);
-            assert_eq!(result, PathBuf::from(""));
-        }
+    fn paths() -> AppPaths {
+        AppPaths::resolve().unwrap()
     }
 
     mod config_defaults {
@@ -527,7 +413,7 @@ mod tests {
             )
             .unwrap();
 
-            let config = Config::load(Some(path), None).unwrap();
+            let config = Config::load(&paths(), Some(path), None).unwrap();
             assert_eq!(config.connection.api_base_url, "https://slack.com/api");
         }
 
@@ -537,7 +423,7 @@ mod tests {
             let path = dir.path().join("config.toml");
             std::fs::write(&path, "[cache]\nchannel_types = []\n").unwrap();
 
-            let err = Config::load(Some(path), None).unwrap_err();
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
             assert!(err.to_string().contains("channel_types must not be empty"));
         }
 
@@ -547,7 +433,7 @@ mod tests {
             let path = dir.path().join("config.toml");
             std::fs::write(&path, "[connection]\ntimeout_seconds = 0\n").unwrap();
 
-            let err = Config::load(Some(path), None).unwrap_err();
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
             assert!(
                 err.to_string()
                     .contains("connection timeout and rate limit values must be greater than zero")
@@ -562,7 +448,7 @@ mod tests {
             let path = dir.path().join("config.toml");
             std::fs::write(&path, "user_token = \"xoxp-stale\"\n").unwrap();
 
-            let err = Config::load(Some(path), None).unwrap_err();
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
             let chain: String = err
                 .chain()
                 .map(|c| c.to_string())
@@ -577,7 +463,7 @@ mod tests {
             let path = dir.path().join("config.toml");
             std::fs::write(&path, "[retry]\nmax_attempts = 0\n").unwrap();
 
-            let err = Config::load(Some(path), None).unwrap_err();
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
             assert!(
                 err.to_string()
                     .contains("retry.max_attempts must be greater than zero")
@@ -590,7 +476,7 @@ mod tests {
             let path = dir.path().join("config.toml");
             std::fs::write(&path, "[cache]\nrefresh_threshold_percent = 101\n").unwrap();
 
-            let err = Config::load(Some(path), None).unwrap_err();
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
             assert!(
                 err.to_string()
                     .contains("refresh_threshold_percent must be between 1 and 100")

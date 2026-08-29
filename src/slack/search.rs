@@ -87,6 +87,8 @@ pub struct SearchOptions {
     pub before: Option<i64>,
     pub after: Option<i64>,
     pub include_bots: bool,
+    pub include_deleted_users: bool,
+    pub modifiers: Option<String>,
     pub disable_semantic_search: bool,
     pub sort: SearchSort,
     pub sort_dir: SearchSortDirection,
@@ -97,6 +99,15 @@ pub struct SearchOptions {
 
 impl SearchOptions {
     pub const MAX_LIMIT: usize = 100;
+}
+
+/// What `assistant.search.info` reports about a workspace. Semantic ranking
+/// needs a plan that includes Slack AI Search; without it the API answers
+/// keyword queries only, whatever `disable_semantic_search` asks for.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchCapabilities {
+    #[serde(default)]
+    pub is_ai_search_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -288,6 +299,16 @@ impl SlackSearchClient {
         results.truncate(limit);
         Ok(results)
     }
+
+    pub async fn info(&self) -> Result<SearchCapabilities> {
+        let response = self
+            .core
+            .api_call("assistant.search.info", json!({}))
+            .await
+            .context("Search capabilities require a token with the search:read.public scope")?;
+        serde_json::from_value(response)
+            .context("assistant.search.info response did not match expected shape")
+    }
 }
 
 fn build_request_params(query: &str, options: &SearchOptions) -> Value {
@@ -308,6 +329,7 @@ fn build_request_params(query: &str, options: &SearchOptions) -> Value {
         "content_types": content_types,
         "include_archived_channels": options.include_archived_channels,
         "include_bots": options.include_bots,
+        "include_deleted_users": options.include_deleted_users,
         "disable_semantic_search": options.disable_semantic_search,
         "sort": options.sort.as_api_str(),
         "sort_dir": options.sort_dir.as_api_str(),
@@ -318,6 +340,9 @@ fn build_request_params(query: &str, options: &SearchOptions) -> Value {
 
     if let Some(channel_id) = &options.context_channel_id {
         params["context_channel_id"] = json!(channel_id);
+    }
+    if let Some(modifiers) = &options.modifiers {
+        params["modifiers"] = json!(modifiers);
     }
     if let Some(before) = options.before {
         params["before"] = json!(before);
@@ -343,6 +368,8 @@ mod tests {
             before: None,
             after: None,
             include_bots: false,
+            include_deleted_users: false,
+            modifiers: None,
             disable_semantic_search: false,
             sort: SearchSort::Score,
             sort_dir: SearchSortDirection::Desc,
@@ -497,10 +524,33 @@ mod tests {
     }
 
     #[test]
+    fn request_params_carry_search_modifiers() {
+        let mut opts = sample_options();
+        opts.modifiers = Some("has:pin".to_string());
+        opts.include_deleted_users = true;
+
+        let params = build_request_params("hello", &opts);
+
+        assert_eq!(params["modifiers"], json!("has:pin"));
+        assert_eq!(params["include_deleted_users"], json!(true));
+    }
+
+    #[test]
+    fn capabilities_default_to_keyword_only_search() {
+        let capabilities: SearchCapabilities = serde_json::from_value(json!({"ok": true})).unwrap();
+        assert!(!capabilities.is_ai_search_enabled);
+
+        let enabled: SearchCapabilities =
+            serde_json::from_value(json!({"ok": true, "is_ai_search_enabled": true})).unwrap();
+        assert!(enabled.is_ai_search_enabled);
+    }
+
+    #[test]
     fn request_params_omit_unset_optional_filters() {
         let params = build_request_params("hello", &sample_options());
         assert!(params.get("before").is_none());
         assert!(params.get("after").is_none());
         assert!(params.get("context_channel_id").is_none());
+        assert!(params.get("modifiers").is_none());
     }
 }

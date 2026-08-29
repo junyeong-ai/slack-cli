@@ -1,36 +1,24 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::credential::TokenSet;
 use super::method::AuthMethod;
-use super::secret::{self, Secret};
+use super::oauth::client::OAuthClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub method: AuthMethod,
     pub workspace: WorkspaceInfo,
+
     #[serde(default)]
     pub tokens: TokenSet,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    pub authorized_at: DateTime<Utc>,
-}
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TokenSet {
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "secret::option"
-    )]
-    pub user: Option<Secret>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "secret::option"
-    )]
-    pub bot: Option<Secret>,
+    /// The app the tokens were issued to. Present for profiles created by a
+    /// browser flow, which is also what makes their tokens renewable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<OAuthClient>,
+
+    pub authorized_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

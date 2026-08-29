@@ -61,9 +61,11 @@ async fn test_client(server: &MockServer) -> (SlackClient, tempfile::TempDir) {
     };
     let authenticator = Authenticator::load(AuthLoadOptions {
         store_path,
+        api_base_url: server.uri(),
         overrides,
         explicit_profile: None,
     })
+    .await
     .unwrap();
 
     let client = SlackClient::new(config, Arc::new(authenticator)).unwrap();

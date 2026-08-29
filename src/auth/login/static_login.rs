@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use secrecy::ExposeSecret;
 
+use crate::auth::credential::{Credential, TokenSet};
 use crate::auth::method::AuthMethod;
-use crate::auth::profile::{Profile, TokenSet, WorkspaceInfo};
+use crate::auth::profile::{Profile, WorkspaceInfo};
 use crate::auth::secret::Secret;
 use crate::slack::SlackClient;
 
@@ -26,11 +27,10 @@ pub async fn run(
             user_id: Some(identity.user_id),
         },
         tokens: TokenSet {
-            user: user_token,
-            bot: bot_token,
+            user: user_token.map(|token| Credential::permanent(token, Vec::new())),
+            bot: bot_token.map(|token| Credential::permanent(token, Vec::new())),
         },
-        scopes: Vec::new(),
-        client_id: None,
+        client: None,
         authorized_at: Utc::now(),
     })
 }

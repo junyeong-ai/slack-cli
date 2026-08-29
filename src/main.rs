@@ -6,26 +6,41 @@ use slack_cli::{
     auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
     cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget},
-    config, format, slack,
+    config, format,
+    paths::AppPaths,
+    slack,
     slack::{MessageMetadata, MessagePayload, SlackApiError},
 };
 use std::io::Read;
 use std::process::ExitCode;
 use std::sync::Arc;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // Before anything reads the environment: clap binds `--profile`,
+    // `--client-id` and `--client-secret` to env vars at parse time, and the
+    // log filter below reads RUST_LOG.
+    dotenvy::dotenv().ok();
+
     let cli = Cli::parse();
 
-    let level = if cli.verbose { "debug" } else { "warn" };
+    let default_level = if cli.verbose {
+        LevelFilter::DEBUG
+    } else {
+        LevelFilter::WARN
+    };
     tracing_subscriber::fmt()
-        .with_env_filter(level)
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(default_level.into())
+                .from_env_lossy(),
+        )
         .with_writer(std::io::stderr)
         .compact()
         .with_target(false)
         .init();
-
-    dotenvy::dotenv().ok();
 
     let as_json = cli.json;
     match run(cli).await {
@@ -46,19 +61,22 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let config = config::Config::load(cli.config.clone(), cli.data_dir.clone())?;
+    let paths = AppPaths::resolve()?;
+    let config = config::Config::load(&paths, cli.config.clone(), cli.data_dir.clone())?;
 
     if let Command::Config { action } = &cli.command {
-        return handle_config_action(action, cli.json, cli.config.clone(), &config);
+        return handle_config_action(action, cli.json, cli.config.clone(), &paths, &config);
     }
 
-    let store_path = auth::default_store_path()
-        .context("could not determine auth store path (set XDG_CONFIG_HOME or HOME)")?;
-    let authenticator = Arc::new(Authenticator::load(AuthLoadOptions {
-        store_path,
-        overrides: EnvOverrides::capture(),
-        explicit_profile: cli.profile.clone(),
-    })?);
+    let authenticator = Arc::new(
+        Authenticator::load(AuthLoadOptions {
+            store_path: paths.auth_store(),
+            api_base_url: config.connection.api_base_url.clone(),
+            overrides: EnvOverrides::capture(),
+            explicit_profile: cli.profile.clone(),
+        })
+        .await?,
+    );
 
     if let Command::Auth { action } = cli.command {
         return auth::cli_handler::handle(
@@ -73,7 +91,7 @@ async fn run(cli: Cli) -> Result<()> {
 
     let slack = Arc::new(slack::SlackClient::new(config.clone(), authenticator)?);
 
-    let db_path = config.db_path();
+    let db_path = config.db_path(&paths);
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -239,6 +257,7 @@ async fn run(cli: Cli) -> Result<()> {
 
         Command::Search {
             query,
+            capabilities,
             limit,
             channel_types,
             content_types,
@@ -247,11 +266,20 @@ async fn run(cli: Cli) -> Result<()> {
             after,
             include_context_messages,
             include_bots,
+            include_deleted_users,
+            modifiers,
             include_archived_channels,
             disable_semantic_search,
             sort,
             sort_dir,
         } => {
+            if capabilities {
+                let capabilities = slack.search.info().await?;
+                format::print_search_capabilities(&capabilities, cli.json);
+                return Ok(());
+            }
+
+            let query = query.context("a search query is required")?;
             let context_channel_id = match channel {
                 Some(input) => Some(resolve_channel(&input, &slack, &cache, cli.json).await?),
                 None => None,
@@ -269,6 +297,8 @@ async fn run(cli: Cli) -> Result<()> {
                 before,
                 after,
                 include_bots,
+                include_deleted_users,
+                modifiers,
                 disable_semantic_search,
                 sort,
                 sort_dir,
@@ -461,18 +491,17 @@ fn handle_config_action(
     action: &ConfigAction,
     as_json: bool,
     config_path: Option<std::path::PathBuf>,
+    paths: &AppPaths,
     config: &config::Config,
 ) -> Result<()> {
     match action {
-        ConfigAction::Show => config.show(as_json),
+        ConfigAction::Show => config.show(paths, as_json),
         ConfigAction::Path => {
-            let path = config_path
-                .or_else(config::Config::default_config_path)
-                .context("Cannot determine config path")?;
+            let path = config_path.unwrap_or_else(|| paths.config_file());
             println!("{}", path.display());
             Ok(())
         }
-        ConfigAction::Edit => config::Config::edit(config_path),
+        ConfigAction::Edit => config::Config::edit(paths, config_path),
     }
 }
 

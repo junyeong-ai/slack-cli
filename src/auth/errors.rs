@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+use super::credential::TokenKind;
 use super::policy::TokenPolicy;
 
 #[derive(Debug, Error)]
@@ -16,6 +17,32 @@ pub enum AuthError {
         profile: String,
         policy: TokenPolicy,
     },
+
+    #[error(
+        "the {kind} token in profile '{profile}' has expired and carries no refresh token. \
+         run: slack-cli auth login"
+    )]
+    NotRenewable { profile: String, kind: TokenKind },
+
+    #[error("profile '{profile}' holds no {kind} token")]
+    NoSuchToken { profile: String, kind: TokenKind },
+
+    #[error(
+        "the OAuth client that issued the {kind} token in profile '{profile}' is not recorded, \
+         so the token cannot be renewed. run: slack-cli auth login"
+    )]
+    ClientUnknown { profile: String, kind: TokenKind },
+
+    #[error("could not renew the {kind} token in profile '{profile}': {source}")]
+    RenewalFailed {
+        profile: String,
+        kind: TokenKind,
+        #[source]
+        source: OAuthError,
+    },
+
+    #[error("renewing the {kind} token in profile '{profile}' returned a token of another kind")]
+    RenewalMismatch { profile: String, kind: TokenKind },
 
     #[error("failed to read auth store at {path}: {source}")]
     StoreRead {

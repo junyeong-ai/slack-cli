@@ -18,6 +18,20 @@ pub fn mask(secret: &Secret) -> String {
     }
 }
 
+/// Serde adapter for `Secret`: round-trips through `String` while keeping the
+/// raw value behind `Secret` in memory.
+pub mod required {
+    use super::*;
+
+    pub fn serialize<S: Serializer>(value: &Secret, ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(value.expose_secret())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Secret, D::Error> {
+        String::deserialize(de).map(new)
+    }
+}
+
 /// Serde adapter for `Option<Secret>`: round-trips through `Option<String>`
 /// while keeping the raw value behind `Secret` in memory.
 pub mod option {

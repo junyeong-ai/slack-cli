@@ -1,18 +1,21 @@
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use secrecy::ExposeSecret;
+use serde_json::{Value, json};
 
 use crate::cli::AuthAction;
 use crate::config::Config;
-use crate::slack::SlackClient;
+use crate::slack::{SlackClient, scopes};
 
 use super::Authenticator;
-use super::login::{pkce_login, static_login};
+use super::credential::{Credential, TokenKind, TokenSet};
+use super::login::{browser_login, static_login};
 use super::method::AuthMethod;
 use super::oauth::callback::DEFAULT_CALLBACK_PORT;
-use super::profile::{Profile, TokenSet};
+use super::oauth::client::OAuthClient;
+use super::profile::Profile;
 use super::secret::{self, Secret, mask as mask_secret};
 
 pub async fn handle(
@@ -28,6 +31,7 @@ pub async fn handle(
             user_token,
             bot_token,
             client_id,
+            client_secret,
             port,
             no_browser,
         } => {
@@ -37,6 +41,7 @@ pub async fn handle(
                 user_token: user_token.and_then(non_blank).map(secret::new),
                 bot_token: bot_token.and_then(non_blank).map(secret::new),
                 client_id: client_id.and_then(non_blank),
+                client_secret: client_secret.and_then(non_blank).map(secret::new),
                 port: port.unwrap_or(DEFAULT_CALLBACK_PORT),
                 no_browser,
             };
@@ -65,6 +70,11 @@ pub async fn handle(
         AuthAction::Profiles => list_profiles(&authenticator, json).await,
 
         AuthAction::Use { name } => set_active(name, &authenticator, json).await,
+
+        AuthAction::Scopes => {
+            print_scopes(json);
+            Ok(())
+        }
     }
 }
 
@@ -74,6 +84,7 @@ struct LoginInput {
     user_token: Option<Secret>,
     bot_token: Option<Secret>,
     client_id: Option<String>,
+    client_secret: Option<Secret>,
     port: u16,
     no_browser: bool,
 }
@@ -92,16 +103,16 @@ async fn login(
             let (user, bot) = collect_static_tokens(input.user_token, input.bot_token)?;
             static_login::run(user, bot, slack).await?
         }
-        AuthMethod::Pkce => {
-            let request = pkce_login::Request {
-                client_id: input
-                    .client_id
-                    .context("PKCE login requires --client-id or SLACK_CLI_CLIENT_ID")?,
+        AuthMethod::Pkce | AuthMethod::ClientSecret => {
+            let request = browser_login::Request {
+                client: build_client(method, input.client_id, input.client_secret)?,
                 api_base_url: config.connection.api_base_url.clone(),
                 port: input.port,
                 no_browser: input.no_browser,
+                user_scopes: owned(scopes::required(TokenKind::User)),
+                bot_scopes: owned(scopes::required(TokenKind::Bot)),
             };
-            pkce_login::run(request).await?
+            browser_login::run(request).await?
         }
     };
 
@@ -141,13 +152,47 @@ fn decide_method(input: &LoginInput) -> Result<AuthMethod> {
     if input.user_token.is_some() || input.bot_token.is_some() {
         return Ok(AuthMethod::Static);
     }
+    if input.client_secret.is_some() {
+        return Ok(AuthMethod::ClientSecret);
+    }
     if std::io::stdin().is_terminal() {
         Ok(AuthMethod::Pkce)
     } else {
         Err(anyhow!(
-            "no authentication method selected. pass --method pkce|static, \
+            "no authentication method selected. pass --method pkce|client-secret|static, \
              provide --user-token/--bot-token, or run interactively"
         ))
+    }
+}
+
+fn build_client(
+    method: AuthMethod,
+    client_id: Option<String>,
+    client_secret: Option<Secret>,
+) -> Result<OAuthClient> {
+    let client_id =
+        client_id.context("browser login requires --client-id or SLACK_CLI_CLIENT_ID")?;
+
+    match method {
+        AuthMethod::Pkce => {
+            if client_secret.is_some() {
+                anyhow::bail!(
+                    "--method pkce authorizes as a public client and takes no client secret. \
+                     use --method client-secret to authorize as a confidential client"
+                );
+            }
+            Ok(OAuthClient::public(client_id))
+        }
+        AuthMethod::ClientSecret => {
+            let secret = match client_secret {
+                Some(secret) => secret,
+                None => prompt_secret("Client secret: ")?.map(secret::new).context(
+                    "client-secret login requires --client-secret or SLACK_CLI_CLIENT_SECRET",
+                )?,
+            };
+            Ok(OAuthClient::confidential(client_id, secret))
+        }
+        AuthMethod::Static => unreachable!("static login does not build an OAuth client"),
     }
 }
 
@@ -158,9 +203,10 @@ fn collect_static_tokens(
     let (user_token, bot_token) = if user.is_some() || bot.is_some() {
         (user, bot)
     } else if std::io::stdin().is_terminal() {
-        let user =
-            prompt("User token (xoxp-..., recommended; leave blank to skip): ")?.map(secret::new);
-        let bot = prompt("Bot token (xoxb-..., optional; leave blank to skip): ")?.map(secret::new);
+        let user = prompt_secret("User token (xoxp-..., recommended; leave blank to skip): ")?
+            .map(secret::new);
+        let bot = prompt_secret("Bot token (xoxb-..., optional; leave blank to skip): ")?
+            .map(secret::new);
         (user, bot)
     } else {
         return Err(anyhow!(
@@ -177,18 +223,24 @@ fn collect_static_tokens(
     Ok((user_token, bot_token))
 }
 
-fn prompt(label: &str) -> Result<Option<String>> {
-    print!("{label}");
-    std::io::stdout().flush()?;
-    let mut buf = String::new();
-    std::io::stdin().read_line(&mut buf)?;
-    let trimmed = buf.trim();
+/// Reads a credential from the terminal without echoing it, so a token or
+/// client secret never lands in scrollback or a screen share.
+fn prompt_secret(label: &str) -> Result<Option<String>> {
+    if !std::io::stdin().is_terminal() {
+        return Ok(None);
+    }
+    let entered = rpassword::prompt_password(label)?;
+    let trimmed = entered.trim();
     Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
 }
 
 fn non_blank(s: String) -> Option<String> {
     let trimmed = s.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn owned(scopes: Vec<&'static str>) -> Vec<String> {
+    scopes.into_iter().map(ToOwned::to_owned).collect()
 }
 
 fn slugify(input: &str) -> String {
@@ -208,15 +260,29 @@ fn slugify(input: &str) -> String {
     }
 }
 
+fn print_scopes(json: bool) {
+    let user = scopes::required(TokenKind::User);
+    let bot = scopes::required(TokenKind::Bot);
+    if json {
+        println!("{}", json!({ "user": user, "bot": bot }));
+    } else {
+        println!("User Token Scopes:");
+        println!("  {}", user.join(" "));
+        println!("Bot Token Scopes:");
+        println!("  {}", bot.join(" "));
+    }
+}
+
 fn print_login_result(profile_name: &str, profile: &Profile, json: bool) {
     if json {
         println!(
             "{}",
-            serde_json::json!({
+            json!({
                 "profile": profile_name,
                 "team_id": profile.workspace.team_id,
                 "team_name": profile.workspace.team_name,
                 "method": profile.method.as_str(),
+                "tokens": token_kinds(&profile.tokens),
             })
         );
     } else {
@@ -226,7 +292,41 @@ fn print_login_result(profile_name: &str, profile: &Profile, json: bool) {
             profile.method,
             profile_name,
         );
+        for (kind, credential) in profile.tokens.iter() {
+            println!("  {kind} token: {}", describe(credential));
+        }
     }
+}
+
+fn token_kinds(tokens: &TokenSet) -> Vec<&'static str> {
+    tokens.iter().map(|(kind, _)| kind.as_str()).collect()
+}
+
+fn describe(credential: &Credential) -> String {
+    let masked = mask_secret(&credential.token);
+    match credential.expires_at {
+        Some(expiry) => {
+            let renewal = if credential.refresh_token.is_some() {
+                "renewable"
+            } else {
+                "not renewable"
+            };
+            format!(
+                "{masked} (expires {}, {renewal})",
+                expiry.format("%Y-%m-%dT%H:%M:%SZ")
+            )
+        }
+        None => format!("{masked} (does not expire)"),
+    }
+}
+
+fn credential_json(credential: &Credential) -> Value {
+    json!({
+        "token": mask_secret(&credential.token),
+        "expires_at": credential.expires_at,
+        "renewable": credential.refresh_token.is_some(),
+        "scopes": credential.scopes,
+    })
 }
 
 async fn logout(
@@ -240,21 +340,22 @@ async fn logout(
 
     let outcome = if all {
         if let Some(client) = slack {
-            for profile in snapshot.profiles.values() {
-                revoke_quietly(client, &profile.tokens).await;
+            for (name, profile) in &snapshot.profiles {
+                revoke_quietly(client, authenticator, name, &profile.tokens).await;
             }
         }
         authenticator.clear_all().await?;
         LogoutOutcome::All
     } else {
-        let target = profile
-            .or_else(|| snapshot.active_profile.clone())
-            .context("no active profile to log out from")?;
+        let target = snapshot
+            .resolve(profile.as_deref())
+            .context("no active profile to log out from")?
+            .to_string();
 
         if let Some(client) = slack
             && let Some(p) = snapshot.profiles.get(&target)
         {
-            revoke_quietly(client, &p.tokens).await;
+            revoke_quietly(client, authenticator, &target, &p.tokens).await;
         }
 
         let found = authenticator.remove_profile(&target).await?.is_some();
@@ -286,13 +387,13 @@ enum LogoutOutcome {
 fn emit_logout_result(json: bool, outcome: LogoutOutcome) {
     if json {
         let payload = match &outcome {
-            LogoutOutcome::All => serde_json::json!({"scope": "all"}),
+            LogoutOutcome::All => json!({"scope": "all"}),
             LogoutOutcome::Single {
                 name,
                 found,
                 was_active,
                 new_active,
-            } => serde_json::json!({
+            } => json!({
                 "scope": "single",
                 "profile": name,
                 "found": found,
@@ -324,16 +425,28 @@ fn emit_logout_result(json: bool, outcome: LogoutOutcome) {
     }
 }
 
-async fn revoke_quietly(slack: &SlackClient, tokens: &TokenSet) {
-    let token = tokens
-        .user
-        .as_ref()
-        .or(tokens.bot.as_ref())
-        .map(|s| s.expose_secret().to_string());
-    if let Some(token) = token
-        && let Err(err) = slack.auth.revoke(&token).await
-    {
-        tracing::warn!("auth.revoke failed: {err}");
+/// Revokes every token in a profile before it is dropped locally.
+///
+/// The token is renewed first when it is due: revoking with a token Slack has
+/// already expired fails, which would leave the installation live at Slack
+/// while the only credential that could revoke it is deleted here.
+async fn revoke_quietly(
+    slack: &SlackClient,
+    authenticator: &Authenticator,
+    profile: &str,
+    tokens: &TokenSet,
+) {
+    for (kind, _) in tokens.iter() {
+        match authenticator.token_for_profile(profile, kind).await {
+            Ok(token) => {
+                if let Err(err) = slack.auth.revoke(token.expose_secret()).await {
+                    tracing::warn!("auth.revoke failed for the {kind} token: {err}");
+                }
+            }
+            Err(err) => {
+                tracing::warn!("could not obtain a live {kind} token to revoke: {err}");
+            }
+        }
     }
 }
 
@@ -346,36 +459,42 @@ async fn status(
     let snapshot = authenticator.snapshot().await;
     if snapshot.profiles.is_empty() {
         if json {
-            println!("{}", serde_json::json!({"profiles": []}));
+            println!("{}", json!({"profiles": []}));
         } else {
             println!("No profiles configured. Run: slack-cli auth login");
         }
         return Ok(());
     }
 
-    let name = profile
-        .or_else(|| snapshot.active_profile.clone())
-        .context("no active profile selected")?;
+    let name = snapshot
+        .resolve(profile.as_deref())
+        .context("no active profile selected")?
+        .to_string();
+    let kind = snapshot
+        .profiles
+        .get(&name)
+        .with_context(|| format!("profile {name} not found"))?
+        .tokens
+        .iter()
+        .next()
+        .map(|(kind, _)| kind);
+
+    // Verification renews a token that is due, so it runs before the profile
+    // is read for display: the report then describes the credential the
+    // profile actually holds now, and matches what every other command sees.
+    let verification = match (slack, kind) {
+        (Some(client), Some(kind)) => match authenticator.token_for_profile(&name, kind).await {
+            Ok(token) => Some(client.auth.test(token.expose_secret()).await),
+            Err(err) => Some(Err(err.into())),
+        },
+        _ => None,
+    };
+
+    let snapshot = authenticator.snapshot().await;
     let profile = snapshot
         .profiles
         .get(&name)
         .with_context(|| format!("profile {name} not found"))?;
-
-    let verification = match slack {
-        Some(client) => {
-            let token = profile
-                .tokens
-                .user
-                .as_ref()
-                .or(profile.tokens.bot.as_ref())
-                .map(|s| s.expose_secret().to_string());
-            match token {
-                Some(t) => Some(client.auth.test(&t).await),
-                None => None,
-            }
-        }
-        None => None,
-    };
 
     if json {
         print_status_json(&name, &snapshot.active_profile, profile, verification);
@@ -386,60 +505,57 @@ async fn status(
     Ok(())
 }
 
+type Verification = Option<Result<crate::slack::SlackAuthIdentity>>;
+
 fn print_status_json(
     name: &str,
     active: &Option<String>,
     profile: &Profile,
-    verification: Option<anyhow::Result<crate::slack::SlackAuthIdentity>>,
+    verification: Verification,
 ) {
-    let mut payload = serde_json::json!({
+    let mut payload = json!({
         "profile": name,
         "active": active.as_deref() == Some(name),
         "method": profile.method.as_str(),
         "workspace": profile.workspace,
+        "client_id": profile.client.as_ref().map(|c| &c.id),
         "tokens": {
-            "user": profile.tokens.user.as_ref().map(mask_secret),
-            "bot":  profile.tokens.bot.as_ref().map(mask_secret),
+            "user": profile.tokens.user.as_ref().map(credential_json),
+            "bot": profile.tokens.bot.as_ref().map(credential_json),
         },
-        "scopes": profile.scopes,
         "authorized_at": profile.authorized_at,
     });
     match verification {
         Some(Ok(identity)) => {
-            payload["verified"] =
-                serde_json::to_value(&identity).unwrap_or(serde_json::Value::Null);
+            payload["verified"] = serde_json::to_value(&identity).unwrap_or(Value::Null);
         }
         Some(Err(err)) => {
-            payload["verified"] = serde_json::json!({"error": err.to_string()});
+            payload["verified"] = json!({"error": err.to_string()});
         }
         None => {}
     }
     println!("{payload}");
 }
 
-fn print_status_text(
-    name: &str,
-    profile: &Profile,
-    verification: Option<anyhow::Result<crate::slack::SlackAuthIdentity>>,
-) {
+fn print_status_text(name: &str, profile: &Profile, verification: Verification) {
     println!("profile: {name} ({})", profile.method);
     println!(
         "  workspace: {} ({})",
         profile.workspace.team_name, profile.workspace.team_id
     );
-    if let Some(token) = &profile.tokens.user {
-        println!("  user_token: {}", mask_secret(token));
+    if let Some(client) = &profile.client {
+        println!("  client_id: {}", client.id);
     }
-    if let Some(token) = &profile.tokens.bot {
-        println!("  bot_token : {}", mask_secret(token));
-    }
-    if !profile.scopes.is_empty() {
-        println!("  scopes    : {}", profile.scopes.join(", "));
+    for (kind, credential) in profile.tokens.iter() {
+        println!("  {kind} token: {}", describe(credential));
+        if !credential.scopes.is_empty() {
+            println!("    scopes: {}", credential.scopes.join(", "));
+        }
     }
     if let Some(result) = verification {
         match result {
-            Ok(identity) => println!("  verified  : ok ({} / {})", identity.team, identity.user),
-            Err(err) => println!("  verified  : failed ({err})"),
+            Ok(identity) => println!("  verified : ok ({} / {})", identity.team, identity.user),
+            Err(err) => println!("  verified : failed ({err})"),
         }
     }
 }
@@ -451,15 +567,16 @@ async fn list_profiles(authenticator: &Authenticator, json: bool) -> Result<()> 
             .profiles
             .iter()
             .map(|(name, profile)| {
-                serde_json::json!({
+                json!({
                     "name": name,
                     "active": snapshot.active_profile.as_deref() == Some(name),
                     "method": profile.method.as_str(),
                     "workspace": profile.workspace,
+                    "tokens": token_kinds(&profile.tokens),
                 })
             })
             .collect();
-        println!("{}", serde_json::json!({"profiles": payload}));
+        println!("{}", json!({"profiles": payload}));
     } else if snapshot.profiles.is_empty() {
         println!("No profiles configured. Run: slack-cli auth login");
     } else {
@@ -470,7 +587,7 @@ async fn list_profiles(authenticator: &Authenticator, json: bool) -> Result<()> 
                 " "
             };
             println!(
-                "{} {:<20} {:<8} {}",
+                "{} {:<20} {:<14} {}",
                 marker,
                 name,
                 profile.method,
@@ -485,7 +602,7 @@ async fn set_active(name: String, authenticator: &Authenticator, json: bool) -> 
     let name = non_blank(name).context("profile name must not be blank")?;
     authenticator.set_active(&name).await?;
     if json {
-        println!("{}", serde_json::json!({"active": name}));
+        println!("{}", json!({"active": name}));
     } else {
         println!("✓ Active profile: {name}");
     }
@@ -495,6 +612,19 @@ async fn set_active(name: String, authenticator: &Authenticator, json: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn input(method: Option<AuthMethod>, secret: Option<&str>) -> LoginInput {
+        LoginInput {
+            method,
+            profile: None,
+            user_token: None,
+            bot_token: None,
+            client_id: Some("123.456".into()),
+            client_secret: secret.map(secret::new),
+            port: DEFAULT_CALLBACK_PORT,
+            no_browser: true,
+        }
+    }
 
     #[test]
     fn slugify_lowercases_and_dashes_non_alnum() {
@@ -519,5 +649,72 @@ mod tests {
         assert_eq!(non_blank("  ".into()), None);
         assert_eq!(non_blank("".into()), None);
         assert_eq!(non_blank("  abc  ".into()), Some("abc".to_string()));
+    }
+
+    #[test]
+    fn a_client_secret_selects_the_confidential_method() {
+        assert_eq!(
+            decide_method(&input(None, Some("shh"))).unwrap(),
+            AuthMethod::ClientSecret
+        );
+    }
+
+    #[test]
+    fn pasted_tokens_select_the_static_method() {
+        let mut given = input(None, None);
+        given.user_token = Some(secret::new("xoxp-1"));
+        assert_eq!(decide_method(&given).unwrap(), AuthMethod::Static);
+    }
+
+    #[test]
+    fn an_explicit_method_always_wins() {
+        assert_eq!(
+            decide_method(&input(Some(AuthMethod::Pkce), Some("shh"))).unwrap(),
+            AuthMethod::Pkce
+        );
+    }
+
+    #[test]
+    fn pkce_rejects_a_client_secret() {
+        let given = input(Some(AuthMethod::Pkce), Some("shh"));
+        let err = build_client(AuthMethod::Pkce, given.client_id, given.client_secret).unwrap_err();
+        assert!(err.to_string().contains("public client"));
+    }
+
+    #[test]
+    fn pkce_builds_a_public_client() {
+        let client = build_client(AuthMethod::Pkce, Some("123.456".into()), None).unwrap();
+        assert!(client.is_public());
+    }
+
+    #[test]
+    fn client_secret_builds_a_confidential_client() {
+        let client = build_client(
+            AuthMethod::ClientSecret,
+            Some("123.456".into()),
+            Some(secret::new("shh")),
+        )
+        .unwrap();
+        assert!(!client.is_public());
+    }
+
+    #[test]
+    fn browser_login_requires_a_client_id() {
+        let err = build_client(AuthMethod::Pkce, None, None).unwrap_err();
+        assert!(err.to_string().contains("--client-id"));
+    }
+
+    #[test]
+    fn credentials_describe_their_lifetime() {
+        let permanent = Credential::permanent(secret::new("xoxp-abcdefgh"), vec![]);
+        assert!(describe(&permanent).contains("does not expire"));
+
+        let rotating = Credential {
+            token: secret::new("xoxe.xoxp-abcdefgh"),
+            refresh_token: Some(secret::new("xoxe-refresh")),
+            expires_at: Some(chrono::Utc::now()),
+            scopes: vec![],
+        };
+        assert!(describe(&rotating).contains("renewable"));
     }
 }
