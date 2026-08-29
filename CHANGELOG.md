@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-30
+
+### Added
+
+- `config.toml` carries the OAuth app under `[auth]` — `client_id`, and optionally `client_secret` — so a browser login no longer needs a flag or an environment variable on every run. The environment was the only non-flag source before, and a value placed there is inherited by every process the CLI spawns, while a `.env` sits in whatever working directory the command ran from, usually a git repository. `config.toml` is a `0600` file inside a `0700` directory and belongs to no repository. Flags and the environment still outrank it, so CI is unaffected
+
+### Fixed
+
+- `client_secret` is read from the config but never written back, so `config show --json` — which serializes the whole config — cannot print it; the human view masks it. `config edit` now creates a missing `config.toml` already restricted to `0600` rather than tightening it afterwards, closing the window in which a fresh file is readable by anyone
+
 ## [0.9.0] - 2026-08-30
 
 ### Added
