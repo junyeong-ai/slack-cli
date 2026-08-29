@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-08-30
+
+### Added
+
+- `auth login --method client-secret`: confidential-client OAuth using an app's client id and secret, authenticating with HTTP Basic. Slack routes the loopback redirect of a non-PKCE app as a server redirect, so this flow can request bot scopes and issue a `xoxb-` token in the same pass — something the PKCE flow structurally cannot do, because Slack treats a PKCE app's loopback as a desktop redirect and refuses bot scopes there
+- `auth scopes` prints the OAuth scopes to register on the Slack app, derived from the API methods the CLI calls. `tests/documented_scopes.rs` holds both READMEs to that same set, and `tests/readme_parity.rs` fails the build when a command, flag, environment variable or exit code is documented in one language and not the other
+- `assistant.search.info` via `search --capabilities`, reporting whether the workspace can rank semantically, plus the `--modifiers` (e.g. `has:pin from:@alice`) and `--include-deleted-users` parameters on `search`
+- Windows support: config, auth store and cache now resolve through the platform base-directory convention (`%APPDATA%` on Windows, `$XDG_CONFIG_HOME` or `~/.config` elsewhere — byte-identical to the previous behaviour on Unix). CI now runs the test suite on `windows-latest`, which the release workflow has been shipping binaries for untested
+
+### Fixed
+
+- **Rotating tokens are renewed instead of expiring.** Slack issues a 12-hour access token and a refresh token for every PKCE installation, and for confidential apps with token rotation enabled. Neither field was parsed, so a PKCE profile stopped working 12 hours after login and needed a fresh `auth login`. Credentials now carry their expiry and refresh token, and are exchanged before use once they enter the renewal window
+- **Concurrent invocations can no longer lose each other's writes.** Slack revokes a refresh token as soon as it is used, and the auth store was a read-modify-write with no locking. Every mutation now runs under an advisory lock on a sibling `auth.json.lock`, re-reading from disk inside the lock; `AuthStore::write` requires the lock guard, so an unlocked write does not compile
+- **`search` requested the wrong scope.** `auth login` asked for the legacy `search:read`, which covers `search.messages` and not the Real-time Search API, so `slack-cli search` failed with `missing_scope` on every PKCE profile. Scopes are now declared per method in the API registry and unioned from there, which is what removes the hand-maintained list that had drifted
+- `auth status --verify` and `auth logout` renewed nothing and used the stored token directly: verification reported a false failure on a profile every other command used successfully, and revocation silently failed against Slack while the local credential was deleted. Both now renew first
+- A renewal that cannot complete — no client recorded, the exchange refused, the network down — no longer fails a command whose token is still valid; it warns, proceeds on the credential in hand, and retries next invocation. The failure is only fatal once the token is genuinely past its expiry
+- `RUST_LOG` was documented but ignored: the log filter was built from a literal string. It is now read from the environment, and `.env` is loaded before arguments are parsed, so `SLACK_PROFILE`, `SLACK_CLI_CLIENT_ID` and `SLACK_CLI_CLIENT_SECRET` are honoured from a `.env` file too
+- Token and client-secret prompts no longer echo to the terminal
+- Bot and user scopes are recorded separately per credential rather than collapsed into one list
+- `SECURITY.md` documented `cosign verify-blob` against `.sig` and `.pem` artifacts that releases do not publish; the command now matches the signature bundle the release workflow actually produces
+
+### Changed
+
+- **Breaking:** the auth store moves to schema 2. Existing stores are upgraded in place on first open. Profiles created by the previous PKCE flow hold a token that has already expired with no refresh token to renew it, so those need one `auth login`
+- **Breaking:** `auth status --json` reports each token as `{token, expires_at, renewable, scopes}` rather than a masked string, and scopes move from the profile onto the credential
+- **Breaking:** minimum supported Rust is 1.98.0
+- Every pinned GitHub Action moved to its current release, and a scheduled workflow now opens a `cargo update` pull request for the transitive versions Dependabot does not track
+
 ## [0.7.1] - 2026-07-11
 
 ### Fixed
