@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-08-30
+
+### Added
+
+- `self update` replaces the running binary with a published release, with `--check` to report whether one exists, `--version` to name a release, and `--yes` to skip the prompt. Releases now publish the executable itself beside each archive, so the CLI needs no gzip, tar or zip reader on the one path that overwrites the binary a user runs
+- The download is always checked against the published SHA-256, and against its sigstore signature when `cosign` is installed. The certificate is pinned to this repository's release workflow for the exact tag being installed, which refuses a validly-signed binary lifted from another release and re-uploaded under this one's asset names. With `cosign` installed a release that publishes no signature is refused outright — the checksum is produced by whoever published the binary, so on its own it says nothing about origin
+- The replacement is staged in the destination directory and renamed into place, so an interrupted update leaves the existing binary untouched. Windows moves the running executable aside first and restores it if the swap fails
+
+The executable asset exists from this release onward, so `--version` naming an earlier release is refused with a message saying so; use `scripts/install.sh` for those.
+
 ## [0.8.0] - 2026-08-30
 
 ### Added
