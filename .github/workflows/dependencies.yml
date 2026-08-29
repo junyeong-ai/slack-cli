@@ -1,0 +1,68 @@
+name: Dependencies
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependencies
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
+
+jobs:
+  lockfile:
+    name: Refresh Cargo.lock
+    # Dependabot raises the manifest requirements in Cargo.toml; nothing there
+    # moves the transitive versions pinned in Cargo.lock, which every build
+    # resolves against via --locked. This job closes that gap.
+    if: vars.ENABLE_DEPENDENCY_REFRESH == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          cache: false
+
+      - name: Update transitive dependencies
+        run: cargo update
+
+      - name: Open or refresh the lockfile pull request
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: chore/cargo-update
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already current."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add Cargo.lock
+          git commit -m "chore(deps): refresh Cargo.lock"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$BRANCH"
+
+          open_pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')
+          if [ -z "$open_pr" ]; then
+            gh pr create --head "$BRANCH" --base main \
+              --title "chore(deps): refresh Cargo.lock" \
+              --body "Scheduled \`cargo update\` of transitive dependencies."
+          fi
