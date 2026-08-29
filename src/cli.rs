@@ -297,6 +297,39 @@ pub enum Command {
         #[command(subcommand)]
         action: CacheAction,
     },
+
+    #[command(name = "self", about = "Manage this installation")]
+    SelfCmd {
+        #[command(subcommand)]
+        action: SelfAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SelfAction {
+    #[command(
+        about = "Replace this binary with a published release",
+        long_about = "Replace this binary with a published release.\n\
+                      The download is checked against the release checksum, and \n\
+                      against its sigstore signature when `cosign` is installed."
+    )]
+    Update {
+        #[arg(
+            long,
+            value_name = "VER",
+            help = "Install this version instead of the latest release"
+        )]
+        version: Option<String>,
+
+        #[arg(long, help = "Report whether an update exists without installing it")]
+        check: bool,
+
+        #[arg(long, help = "Reinstall even when already at the target version")]
+        force: bool,
+
+        #[arg(long, short = 'y', help = "Do not prompt before replacing the binary")]
+        yes: bool,
+    },
 }
 
 // `MessageContent` is the content surface shared by `chat.postMessage` and

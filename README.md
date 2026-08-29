@@ -261,6 +261,25 @@ slack-cli auth logout --all              # 모든 프로필 제거
 
 ---
 
+## 업데이트
+
+```bash
+slack-cli self update            # 최신 릴리스로 교체 (확인 프롬프트)
+slack-cli self update --check    # 새 버전 유무만 확인
+slack-cli self update --yes      # 프롬프트 없이
+slack-cli self update --version 0.9.0   # 특정 버전으로
+```
+
+릴리스에 게시된 실행 파일 자체를 내려받아 **SHA-256을 반드시 검증**합니다. `cosign`이 설치돼 있으면 sigstore 서명도 검증하며, 이때 인증서는 **해당 태그의 릴리스 워크플로**로 고정되므로 다른 릴리스의 정상 서명본을 이 릴리스 이름으로 올려두는 대체도 거부됩니다. cosign이 있는데 서명이 없는 릴리스는 설치를 거부합니다 — 체크섬은 바이너리를 올린 쪽이 함께 만들 수 있으므로 출처를 증명하지 않습니다. cosign이 없으면 체크섬만으로 신뢰하며 그 사실을 알립니다.
+
+교체는 같은 디렉터리에 스테이징한 뒤 rename 하므로, 중간에 실패해도 반쯤 쓰인 바이너리가 남지 않습니다.
+
+`~/.local/bin`처럼 쓰기 권한이 있는 위치에 설치된 경우에 동작합니다. 시스템 경로에 설치했다면 `install.sh`를 다시 실행하세요.
+
+실행 파일 자산은 v0.9.0부터 게시되므로, `--version`으로 그 이전 릴리스를 지정하면 해당 자산이 없다는 안내와 함께 거부됩니다 — 그 경우 `install.sh`를 사용하세요.
+
+---
+
 ## 설정 파일
 
 `config.toml` (사용자 환경설정, 토큰 없음). 경로는 플랫폼 규약을 따릅니다 — Linux/macOS는 `$XDG_CONFIG_HOME/slack-cli` 또는 `~/.config/slack-cli`, Windows는 `%APPDATA%\slack-cli`. 실제 경로는 `slack-cli config path`로 확인하세요.
@@ -347,6 +366,8 @@ exponential_base = 2.0
 | `bookmarks <ch>` | 북마크 목록 |
 | `cache stats/refresh` | 캐시 관리 |
 | `config show/path/edit` | 설정 관리 |
+| `self update` | 최신 릴리스로 이 바이너리를 교체 |
+| `self update --check` | 업데이트 유무만 확인 (교체하지 않음) |
 
 ### 공통 옵션
 - `--json` — JSON 출력

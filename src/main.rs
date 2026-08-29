@@ -5,11 +5,12 @@ use serde_json::Value;
 use slack_cli::{
     auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
-    cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget},
+    cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget, SelfAction},
     config, format,
     paths::AppPaths,
     slack,
     slack::{MessageMetadata, MessagePayload, SlackApiError},
+    update,
 };
 use std::io::Read;
 use std::process::ExitCode;
@@ -66,6 +67,11 @@ async fn run(cli: Cli) -> Result<()> {
 
     if let Command::Config { action } = &cli.command {
         return handle_config_action(action, cli.json, cli.config.clone(), &paths, &config);
+    }
+
+    // Neither an auth store nor a cache is involved in replacing the binary.
+    if let Command::SelfCmd { action } = &cli.command {
+        return handle_self_action(action, cli.json).await;
     }
 
     let authenticator = Arc::new(
@@ -437,7 +443,9 @@ async fn run(cli: Cli) -> Result<()> {
             }
         },
 
-        Command::Auth { .. } | Command::Config { .. } => unreachable!(),
+        Command::Auth { .. } | Command::Config { .. } | Command::SelfCmd { .. } => {
+            unreachable!("handled before the cache is opened")
+        }
     }
 
     if cache_status == CacheStatus::NeedsRefresh && !cli.json {
@@ -485,6 +493,29 @@ fn classify_error(err: &anyhow::Error) -> (String, u8) {
     }
 
     ("error".to_string(), 1)
+}
+
+async fn handle_self_action(action: &SelfAction, as_json: bool) -> Result<()> {
+    let SelfAction::Update {
+        version,
+        check,
+        force,
+        yes,
+    } = action;
+
+    let outcome = update::run(update::UpdateRequest {
+        version: version.clone(),
+        check: *check,
+        force: *force,
+        assume_yes: *yes,
+        api_base: None,
+        binary: None,
+        cosign: None,
+    })
+    .await?;
+
+    format::print_update_outcome(&outcome, as_json);
+    Ok(())
 }
 
 fn handle_config_action(

@@ -261,6 +261,36 @@ slack-cli auth logout --all              # Remove every profile
 
 ---
 
+## Updating
+
+```bash
+slack-cli self update            # replace with the latest release (prompts first)
+slack-cli self update --check    # report whether a newer version exists
+slack-cli self update --yes      # skip the prompt
+slack-cli self update --version 0.9.0   # install a specific release
+```
+
+It downloads the executable the release publishes beside the archive and
+**always verifies its SHA-256**. When `cosign` is installed it also verifies the
+sigstore signature, pinned to the release workflow **for that exact tag**, so a
+validly-signed binary lifted from another release and re-uploaded under this
+one's asset names is refused. With cosign installed, a release that publishes no
+signature is refused outright: the checksum is produced by whoever published the
+binary, so on its own it says nothing about origin. Without cosign the download
+rests on its checksum and the command says so.
+
+The replacement is staged in the destination directory and renamed into place,
+so a failure part-way through never leaves a half-written binary.
+
+This works where the binary lives somewhere you can write, such as
+`~/.local/bin`. For a system-wide install, re-run `install.sh` instead.
+
+Releases publish the bare executable from v0.9.0 onward, so naming an earlier
+release with `--version` is refused with a message saying the asset is absent.
+Use `install.sh` to move to one of those.
+
+---
+
 ## Config file
 
 `config.toml` (user preferences, no tokens). The location follows the platform convention — `$XDG_CONFIG_HOME/slack-cli` or `~/.config/slack-cli` on Linux/macOS, `%APPDATA%\slack-cli` on Windows. Run `slack-cli config path` for the resolved path.
@@ -349,6 +379,8 @@ A `.env` file in the working directory supplies any of the above.
 | `bookmarks <ch>` | List bookmarks |
 | `cache stats/refresh` | Cache management |
 | `config show/path/edit` | Config management |
+| `self update` | Replace this binary with the latest release |
+| `self update --check` | Report whether an update exists, changing nothing |
 
 ### Common Options
 - `--json` — JSON output

@@ -14,7 +14,8 @@ src/
 ├── paths.rs      Platform config/cache directories (XDG on Unix, Known Folders on Windows)
 ├── auth/        See src/auth/CLAUDE.md
 ├── slack/       See src/slack/CLAUDE.md
-└── cache/       See src/cache/CLAUDE.md
+├── cache/       See src/cache/CLAUDE.md
+└── update/      See src/update/CLAUDE.md
 ```
 
 ## Build & test

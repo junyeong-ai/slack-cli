@@ -60,6 +60,7 @@ url = "2"
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["full", "test-util"] }
 rstest = "0.26"
+sha2 = "0.11"
 wiremock = "0.6"
 
 [profile.release]

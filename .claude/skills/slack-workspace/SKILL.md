@@ -103,6 +103,9 @@ slack-cli emoji [--query <q>] --json
 slack-cli cache refresh [users|channels|all]
 slack-cli cache stats --json
 
+# `self update` replaces the user's binary — a human setup step, not an
+# agent action. Do not run it.
+
 # Auth (read-only inspection; `auth login` is a human setup step)
 slack-cli auth status [--verify] --json
 slack-cli auth profiles --json

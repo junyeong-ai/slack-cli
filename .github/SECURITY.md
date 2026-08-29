@@ -27,6 +27,18 @@ token that can no longer be presented — expired, with its refresh token
 already spent — is reported and skipped rather than blocking the local
 removal.
 
+## Updating in place
+
+`slack-cli self update` downloads the executable a release publishes, verifies
+its SHA-256 against the published checksum, and — when `cosign` is installed —
+verifies the sigstore bundle. Its identity pin is stricter than the one above:
+because the updater always knows the version it is installing, it anchors the
+tag, refusing a validly-signed binary taken from a different release. With
+`cosign` installed a release that publishes no signature is refused; without it
+the download rests on its checksum alone and the command says so. The new file is staged beside the
+destination and renamed into place, so an interrupted update leaves the existing
+binary untouched.
+
 ## Reporting a vulnerability
 
 Report vulnerabilities **privately** through GitHub Security Advisories:

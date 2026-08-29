@@ -5,5 +5,6 @@ pub mod config;
 pub mod format;
 pub mod paths;
 pub mod slack;
+pub mod update;
 
 pub use config::Config;

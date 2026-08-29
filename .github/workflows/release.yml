@@ -93,25 +93,41 @@ jobs:
           target="$MATRIX_TARGET"
           stem="slack-cli-v${version}-${target}"
 
+          digest() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$1" > "$1.sha256"
+            else
+              shasum -a 256 "$1" > "$1.sha256"
+            fi
+          }
+
           mkdir -p staging
+          # The archive is what install.sh downloads; the bare executable
+          # beside it is what `slack-cli self update` downloads, so replacing
+          # a binary in place needs no archive reader inside the CLI.
           if [ "$MATRIX_OS" = "windows-latest" ]; then
             cp "target/${target}/release/slack-cli.exe" staging/slack-cli.exe
             archive="${stem}.zip"
             (cd staging && 7z a "../${archive}" slack-cli.exe >/dev/null)
+            binary="${stem}.exe"
+            cp staging/slack-cli.exe "${binary}"
           else
             cp "target/${target}/release/slack-cli" staging/slack-cli
             archive="${stem}.tar.gz"
             tar -C staging -czf "${archive}" slack-cli
+            binary="${stem}"
+            cp staging/slack-cli "${binary}"
           fi
 
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "${archive}" > "${archive}.sha256"
-          else
-            shasum -a 256 "${archive}" > "${archive}.sha256"
-          fi
+          digest "${archive}"
+          digest "${binary}"
 
-          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
-          echo "checksum=${archive}.sha256" >> "$GITHUB_OUTPUT"
+          {
+            echo "archive=${archive}"
+            echo "checksum=${archive}.sha256"
+            echo "binary=${binary}"
+            echo "binary_checksum=${binary}.sha256"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -120,6 +136,8 @@ jobs:
           path: |
             ${{ steps.package.outputs.archive }}
             ${{ steps.package.outputs.checksum }}
+            ${{ steps.package.outputs.binary }}
+            ${{ steps.package.outputs.binary_checksum }}
           if-no-files-found: error
           retention-days: 7
 
@@ -212,13 +230,18 @@ jobs:
           prefix="slack-cli-v${version}-"
           cd dist
           shopt -s nullglob
+          # The alias set is what install.sh reaches for when no version is
+          # named, so it mirrors the archives only. `self update` always
+          # resolves a concrete release, so the bare executables need no alias.
+          #
           # Checksum files are regenerated, not copied: a copied .sha256 still
           # references the versioned archive name and fails verification
           # against the alias. Signature bundles copy as-is — they bind to the
           # blob digest, which renaming does not change.
           for f in "${prefix}"*; do
             case "$f" in
-              *.sha256) continue ;;
+              *.tar.gz|*.zip|*.tar.gz.bundle|*.zip.bundle) ;;
+              *) continue ;;
             esac
             alias_name="slack-cli-${f#"${prefix}"}"
             cp "$f" "$alias_name"

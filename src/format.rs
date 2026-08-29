@@ -3,6 +3,8 @@ use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{
     Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchCapabilities, SearchResults,
 };
+use crate::update::install::Signature;
+use crate::update::{Action, UpdateOutcome};
 use chrono::DateTime;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -726,6 +728,55 @@ pub fn print_search_results(results: &SearchResults, as_json: bool) {
         }
         if let Some(permalink) = &user.permalink {
             println!("  {}", permalink);
+        }
+    }
+}
+
+pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
+    let signature = outcome.signature.map(|signature| match signature {
+        Signature::Verified => "verified",
+        Signature::Unverified => "unverified",
+    });
+
+    if as_json {
+        println!(
+            "{}",
+            json!({
+                "action": outcome.action.as_str(),
+                "from": outcome.from,
+                "to": outcome.to,
+                "target": outcome.target,
+                "binary": outcome.binary.display().to_string(),
+                "signature": signature,
+            })
+        );
+        return;
+    }
+
+    match outcome.action {
+        Action::AlreadyCurrent => println!("Already at v{} ({})", outcome.to, outcome.target),
+        Action::UpdateAvailable => println!(
+            "v{} is available (running v{}). Run: slack-cli self update",
+            outcome.to, outcome.from
+        ),
+        Action::Cancelled => println!("Cancelled; still at v{}", outcome.from),
+        Action::Updated | Action::Reinstalled => {
+            println!(
+                "✓ {} to v{} at {}",
+                if outcome.action == Action::Reinstalled {
+                    "Reinstalled"
+                } else {
+                    "Updated"
+                },
+                outcome.to,
+                outcome.binary.display()
+            );
+            if signature == Some("unverified") {
+                println!(
+                    "  cosign is not installed, so the signature was not checked and the \
+                     download rests on its checksum alone."
+                );
+            }
         }
     }
 }
