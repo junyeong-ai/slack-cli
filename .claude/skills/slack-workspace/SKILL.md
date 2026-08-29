@@ -43,6 +43,8 @@ Usage errors are the one exception: they exit `2` from clap at parse time with p
 
 Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (re-run `slack-cli auth login`) · `4` rate-limited (back off before retrying).
 
+Rotating tokens renew themselves: the CLI exchanges an expiring token before use, so exit code `3` means the credential is genuinely spent, not merely old.
+
 ## Markdown: prefer `--markdown-text`
 
 `send`/`update` accept `--markdown-text` — standard Markdown that Slack renders server-side (max 12,000 chars). Use it whenever the whole message body is Markdown; no translation needed. It cannot be combined with `-t`/`-b` (attachments and metadata are fine).
@@ -78,6 +80,7 @@ slack-cli members  <channel>
 slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
 slack-cli thread   <channel> <ts> [--limit N] [--exclude-bots] [--expand FIELDS] --json
 slack-cli search   <query>   [filters…] --json
+slack-cli search   --capabilities --json
 slack-cli permalink <channel> <ts> --json
 
 # Writing  (≥1 of -t / --markdown-text / -b / -a is required)
@@ -99,6 +102,11 @@ slack-cli emoji [--query <q>] --json
 # Cache
 slack-cli cache refresh [users|channels|all]
 slack-cli cache stats --json
+
+# Auth (read-only inspection; `auth login` is a human setup step)
+slack-cli auth status [--verify] --json
+slack-cli auth profiles --json
+slack-cli auth scopes --json
 ```
 
 `DATE` accepts a Unix timestamp or `YYYY-MM-DD`.
@@ -160,7 +168,10 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `emoji --json` → array of `{name, url, is_alias, alias_for}`. Iterate with `.[]`, do not subscript by emoji name.
 - `search --json` → `{messages, files, channels, users}` object. Each `.messages[]` uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape.
 - `cache stats --json` → `{users: N, channels: N}`.
-- `auth status --json` / `auth profiles --json` → metadata about stored profile(s); tokens are always masked (`xoxp...abcd`). On `auth status --verify`, the `verified` object echoes the live `auth.test` shape (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`).
+- `search --capabilities --json` → `{is_ai_search_enabled}`. When false the workspace ranks by keyword whatever `--no-semantic` says.
+- `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot}, authorized_at}`. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null for tokens that do not expire. On `auth status --verify`, the `verified` object echoes the live `auth.test` shape (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`).
+- `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
+- `auth scopes --json` → `{user: [...], bot: [...]}`, the scopes to register on the Slack app.
 
 ## Message metadata (idempotency)
 
@@ -190,10 +201,13 @@ Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cl
 | `--content-types` | `messages` | comma-separated |
 | `--include-context` | off | surrounding messages |
 | `--include-bots` | off | include bot-authored |
+| `--include-deleted-users` | off | include deleted users |
 | `--include-archived` | off | include archived channels |
+| `--modifiers <expr>` | — | search modifiers, e.g. `"has:pin from:@alice"` |
 | `--no-semantic` | off | keyword-only matching |
 | `--sort` | `score` | or `timestamp` |
 | `--sort-dir` | `desc` | or `asc` |
+| `--capabilities` | — | report semantic-search availability instead of querying (takes no query) |
 
 ## Multi-workspace
 

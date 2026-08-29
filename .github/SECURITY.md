@@ -6,6 +6,27 @@ Only the latest minor release receives security fixes. Pin to a tagged release
 for reproducible deployments and verify artifacts using the provenance and
 sigstore signatures published with each release.
 
+## Credential storage
+
+`slack-cli` writes every credential it holds — user and bot access tokens,
+their refresh tokens, and the OAuth client secret when the confidential-client
+flow is used — to `auth.json` in the platform config directory, with mode
+`0600` and its parent directory tightened to `0700` on Unix. The file is
+rewritten atomically and guarded by an advisory lock so concurrent invocations
+cannot interleave writes. Permissions are re-tightened on every read, and a
+loosening is reported on stderr.
+
+Tokens are held in memory behind `secrecy::SecretString`, which zeroizes on
+drop and masks `Debug` output. They are never written to `config.toml`, never
+logged, and are masked in every command's output.
+
+Never commit `auth.json`, and treat it as equivalent to the tokens themselves.
+`slack-cli auth logout` revokes each token in the profile with Slack before
+removing it, unless `--keep-remote` is passed. Revocation is best effort: a
+token that can no longer be presented — expired, with its refresh token
+already spent — is reported and skipped rather than blocking the local
+removal.
+
 ## Reporting a vulnerability
 
 Report vulnerabilities **privately** through GitHub Security Advisories:
@@ -30,19 +51,23 @@ Every release publishes:
 
 - A `.tar.gz` or `.zip` archive per target.
 - A SHA-256 checksum (`*.sha256`).
-- A sigstore keyless signature (`*.sig`) and certificate (`*.pem`).
+- A sigstore keyless signature bundle (`*.bundle`).
 - A SLSA Level 3 provenance attestation (`slack-cli.intoto.jsonl`).
 
-Verify a downloaded archive with `cosign`:
+Verify a downloaded archive with `cosign`. The identity is pinned to the
+tag-triggered release workflow, so a signature produced by any other workflow
+or branch fails:
 
 ```sh
 cosign verify-blob \
-    --certificate slack-cli-v<version>-<target>.pem \
-    --signature   slack-cli-v<version>-<target>.sig \
-    --certificate-identity-regexp "^https://github.com/junyeong-ai/slack-cli/" \
-    --certificate-oidc-issuer     "https://token.actions.githubusercontent.com" \
+    --bundle slack-cli-v<version>-<target>.tar.gz.bundle \
+    --certificate-identity-regexp \
+        "^https://github.com/junyeong-ai/slack-cli/\.github/workflows/release\.yml@refs/tags/" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     slack-cli-v<version>-<target>.tar.gz
 ```
+
+`scripts/install.sh` runs exactly this check when `cosign` is on `PATH`.
 
 Verify the SLSA provenance with `slsa-verifier`:
 

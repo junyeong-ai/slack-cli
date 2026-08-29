@@ -56,5 +56,5 @@ body:
     id: config
     attributes:
       label: Relevant configuration
-      description: Sanitised `~/.config/slack-cli/config.toml` excerpt, if applicable. Redact tokens.
+      description: Sanitised `config.toml` excerpt, if applicable — `slack-cli config path` prints its location. It holds no tokens, but redact anything workspace-identifying.
       render: toml

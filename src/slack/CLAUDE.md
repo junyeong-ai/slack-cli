@@ -8,7 +8,7 @@ Verb-only, no noun redundancy. Match the Slack API verb when one exists.
 
 - `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`, `messages.permalink`
 - `users.list`, `channels.list`, `channels.members`
-- `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`
+- `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`, `search.info`
 - `auth.test`, `auth.revoke`
 
 Never `send_message`, `fetch_all_*`, `get_*`. When the Slack API verb is `getX` (e.g. `chat.getPermalink`), drop the `get` prefix so the method reads as a noun.
@@ -32,7 +32,7 @@ Metadata is a first-class field on `MessagePayload` and on `SlackMessage`. `conv
 
 ```
 SlackCore::api_call(method, params)
-  → get_api_config(method)           encoding, token policy, rate policy
+  → get_api_config(method)           encoding, token policy, rate policy, scopes
   → method-level rate limiter        governor + Jitter::up_to(100ms)
   → token via Authenticator::token_for
   → HTTP via reqwest                 Query or Json encoding
@@ -44,13 +44,21 @@ Effective rate = `min(config.connection.rate_limit_per_minute, per-method rate)`
 
 ### Token policy
 
-Declared per method in `api_config.rs::API_CONFIGS`. The enum lives in `auth::policy`:
+Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::policy`:
 
 - `BotPreferred` — bot first, user fallback
 - `UserPreferred` — user first, bot fallback
 - `UserRequired` — user only (e.g. `assistant.search.context`, where bot calls would need an `action_token` a CLI never receives)
 
 `Authenticator::token_for(policy)` is the single resolution point. Domain clients never touch tokens directly.
+
+`TokenPolicy::accepts(kind)` answers the same question statically: whether a token of that kind can ever satisfy the method. That is what keeps unusable scopes out of an installation — a `UserRequired` method contributes nothing to the bot scope set.
+
+### Scopes
+
+`MethodScopes` on each entry of `API_METHODS` records what a token must carry for *this CLI's* use of the method. Where the CLI always sends an optional argument that widens the requirement, the scope behind it belongs there too: `include_all_metadata` on conversation reads pulls in `metadata.message:read`, and the default `email` output field pulls in `users:read.email`.
+
+`slack::scopes::required(kind)` is the union over every method the kind can reach. It is what `auth login` requests and what `auth scopes` prints, so a scope can never drift from the methods that need it. `tests/documented_scopes.rs` holds both READMEs to the same source.
 
 ### Exception: `oauth.v2.access`
 
@@ -60,12 +68,13 @@ For ad-hoc validation with an explicit token (login flows before persistence), u
 
 ## Adding a new API method
 
-1. **`api_config.rs`**: insert into `API_CONFIGS` with `RequestEncoding`, `TokenPolicy`, requests/min, max page limit.
+1. **`api_config.rs`**: insert into `API_METHODS` with `RequestEncoding`, `TokenPolicy`, `RatePolicy` and `MethodScopes`. The scopes are declared here and nowhere else — the OAuth request set and the README both derive from them.
 2. **`slack/{module}.rs`**: add the method to the matching `Slack*Client`. Verb-only name matching the Slack API verb.
 3. **`cli.rs`**: add a `Command` variant. Mirror Slack API parameter names for fields; use clap `long = "..."` for terse user-facing flags.
 4. **`main.rs`**: add the match arm. Resolve channel name → ID via `resolve_channel`; convert ISO dates via `parse_unix_seconds` / `parse_timestamp`.
 5. **`format.rs`**: add a printer only if the response shape is genuinely new. Reuse existing printers where possible.
-6. If the method needs scopes not already in `auth/oauth/scopes.rs::REQUIRED_USER_SCOPES`, extend that list. Existing PKCE profiles need a fresh `auth login` to pick up new scopes.
+
+Adding scopes in step 1 fails `tests/documented_scopes.rs` until both READMEs are updated. Existing profiles need a fresh `auth login` to pick up new scopes.
 
 ## Pagination shapes
 
@@ -80,12 +89,13 @@ Each internally-looping method defines its own `PAGE_SIZE` constant matching the
 
 ## Real-time Search (`search.rs`)
 
-`assistant.search.context` is the only RTS method wired in. Invariants:
+Both RTS methods are wired in: `assistant.search.context` runs the query, `assistant.search.info` reports whether the workspace can rank semantically at all. Invariants:
 
 - `SearchOptions::MAX_LIMIT = 100` — user-facing total cap. Validate at the CLI layer (`parse_search_limit`) and clamp again at the library entry.
 - `PAGE_SIZE = 20` — API hard limit per request. Never expose to callers.
 - `TokenPolicy::UserRequired` — bot calls would need an `action_token` lifted from a message event payload that a CLI never receives.
 - `SearchOptions` field names mirror the API parameters exactly. CLI flag short forms (`--include-context`, `--include-archived`, `--no-semantic`) are CLI affordances mapped via clap `long = "..."`.
+- `search.info` needs only `search:read.public` and takes `UserPreferred`, not `UserRequired`: unlike `context` it carries no `action_token` requirement, so a bot token answers it too.
 
 ## Response shapes
 

@@ -5,7 +5,7 @@ BINARY_NAME="slack-cli"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 SKILL_NAME="slack-workspace"
 USER_SKILL_DIR="$HOME/.claude/skills/$SKILL_NAME"
-CONFIG_DIR="$HOME/.config/slack-cli"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/slack-cli"
 
 ASSUME_YES=false
 REMOVE_SKILL=""

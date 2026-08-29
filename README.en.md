@@ -1,7 +1,7 @@
 # Slack CLI
 
 [![CI](https://github.com/junyeong-ai/slack-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/junyeong-ai/slack-cli/actions/workflows/ci.yml?query=branch%3Amain)
-[![Rust](https://img.shields.io/badge/rust-1.97.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.98.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-junyeong--ai%2Fslack--cli-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/junyeong-ai/slack-cli)
 
 > **English** | **[한국어](README.md)**
@@ -104,7 +104,9 @@ slack-cli emoji --query "party"                   # Search emoji
 ### Auth, Cache & Config
 ```bash
 slack-cli auth login                              # Log into a workspace (default: PKCE)
+slack-cli auth login --method client-secret       # Also issue a bot token
 slack-cli auth login --method static --user-token xoxp-...  # Paste an existing token
+slack-cli auth scopes                             # Scopes to register on your app
 slack-cli auth profiles                           # List stored profiles
 slack-cli auth status --verify                    # Inspect active profile + auth.test
 slack-cli auth use work                           # Switch active profile
@@ -147,16 +149,22 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### Build from Source
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release   # rust-toolchain.toml selects the 1.97.0 toolchain
+cargo build --release   # rust-toolchain.toml selects the 1.98.0 toolchain
 ```
 
-**Requirements**: Rust 1.97.0+ (rustup)
+**Requirements**: Rust 1.98.0+ (rustup)
 
 ---
 
 ## Authentication
 
-`slack-cli` stores tokens in `~/.config/slack-cli/auth.json` with `0600` permissions, keyed by named workspace profiles. `config.toml` never contains tokens.
+`slack-cli` stores tokens in `auth.json` (mode `0600` inside a `0700` directory on Unix; on Windows it relies on the default `%APPDATA%` ACL), keyed by named workspace profiles. `config.toml` never contains tokens. The empty `auth.json.lock` beside it is the lock file that serialises concurrent invocations; it holds no content.
+
+The scopes are derived from the Slack methods the CLI calls, so you can always read the current list off the binary itself:
+
+```bash
+slack-cli auth scopes          # Scopes to register on your Slack app
+```
 
 ### Method 1 — PKCE OAuth (browser flow, recommended)
 
@@ -170,19 +178,55 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 
 1. Create an app at [api.slack.com/apps](https://api.slack.com/apps)
 2. **OAuth & Permissions** → add the User Token Scopes below
-3. **Redirect URLs** → register `http://127.0.0.1:53682/callback`
-4. **Manage Distribution** → enable PKCE and copy the client id
+3. **OAuth & Permissions** → Redirect URLs → register `http://127.0.0.1:53682/callback`
+4. **OAuth & Permissions** → enable PKCE, then copy the client id from **Basic Information**
+
+> Enabling PKCE marks the app a public client and cannot be undone without contacting Slack support. Slack routes a PKCE app's loopback redirect as a desktop redirect: it **cannot carry bot scopes**, and the tokens it issues **always rotate every 12 hours**. The CLI renews them from the refresh token, so this needs no re-login.
 
 **User Token Scopes** (full feature set):
+
+<!-- scopes:user -->
 ```
-channels:read  channels:history  groups:read  groups:history
-im:read  im:history  mpim:read  mpim:history
-users:read  users:read.email  chat:write  metadata.message:read
-reactions:read  reactions:write  pins:read  pins:write
-bookmarks:read  bookmarks:write  emoji:read  search:read
+bookmarks:read  bookmarks:write  channels:history  channels:read
+chat:write  emoji:read  groups:history  groups:read
+im:history  im:read  metadata.message:read  mpim:history
+mpim:read  pins:read  pins:write  reactions:read
+reactions:write  search:read.files  search:read.im  search:read.mpim
+search:read.private  search:read.public  search:read.users  users:read
+users:read.email
+```
+<!-- /scopes:user -->
+
+### Method 2 — client_secret OAuth (issues bot tokens too)
+
+```bash
+slack-cli auth login --method client-secret --client-id <client-id> --client-secret <client-secret>
+# Or via env
+SLACK_CLI_CLIENT_SECRET=<client-secret> slack-cli auth login --client-id <client-id>
 ```
 
-### Method 2 — Paste an existing token (Static)
+Slack routes the loopback redirect of an app that never enabled PKCE as a server redirect, so this flow can **issue a user token and a bot token in one pass**. Its tokens rotate only when the app has token rotation enabled — which the CLI also renews automatically.
+
+1. Create an app at [api.slack.com/apps](https://api.slack.com/apps) (**do not enable PKCE**)
+2. **OAuth & Permissions** → register the User Token Scopes and Bot Token Scopes
+3. **OAuth & Permissions** → Redirect URLs → register `http://127.0.0.1:53682/callback`
+4. **Basic Information** → App Credentials → copy the client id and client secret
+
+**Bot Token Scopes**:
+
+<!-- scopes:bot -->
+```
+bookmarks:read  bookmarks:write  channels:history  channels:read
+chat:write  emoji:read  groups:history  groups:read
+im:history  im:read  metadata.message:read  mpim:history
+mpim:read  pins:read  pins:write  reactions:read
+reactions:write  search:read.public  users:read  users:read.email
+```
+<!-- /scopes:bot -->
+
+The client secret is needed for every later renewal, so it is stored alongside the tokens in `auth.json`.
+
+### Method 3 — Paste an existing token (Static)
 
 When you already have an `xoxp-` / `xoxb-` token:
 
@@ -192,7 +236,15 @@ slack-cli auth login --method static --user-token xoxp-your-token
 slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
 
-The token is validated via `auth.test` before the profile is persisted.
+The token is validated via `auth.test` before the profile is persisted. Pasted tokens never expire and are never renewed.
+
+### Token rotation
+
+When Slack issues an expiry alongside a refresh token — always for PKCE, and for the client_secret flow whenever the app has token rotation enabled — the CLI renews the pair through `oauth.v2.access` starting two hours before expiry. Renewal runs under a cross-process lock on `auth.json`, so concurrent invocations can never spend a refresh token Slack has already revoked.
+
+```bash
+slack-cli auth status          # Per-token expiry and whether it can be renewed
+```
 
 ### Managing profiles
 
@@ -211,7 +263,7 @@ slack-cli auth logout --all              # Remove every profile
 
 ## Config file
 
-`~/.config/slack-cli/config.toml` (user preferences, no tokens):
+`config.toml` (user preferences, no tokens). The location follows the platform convention — `$XDG_CONFIG_HOME/slack-cli` or `~/.config/slack-cli` on Linux/macOS, `%APPDATA%\slack-cli` on Windows. Run `slack-cli config path` for the resolved path.
 
 ```toml
 [cache]
@@ -237,6 +289,12 @@ api_base_url = "https://slack.com/api"
 rate_limit_per_minute = 20
 app_distribution = "commercial_external"
 timeout_seconds = 30
+
+[retry]
+max_attempts = 3               # 429 retries (Retry-After takes precedence)
+initial_delay_ms = 1000        # first backoff when no Retry-After header
+max_delay_ms = 60000
+exponential_base = 2.0
 ```
 
 Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
@@ -248,7 +306,11 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `SLACK_USER_TOKEN` | Bypass stored profiles and use this token directly (CI / headless) |
 | `SLACK_BOT_TOKEN` | Same, bot token |
 | `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
-| `SLACK_CLI_CLIENT_ID` | PKCE login client id (same as `--client-id`) |
+| `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`) |
+| `SLACK_CLI_CLIENT_SECRET` | client_secret for client-secret login (same as `--client-secret`) |
+| `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
+
+A `.env` file in the working directory supplies any of the above.
 
 ---
 
@@ -256,11 +318,12 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 
 | Command | Description |
 |---------|-------------|
-| `auth login` | Authenticate to a workspace (`--method pkce\|static`) |
+| `auth login` | Authenticate to a workspace (`--method pkce\|client-secret\|static`) |
 | `auth logout [--all]` | Remove profile (`--keep-remote` skips `auth.revoke`) |
 | `auth status [--verify]` | Profile status with optional token verification |
 | `auth profiles` | List stored profiles |
 | `auth use <name>` | Switch active profile |
+| `auth scopes` | Print the OAuth scopes to register on your Slack app |
 | `users <query>` | Search users |
 | `users --id <ids>` | Lookup by IDs (comma-separated) |
 | `channels <query>` | Search channels |
@@ -273,6 +336,7 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `thread <ch> <ts>` | List thread |
 | `members <ch>` | List members |
 | `search <query>` | Search with the Real-time Search API |
+| `search --capabilities` | Report whether this workspace can search semantically |
 | `react <ch> <ts> <emoji>` | Add reaction |
 | `unreact <ch> <ts> <emoji>` | Remove reaction |
 | `reactions <ch> <ts>` | List reactions |
@@ -345,7 +409,10 @@ Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` enve
 - `--include-context` — Include surrounding context messages
 - `--include-bots` — Include bot-authored messages
 - `--include-archived` — Include archived channels
+- `--include-deleted-users` — Include deleted users in results
+- `--modifiers <expr>` — Search modifiers, e.g. `"has:pin from:@alice"`
 - `--no-semantic` — Force keyword-only matching (skip the API's automatic semantic mode)
+- `--capabilities` — Report the workspace's semantic-search availability instead of running a query
 - `--sort <score|timestamp>` — Sort field
 - `--sort-dir <asc|desc>` — Sort direction
 
@@ -355,7 +422,7 @@ Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` enve
 
 ### Reset Cache
 ```bash
-rm -rf ~/.config/slack-cli/cache && slack-cli cache refresh
+rm -rf "$(dirname "$(slack-cli config path)")/cache" && slack-cli cache refresh
 ```
 
 ### Permission Errors

@@ -1,7 +1,7 @@
 # Slack CLI
 
 [![CI](https://github.com/junyeong-ai/slack-cli/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/junyeong-ai/slack-cli/actions/workflows/ci.yml?query=branch%3Amain)
-[![Rust](https://img.shields.io/badge/rust-1.97.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.98.0%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![DeepWiki](https://img.shields.io/badge/DeepWiki-junyeong--ai%2Fslack--cli-blue.svg?logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==)](https://deepwiki.com/junyeong-ai/slack-cli)
 
 > **[English](README.en.md)** | **한국어**
@@ -104,7 +104,9 @@ slack-cli emoji --query "party"                 # 이모지 검색
 ### 인증 & 캐시 & 설정
 ```bash
 slack-cli auth login                            # 새 워크스페이스 로그인 (기본: PKCE)
+slack-cli auth login --method client-secret     # bot 토큰까지 발급
 slack-cli auth login --method static --user-token xoxp-...  # 토큰 붙여넣기
+slack-cli auth scopes                           # 앱에 등록할 scope 확인
 slack-cli auth profiles                         # 저장된 프로필 목록
 slack-cli auth status --verify                  # 활성 프로필 검증
 slack-cli auth use work                         # 활성 프로필 전환
@@ -147,16 +149,22 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### 소스 빌드
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release   # rust-toolchain.toml이 1.97.0 툴체인을 자동 선택
+cargo build --release   # rust-toolchain.toml이 1.98.0 툴체인을 자동 선택
 ```
 
-**요구사항**: Rust 1.97.0+ (rustup)
+**요구사항**: Rust 1.98.0+ (rustup)
 
 ---
 
 ## 인증
 
-`slack-cli`는 토큰을 `~/.config/slack-cli/auth.json`에 0600 권한으로 저장하며, 워크스페이스마다 명명된 프로필로 관리합니다. `config.toml`에는 토큰이 들어가지 않습니다.
+`slack-cli`는 토큰을 `auth.json`에 저장하며(Unix에서는 0600, 상위 디렉터리 0700 — Windows에서는 `%APPDATA%`의 기본 ACL에 의존), 워크스페이스마다 명명된 프로필로 관리합니다. `config.toml`에는 토큰이 들어가지 않습니다. 같은 디렉터리의 빈 `auth.json.lock`은 동시 실행을 직렬화하는 잠금 파일이며 내용이 없습니다.
+
+필요한 scope는 CLI가 호출하는 Slack 메서드에서 그대로 파생되므로, 언제든 아래로 확인할 수 있습니다.
+
+```bash
+slack-cli auth scopes          # 앱에 등록할 scope 목록
+```
 
 ### 방법 1 — PKCE OAuth (브라우저 흐름, 권장)
 
@@ -170,19 +178,55 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 
 1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성
 2. **OAuth & Permissions** → User Token Scopes에 아래 항목 추가
-3. **Redirect URLs**에 `http://127.0.0.1:53682/callback` 등록
-4. **Manage Distribution**에서 PKCE 옵션 활성화 후 client_id 복사
+3. **OAuth & Permissions** → Redirect URLs에 `http://127.0.0.1:53682/callback` 등록
+4. **OAuth & Permissions** → PKCE 활성화 후 **Basic Information**에서 client_id 복사
+
+> PKCE 활성화는 앱을 public client로 표시하며 되돌릴 수 없습니다(해제하려면 Slack 지원 문의). PKCE 앱의 loopback 리다이렉트는 데스크톱 리다이렉트로 처리되어 **bot scope를 요청할 수 없고**, 발급 토큰은 **항상 12시간마다 회전**합니다. CLI가 refresh token으로 자동 갱신하므로 재로그인은 필요 없습니다.
 
 **User Token Scopes** (전체 기능 사용 시):
+
+<!-- scopes:user -->
 ```
-channels:read  channels:history  groups:read  groups:history
-im:read  im:history  mpim:read  mpim:history
-users:read  users:read.email  chat:write  metadata.message:read
-reactions:read  reactions:write  pins:read  pins:write
-bookmarks:read  bookmarks:write  emoji:read  search:read
+bookmarks:read  bookmarks:write  channels:history  channels:read
+chat:write  emoji:read  groups:history  groups:read
+im:history  im:read  metadata.message:read  mpim:history
+mpim:read  pins:read  pins:write  reactions:read
+reactions:write  search:read.files  search:read.im  search:read.mpim
+search:read.private  search:read.public  search:read.users  users:read
+users:read.email
+```
+<!-- /scopes:user -->
+
+### 방법 2 — client_secret OAuth (봇 토큰까지 발급)
+
+```bash
+slack-cli auth login --method client-secret --client-id <client-id> --client-secret <client-secret>
+# 또는 환경변수
+SLACK_CLI_CLIENT_SECRET=<client-secret> slack-cli auth login --client-id <client-id>
 ```
 
-### 방법 2 — 토큰 직접 붙여넣기 (Static)
+PKCE를 켜지 않은 앱의 loopback 리다이렉트는 서버 리다이렉트로 처리되므로, **user token과 bot token을 한 번에 발급**받을 수 있습니다. 앱에서 token rotation을 켠 경우에만 토큰이 회전하며, 이 역시 CLI가 자동 갱신합니다.
+
+1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성 (**PKCE는 켜지 마세요**)
+2. **OAuth & Permissions** → User Token Scopes / Bot Token Scopes 등록
+3. **OAuth & Permissions** → Redirect URLs에 `http://127.0.0.1:53682/callback` 등록
+4. **Basic Information** → App Credentials에서 client_id / client_secret 복사
+
+**Bot Token Scopes**:
+
+<!-- scopes:bot -->
+```
+bookmarks:read  bookmarks:write  channels:history  channels:read
+chat:write  emoji:read  groups:history  groups:read
+im:history  im:read  metadata.message:read  mpim:history
+mpim:read  pins:read  pins:write  reactions:read
+reactions:write  search:read.public  users:read  users:read.email
+```
+<!-- /scopes:bot -->
+
+client_secret은 토큰 갱신에 계속 필요하므로 토큰과 함께 `auth.json`에 저장됩니다.
+
+### 방법 3 — 토큰 직접 붙여넣기 (Static)
 
 기존 발급된 `xoxp-` / `xoxb-` 토큰이 있을 때:
 
@@ -192,7 +236,15 @@ slack-cli auth login --method static --user-token xoxp-your-token
 slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
 
-`auth.test`로 토큰을 검증한 뒤 프로필이 저장됩니다.
+`auth.test`로 토큰을 검증한 뒤 프로필이 저장됩니다. 붙여넣은 토큰은 만료·갱신 대상이 아닙니다.
+
+### 토큰 회전
+
+Slack이 만료 시각과 refresh token을 함께 발급하면(PKCE는 항상, client_secret 방식은 앱에서 token rotation을 켠 경우) CLI가 만료 2시간 전부터 `oauth.v2.access`로 자동 갱신합니다. 갱신은 `auth.json`에 대한 프로세스 간 잠금 아래에서 수행되므로, 동시에 실행된 여러 호출이 이미 소진된 refresh token을 다시 쓰는 일이 없습니다.
+
+```bash
+slack-cli auth status          # 토큰별 만료 시각과 갱신 가능 여부
+```
 
 ### 프로필 관리
 
@@ -211,7 +263,7 @@ slack-cli auth logout --all              # 모든 프로필 제거
 
 ## 설정 파일
 
-`~/.config/slack-cli/config.toml` (사용자 환경설정, 토큰 없음):
+`config.toml` (사용자 환경설정, 토큰 없음). 경로는 플랫폼 규약을 따릅니다 — Linux/macOS는 `$XDG_CONFIG_HOME/slack-cli` 또는 `~/.config/slack-cli`, Windows는 `%APPDATA%\slack-cli`. 실제 경로는 `slack-cli config path`로 확인하세요.
 
 ```toml
 [cache]
@@ -233,6 +285,12 @@ api_base_url = "https://slack.com/api"
 rate_limit_per_minute = 20
 app_distribution = "commercial_external"
 timeout_seconds = 30
+
+[retry]
+max_attempts = 3               # 429 재시도 횟수 (Retry-After 우선)
+initial_delay_ms = 1000        # Retry-After 헤더가 없을 때의 최초 백오프
+max_delay_ms = 60000
+exponential_base = 2.0
 ```
 
 알 수 없는 키는 무시되지 않고 오류로 처리됩니다 — 이전 버전의 잔여 키(`user_token`, `bot_token`, `max_idle_per_host`, `pool_idle_timeout_seconds`)가 있으면 명시적 에러로 표면화되니 제거하세요.
@@ -246,7 +304,11 @@ timeout_seconds = 30
 | `SLACK_USER_TOKEN` | 저장된 프로필을 무시하고 이 토큰을 직접 사용 (CI/headless) |
 | `SLACK_BOT_TOKEN` | 위와 동일, bot 토큰 |
 | `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
-| `SLACK_CLI_CLIENT_ID` | PKCE 로그인 시 client_id (= `--client-id`) |
+| `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`) |
+| `SLACK_CLI_CLIENT_SECRET` | client-secret 로그인 시 client_secret (= `--client-secret`) |
+| `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
+
+작업 디렉터리에 `.env` 파일이 있으면 위 변수들을 거기서 읽습니다.
 
 ---
 
@@ -254,11 +316,12 @@ timeout_seconds = 30
 
 | 명령어 | 설명 |
 |--------|------|
-| `auth login` | 워크스페이스 인증 (`--method pkce\|static`) |
+| `auth login` | 워크스페이스 인증 (`--method pkce\|client-secret\|static`) |
 | `auth logout [--all]` | 프로필 제거 (`--keep-remote`로 `auth.revoke` 생략) |
 | `auth status [--verify]` | 프로필 상태 + 선택적 토큰 검증 |
 | `auth profiles` | 저장된 프로필 목록 |
 | `auth use <name>` | 활성 프로필 전환 |
+| `auth scopes` | 앱에 등록할 OAuth scope 출력 |
 | `users <query>` | 사용자 검색 |
 | `users --id <ids>` | ID로 조회 (쉼표 구분) |
 | `channels <query>` | 채널 검색 |
@@ -271,6 +334,7 @@ timeout_seconds = 30
 | `thread <ch> <ts>` | 스레드 조회 |
 | `members <ch>` | 멤버 목록 |
 | `search <query>` | Real-time Search API 검색 |
+| `search --capabilities` | 워크스페이스의 시맨틱 검색 가용 여부 |
 | `react <ch> <ts> <emoji>` | 리액션 추가 |
 | `unreact <ch> <ts> <emoji>` | 리액션 제거 |
 | `reactions <ch> <ts>` | 리액션 조회 |
@@ -342,8 +406,11 @@ timeout_seconds = 30
 - `--content-types <types>` — 검색 대상 (기본: `messages`)
 - `--include-context` — 검색 결과 주변 맥락 포함
 - `--include-bots` — 봇 메시지 포함
+- `--include-deleted-users` — 삭제된 사용자 포함
 - `--include-archived` — 아카이브 채널 포함
+- `--modifiers <expr>` — 검색 수식어 (예: `"has:pin from:@alice"`)
 - `--no-semantic` — 키워드 일치만 사용 (시맨틱 검색 비활성)
+- `--capabilities` — 질의 대신 워크스페이스의 시맨틱 검색 가용 여부 출력
 - `--sort <score|timestamp>` — 정렬 기준
 - `--sort-dir <asc|desc>` — 정렬 방향
 
@@ -353,7 +420,7 @@ timeout_seconds = 30
 
 ### 캐시 초기화
 ```bash
-rm -rf ~/.config/slack-cli/cache && slack-cli cache refresh
+rm -rf "$(dirname "$(slack-cli config path)")/cache" && slack-cli cache refresh
 ```
 
 ### 권한 오류
