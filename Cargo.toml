@@ -2,7 +2,7 @@
 name = "slack-cli"
 version = "0.7.1"
 edition = "2024"
-rust-version = "1.97.0"
+rust-version = "1.98.0"
 authors = ["Slack CLI Contributors"]
 description = "Fast Slack CLI with FTS5 cache and local search"
 license = "MIT"
@@ -49,8 +49,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 secrecy = { version = "0.10", features = ["serde"] }
 sha2 = "0.11"
-base64 = "0.22"
+base64 = "0.23"
 rand = "0.10"
+rpassword = "7"
+etcetera = "0.11"
 open = "5"
 tempfile = "3"
 url = "2"
