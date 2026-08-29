@@ -57,13 +57,24 @@ const fn rate(requests_per_minute: u32, max_page_limit: Option<usize>) -> RatePo
 }
 
 const UNSCOPED: MethodScopes = MethodScopes::shared(&[]);
-const HISTORY: MethodScopes = MethodScopes::shared(&[
-    "channels:history",
-    "groups:history",
-    "im:history",
-    "mpim:history",
-    "metadata.message:read",
-]);
+/// Slack supports `metadata.message:read` on bot tokens only, so requesting it
+/// as a user scope makes the whole authorization fail with "Invalid permissions
+/// requested" — the grant is refused as a set, not trimmed to what is valid.
+const HISTORY: MethodScopes = MethodScopes {
+    user: &[
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "mpim:history",
+    ],
+    bot: &[
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "mpim:history",
+        "metadata.message:read",
+    ],
+};
 const CONVERSATIONS: MethodScopes =
     MethodScopes::shared(&["channels:read", "groups:read", "im:read", "mpim:read"]);
 const DIRECTORY: MethodScopes = MethodScopes::shared(&["users:read", "users:read.email"]);

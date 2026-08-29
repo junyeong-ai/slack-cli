@@ -61,8 +61,13 @@ mod tests {
         }
     }
 
+    /// Slack grants a scope set as a whole, so one scope the token kind cannot
+    /// hold fails the entire authorization with "Invalid permissions
+    /// requested". `metadata.message:read` is a bot-only scope, and asking for
+    /// it as a user scope made every browser login fail.
     #[test]
-    fn conversation_reads_carry_the_metadata_scope_the_cli_always_requests() {
-        assert!(required(TokenKind::User).contains(&"metadata.message:read"));
+    fn the_metadata_scope_is_requested_for_bots_only() {
+        assert!(required(TokenKind::Bot).contains(&"metadata.message:read"));
+        assert!(!required(TokenKind::User).contains(&"metadata.message:read"));
     }
 }

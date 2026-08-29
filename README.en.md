@@ -189,11 +189,10 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
 chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  metadata.message:read  mpim:history
-mpim:read  pins:read  pins:write  reactions:read
-reactions:write  search:read.files  search:read.im  search:read.mpim
-search:read.private  search:read.public  search:read.users  users:read
-users:read.email
+im:history  im:read  mpim:history  mpim:read
+pins:read  pins:write  reactions:read  reactions:write
+search:read.files  search:read.im  search:read.mpim  search:read.private
+search:read.public  search:read.users  users:read  users:read.email
 ```
 <!-- /scopes:user -->
 
