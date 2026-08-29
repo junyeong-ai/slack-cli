@@ -104,7 +104,6 @@ slack-cli emoji --query "party"                 # 이모지 검색
 ### 인증 & 캐시 & 설정
 ```bash
 slack-cli auth login                            # 새 워크스페이스 로그인 (기본: PKCE)
-slack-cli auth login --method client-secret     # bot 토큰까지 발급
 slack-cli auth login --method static --user-token xoxp-...  # 토큰 붙여넣기
 slack-cli auth scopes                           # 앱에 등록할 scope 확인
 slack-cli auth profiles                         # 저장된 프로필 목록
@@ -196,36 +195,7 @@ search:read.public  search:read.users  users:read  users:read.email
 ```
 <!-- /scopes:user -->
 
-### 방법 2 — client_secret OAuth (봇 토큰까지 발급)
-
-```bash
-slack-cli auth login --method client-secret --client-id <client-id> --client-secret <client-secret>
-# 또는 환경변수
-SLACK_CLI_CLIENT_SECRET=<client-secret> slack-cli auth login --client-id <client-id>
-```
-
-PKCE를 켜지 않은 앱의 loopback 리다이렉트는 서버 리다이렉트로 처리되므로, **user token과 bot token을 한 번에 발급**받을 수 있습니다. 앱에서 token rotation을 켠 경우에만 토큰이 회전하며, 이 역시 CLI가 자동 갱신합니다.
-
-1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성 (**PKCE는 켜지 마세요**)
-2. **OAuth & Permissions** → User Token Scopes / Bot Token Scopes 등록
-3. **OAuth & Permissions** → Redirect URLs에 `http://127.0.0.1:53682/callback` 등록
-4. **Basic Information** → App Credentials에서 client_id / client_secret 복사
-
-**Bot Token Scopes**:
-
-<!-- scopes:bot -->
-```
-bookmarks:read  bookmarks:write  channels:history  channels:read
-chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  metadata.message:read  mpim:history
-mpim:read  pins:read  pins:write  reactions:read
-reactions:write  search:read.public  users:read  users:read.email
-```
-<!-- /scopes:bot -->
-
-client_secret은 토큰 갱신에 계속 필요하므로 토큰과 함께 `auth.json`에 저장됩니다.
-
-### 방법 3 — 토큰 직접 붙여넣기 (Static)
+### 방법 2 — 토큰 직접 붙여넣기 (Static)
 
 기존 발급된 `xoxp-` / `xoxb-` 토큰이 있을 때:
 
@@ -237,9 +207,21 @@ slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 
 `auth.test`로 토큰을 검증한 뒤 프로필이 저장됩니다. 붙여넣은 토큰은 만료·갱신 대상이 아닙니다.
 
+**Bot Token Scopes** (`--bot-token`으로 봇 토큰을 함께 등록할 때):
+
+<!-- scopes:bot -->
+```
+bookmarks:read  bookmarks:write  channels:history  channels:read
+chat:write  emoji:read  groups:history  groups:read
+im:history  im:read  metadata.message:read  mpim:history
+mpim:read  pins:read  pins:write  reactions:read
+reactions:write  search:read.public  users:read  users:read.email
+```
+<!-- /scopes:bot -->
+
 ### 토큰 회전
 
-Slack이 만료 시각과 refresh token을 함께 발급하면(PKCE는 항상, client_secret 방식은 앱에서 token rotation을 켠 경우) CLI가 만료 2시간 전부터 `oauth.v2.access`로 자동 갱신합니다. 갱신은 `auth.json`에 대한 프로세스 간 잠금 아래에서 수행되므로, 동시에 실행된 여러 호출이 이미 소진된 refresh token을 다시 쓰는 일이 없습니다.
+Slack은 PKCE 설치에 항상 만료 시각과 refresh token을 함께 발급합니다. CLI가 만료 2시간 전부터 `oauth.v2.access`로 자동 갱신합니다. 갱신은 `auth.json`에 대한 프로세스 간 잠금 아래에서 수행되므로, 동시에 실행된 여러 호출이 이미 소진된 refresh token을 다시 쓰는 일이 없습니다.
 
 ```bash
 slack-cli auth status          # 토큰별 만료 시각과 갱신 가능 여부
@@ -286,7 +268,6 @@ slack-cli self update --version 0.9.0   # 특정 버전으로
 ```toml
 [auth]
 client_id = "1234.5678"        # 브라우저 로그인이 인가받을 앱 (= --client-id)
-client_secret = "..."          # 선택. 있으면 client-secret 방식, 없으면 pkce
 
 [cache]
 ttl_users_hours = 168          # 1주일
@@ -319,7 +300,7 @@ exponential_base = 2.0
 
 `app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
 
-`[auth]`의 우선순위는 **명령행 플래그 > 환경변수 > `config.toml`** 입니다. `client_secret`을 환경이 아니라 여기에 두는 편이 낫습니다 — 환경에 실린 값은 CLI가 띄우는 모든 자식 프로세스가 상속하고, `.env`는 명령을 실행한 작업 디렉터리(대개 git 저장소) 안에 놓입니다. `config.toml`은 `0700` 디렉터리 안의 `0600` 파일이고 어떤 저장소에도 속하지 않습니다. `client_secret`은 읽기만 하고 다시 쓰지 않으므로 `config show --json`에도 나오지 않습니다.
+`[auth]`의 우선순위는 **명령행 플래그 > 환경변수 > `config.toml`** 입니다. `client_id`를 여기 두면 `auth login`에 매번 플래그나 환경변수를 붙일 필요가 없습니다.
 
 ### 환경변수
 
@@ -329,7 +310,6 @@ exponential_base = 2.0
 | `SLACK_BOT_TOKEN` | 위와 동일, bot 토큰 |
 | `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`, `config.toml [auth]`보다 우선) |
-| `SLACK_CLI_CLIENT_SECRET` | client-secret 로그인 시 client_secret (= `--client-secret`, `config.toml [auth]`보다 우선) |
 | `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
 
 작업 디렉터리에 `.env` 파일이 있으면 위 변수들을 거기서 읽습니다.
@@ -340,7 +320,7 @@ exponential_base = 2.0
 
 | 명령어 | 설명 |
 |--------|------|
-| `auth login` | 워크스페이스 인증 (`--method pkce\|client-secret\|static`) |
+| `auth login` | 워크스페이스 인증 (`--method pkce\|static`) |
 | `auth logout [--all]` | 프로필 제거 (`--keep-remote`로 `auth.revoke` 생략) |
 | `auth status [--verify]` | 프로필 상태 + 선택적 토큰 검증 |
 | `auth profiles` | 저장된 프로필 목록 |

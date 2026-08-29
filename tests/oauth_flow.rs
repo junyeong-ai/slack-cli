@@ -1,7 +1,5 @@
-//! Integration tests for Slack's authorization-code flow against a mock
-//! Slack API, covering both client kinds the CLI supports: a public client
-//! proving possession with PKCE, and a confidential client authenticating
-//! with HTTP Basic.
+//! Integration tests for Slack's authorization-code flow against a mock Slack
+//! API: the loopback callback, PKCE possession proof, and the token exchange.
 
 use std::time::Duration;
 
@@ -14,11 +12,10 @@ use slack_cli::auth::oauth::flow::Authorization;
 use slack_cli::auth::oauth::pkce::PkceVerifier;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TEST_CLIENT_ID: &str = "test-client";
-const TEST_CLIENT_SECRET: &str = "test-secret";
 const FIXED_VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
 fn free_loopback_port() -> u16 {
@@ -69,16 +66,13 @@ async fn authorize(
     let port = free_loopback_port();
     let receiver = LoopbackReceiver::bind(port).await.expect("bind callback");
     let exchange = exchange(server);
-    let verifier = client
-        .is_public()
-        .then(|| PkceVerifier::from_raw(FIXED_VERIFIER));
+    let verifier = PkceVerifier::from_raw(FIXED_VERIFIER);
     let expected_state = state.to_string();
 
     let driver = tokio::spawn(async move {
         Authorization {
             client: &client,
             user_scopes: &scopes(&["users:read", "chat:write"]),
-            bot_scopes: &scopes(&["chat:write"]),
             no_browser: true,
             callback_timeout: Duration::from_secs(5),
         }
@@ -114,7 +108,7 @@ async fn public_clients_exchange_a_code_for_a_rotating_user_token() {
 
     let response = authorize(
         &server,
-        OAuthClient::public(TEST_CLIENT_ID),
+        OAuthClient::new(TEST_CLIENT_ID),
         "test-state-12345",
         "code=stub-code&state=test-state-12345".to_string(),
     )
@@ -138,52 +132,6 @@ async fn public_clients_exchange_a_code_for_a_rotating_user_token() {
 }
 
 #[tokio::test]
-async fn confidential_clients_authenticate_with_basic_auth_and_receive_both_tokens() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/oauth.v2.access"))
-        .and(header(
-            "authorization",
-            "Basic dGVzdC1jbGllbnQ6dGVzdC1zZWNyZXQ=",
-        ))
-        .and(body_string_contains("code=stub-code"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "ok": true,
-            "access_token": "xoxb-issued",
-            "scope": "chat:write",
-            "token_type": "bot",
-            "team": {"id": "T01", "name": "Acme"},
-            "authed_user": {
-                "id": "U01",
-                "access_token": "xoxp-issued",
-                "scope": "users:read"
-            }
-        })))
-        .mount(&server)
-        .await;
-
-    let client = OAuthClient::confidential(
-        TEST_CLIENT_ID,
-        secrecy::SecretString::new(TEST_CLIENT_SECRET.to_string().into_boxed_str()),
-    );
-    let response = authorize(
-        &server,
-        client,
-        "state-2",
-        "code=stub-code&state=state-2".to_string(),
-    )
-    .await
-    .expect("authorization succeeds");
-
-    let user = response.user.expect("user token present");
-    let bot = response.bot.expect("bot token present");
-    assert_eq!(user.token.expose_secret(), "xoxp-issued");
-    assert_eq!(user.scopes, ["users:read"]);
-    assert_eq!(bot.token.expose_secret(), "xoxb-issued");
-    assert_eq!(bot.scopes, ["chat:write"]);
-}
-
-#[tokio::test]
 async fn a_public_client_never_sends_its_credentials_in_the_request_body() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -199,7 +147,7 @@ async fn a_public_client_never_sends_its_credentials_in_the_request_body() {
 
     let response = authorize(
         &server,
-        OAuthClient::public(TEST_CLIENT_ID),
+        OAuthClient::new(TEST_CLIENT_ID),
         "state-3",
         "code=stub-code&state=state-3".to_string(),
     )
@@ -221,7 +169,7 @@ async fn a_mismatched_state_aborts_before_the_token_exchange() {
 
     let err = authorize(
         &server,
-        OAuthClient::public(TEST_CLIENT_ID),
+        OAuthClient::new(TEST_CLIENT_ID),
         "expected-state",
         "code=stub-code&state=wrong-state".to_string(),
     )
@@ -248,7 +196,7 @@ async fn a_rejected_code_surfaces_the_slack_error() {
 
     let err = authorize(
         &server,
-        OAuthClient::public(TEST_CLIENT_ID),
+        OAuthClient::new(TEST_CLIENT_ID),
         "valid-state",
         "code=bad-code&state=valid-state".to_string(),
     )
@@ -273,7 +221,7 @@ async fn a_denied_authorization_surfaces_the_callback_error() {
 
     let err = authorize(
         &server,
-        OAuthClient::public(TEST_CLIENT_ID),
+        OAuthClient::new(TEST_CLIENT_ID),
         "state-4",
         "error=access_denied".to_string(),
     )

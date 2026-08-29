@@ -401,17 +401,9 @@ pub enum AuthAction {
             long,
             env = "SLACK_CLI_CLIENT_ID",
             hide_env_values = true,
-            help = "OAuth client ID for the browser methods"
+            help = "OAuth client ID for the browser login"
         )]
         client_id: Option<String>,
-
-        #[arg(
-            long,
-            env = "SLACK_CLI_CLIENT_SECRET",
-            hide_env_values = true,
-            help = "OAuth client secret for the client-secret method"
-        )]
-        client_secret: Option<String>,
 
         #[arg(long, help = "Loopback callback port for OAuth")]
         port: Option<u16>,
@@ -462,7 +454,6 @@ pub enum AuthAction {
 pub enum AuthMethodArg {
     Static,
     Pkce,
-    ClientSecret,
 }
 
 impl From<AuthMethodArg> for AuthMethod {
@@ -470,7 +461,6 @@ impl From<AuthMethodArg> for AuthMethod {
         match value {
             AuthMethodArg::Static => AuthMethod::Static,
             AuthMethodArg::Pkce => AuthMethod::Pkce,
-            AuthMethodArg::ClientSecret => AuthMethod::ClientSecret,
         }
     }
 }

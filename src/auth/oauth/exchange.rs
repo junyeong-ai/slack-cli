@@ -15,7 +15,7 @@ pub enum Grant<'a> {
     AuthorizationCode {
         code: &'a str,
         redirect_uri: &'a str,
-        code_verifier: Option<&'a str>,
+        code_verifier: &'a str,
     },
     RefreshToken {
         refresh_token: &'a Secret,
@@ -77,14 +77,7 @@ impl TokenExchange {
         grant: Grant<'_>,
     ) -> Result<TokenResponse, OAuthError> {
         let mut form: Vec<(&str, &str)> = Vec::with_capacity(5);
-
-        // A confidential client authenticates with HTTP Basic, which Slack
-        // prefers over repeating the credentials in the body. A public client
-        // has no secret, so it identifies itself with `client_id` alone.
-        let basic_auth = client.basic_auth();
-        if basic_auth.is_none() {
-            form.push(("client_id", &client.id));
-        }
+        form.push(("client_id", &client.id));
 
         match &grant {
             Grant::AuthorizationCode {
@@ -94,9 +87,7 @@ impl TokenExchange {
             } => {
                 form.push(("code", code));
                 form.push(("redirect_uri", redirect_uri));
-                if let Some(verifier) = code_verifier {
-                    form.push(("code_verifier", verifier));
-                }
+                form.push(("code_verifier", code_verifier));
             }
             Grant::RefreshToken { refresh_token } => {
                 form.push(("grant_type", "refresh_token"));
@@ -111,14 +102,11 @@ impl TokenExchange {
             "{}/oauth.v2.access",
             self.api_base_url.trim_end_matches('/')
         );
-        let mut request = self
+        let request = self
             .http
             .post(&endpoint)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(body);
-        if let Some(credentials) = basic_auth {
-            request = request.header("Authorization", credentials);
-        }
 
         let raw: RawResponse = request.send().await?.json().await?;
         raw.into_token_response()

@@ -104,7 +104,6 @@ slack-cli emoji --query "party"                   # Search emoji
 ### Auth, Cache & Config
 ```bash
 slack-cli auth login                              # Log into a workspace (default: PKCE)
-slack-cli auth login --method client-secret       # Also issue a bot token
 slack-cli auth login --method static --user-token xoxp-...  # Paste an existing token
 slack-cli auth scopes                             # Scopes to register on your app
 slack-cli auth profiles                           # List stored profiles
@@ -196,36 +195,7 @@ search:read.public  search:read.users  users:read  users:read.email
 ```
 <!-- /scopes:user -->
 
-### Method 2 — client_secret OAuth (issues bot tokens too)
-
-```bash
-slack-cli auth login --method client-secret --client-id <client-id> --client-secret <client-secret>
-# Or via env
-SLACK_CLI_CLIENT_SECRET=<client-secret> slack-cli auth login --client-id <client-id>
-```
-
-Slack routes the loopback redirect of an app that never enabled PKCE as a server redirect, so this flow can **issue a user token and a bot token in one pass**. Its tokens rotate only when the app has token rotation enabled — which the CLI also renews automatically.
-
-1. Create an app at [api.slack.com/apps](https://api.slack.com/apps) (**do not enable PKCE**)
-2. **OAuth & Permissions** → register the User Token Scopes and Bot Token Scopes
-3. **OAuth & Permissions** → Redirect URLs → register `http://127.0.0.1:53682/callback`
-4. **Basic Information** → App Credentials → copy the client id and client secret
-
-**Bot Token Scopes**:
-
-<!-- scopes:bot -->
-```
-bookmarks:read  bookmarks:write  channels:history  channels:read
-chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  metadata.message:read  mpim:history
-mpim:read  pins:read  pins:write  reactions:read
-reactions:write  search:read.public  users:read  users:read.email
-```
-<!-- /scopes:bot -->
-
-The client secret is needed for every later renewal, so it is stored alongside the tokens in `auth.json`.
-
-### Method 3 — Paste an existing token (Static)
+### Method 2 — Paste an existing token (static)
 
 When you already have an `xoxp-` / `xoxb-` token:
 
@@ -237,9 +207,21 @@ slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 
 The token is validated via `auth.test` before the profile is persisted. Pasted tokens never expire and are never renewed.
 
+**Bot Token Scopes** (when registering a bot token with `--bot-token`):
+
+<!-- scopes:bot -->
+```
+bookmarks:read  bookmarks:write  channels:history  channels:read
+chat:write  emoji:read  groups:history  groups:read
+im:history  im:read  metadata.message:read  mpim:history
+mpim:read  pins:read  pins:write  reactions:read
+reactions:write  search:read.public  users:read  users:read.email
+```
+<!-- /scopes:bot -->
+
 ### Token rotation
 
-When Slack issues an expiry alongside a refresh token — always for PKCE, and for the client_secret flow whenever the app has token rotation enabled — the CLI renews the pair through `oauth.v2.access` starting two hours before expiry. Renewal runs under a cross-process lock on `auth.json`, so concurrent invocations can never spend a refresh token Slack has already revoked.
+Slack issues an expiry and a refresh token with every PKCE installation, and the CLI renews the pair through `oauth.v2.access` starting two hours before expiry. Renewal runs under a cross-process lock on `auth.json`, so concurrent invocations can never spend a refresh token Slack has already revoked.
 
 ```bash
 slack-cli auth status          # Per-token expiry and whether it can be renewed
@@ -297,7 +279,6 @@ Use `install.sh` to move to one of those.
 ```toml
 [auth]
 client_id = "1234.5678"        # the app a browser login authorizes against (= --client-id)
-client_secret = "..."          # optional; present selects client-secret, absent selects pkce
 
 [cache]
 ttl_users_hours = 168          # 1 week
@@ -332,7 +313,7 @@ exponential_base = 2.0
 
 Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
 
-`[auth]` resolves as **command-line flag > environment variable > `config.toml`**. Prefer this file over the environment for `client_secret`: a value in the environment is inherited by every process the CLI spawns, and a `.env` sits inside whatever working directory the command ran from — usually a git repository. `config.toml` is a `0600` file inside a `0700` directory and belongs to no repository. `client_secret` is read but never written back, so `config show --json` does not print it.
+`[auth]` resolves as **command-line flag > environment variable > `config.toml`**. Recording `client_id` here spares every `auth login` a flag or an environment variable.
 
 ### Environment variables
 
@@ -342,7 +323,6 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `SLACK_BOT_TOKEN` | Same, bot token |
 | `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`; outranks `config.toml [auth]`) |
-| `SLACK_CLI_CLIENT_SECRET` | client_secret for client-secret login (same as `--client-secret`; outranks `config.toml [auth]`) |
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
 
 A `.env` file in the working directory supplies any of the above.
@@ -353,7 +333,7 @@ A `.env` file in the working directory supplies any of the above.
 
 | Command | Description |
 |---------|-------------|
-| `auth login` | Authenticate to a workspace (`--method pkce\|client-secret\|static`) |
+| `auth login` | Authenticate to a workspace (`--method pkce\|static`) |
 | `auth logout [--all]` | Remove profile (`--keep-remote` skips `auth.revoke`) |
 | `auth status [--verify]` | Profile status with optional token verification |
 | `auth profiles` | List stored profiles |

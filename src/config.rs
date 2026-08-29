@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::auth::secret::{self, Secret};
 use crate::paths::{self, AppPaths};
 use crate::slack::ConversationType;
 
@@ -25,27 +24,16 @@ pub struct Config {
     pub connection: ConnectionConfig,
 }
 
-/// The OAuth app a browser login authorizes against.
+/// The Slack app a browser login authorizes against.
 ///
-/// This lives in `config.toml` rather than the environment because a value
-/// placed in the environment is inherited by every process the CLI spawns, and
-/// a `.env` sits inside whatever working directory the command ran from — a
-/// path that is frequently a git repository. `config.toml` is `0600` inside a
-/// `0700` directory and belongs to no repository.
+/// Keeping the id here spares every `auth login` a flag or an environment
+/// variable. It is the app's public identifier — it travels in the authorize
+/// URL — so nothing secret is stored by recording it.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
-
-    /// Read from the file but never written back, so no output path that
-    /// serializes `Config` — `config show --json` above all — can print it.
-    #[serde(
-        default,
-        deserialize_with = "secret::option::deserialize",
-        skip_serializing
-    )]
-    pub client_secret: Option<Secret>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -325,13 +313,6 @@ impl Config {
             "  client_id: {}",
             self.auth.client_id.as_deref().unwrap_or("(unset)")
         );
-        println!(
-            "  client_secret: {}",
-            self.auth
-                .client_secret
-                .as_ref()
-                .map_or_else(|| "(unset)".to_string(), secret::mask)
-        );
         println!("\nCache:");
         println!("  ttl_users_hours: {}", self.cache.ttl_users_hours);
         println!("  ttl_channels_hours: {}", self.cache.ttl_channels_hours);
@@ -389,7 +370,7 @@ impl Config {
             }
             let default = Self::default();
             let content = toml::to_string_pretty(&default)?;
-            create_private(&path, &content)?;
+            std::fs::write(&path, content)?;
         }
 
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
@@ -415,29 +396,6 @@ impl Config {
     }
 }
 
-/// Creates the file already restricted, rather than tightening it afterwards:
-/// the config may carry the OAuth client secret, and a create-then-chmod leaves
-/// a window in which it is readable by anyone.
-#[cfg(unix)]
-fn create_private(path: &Path, content: &str) -> Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .with_context(|| format!("could not create {}", path.display()))?;
-    file.write_all(content.as_bytes())
-        .with_context(|| format!("could not write {}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn create_private(path: &Path, content: &str) -> Result<()> {
-    std::fs::write(path, content).with_context(|| format!("could not create {}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,28 +406,15 @@ mod tests {
 
     mod auth_config {
         use super::*;
-        use secrecy::ExposeSecret;
 
         #[test]
         fn the_auth_section_supplies_the_oauth_app() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            std::fs::write(
-                &path,
-                "[auth]\nclient_id = \"1.2\"\nclient_secret = \"shh\"\n",
-            )
-            .unwrap();
+            std::fs::write(&path, "[auth]\nclient_id = \"1.2\"\n").unwrap();
 
             let config = Config::load(&paths(), Some(path), None).unwrap();
             assert_eq!(config.auth.client_id.as_deref(), Some("1.2"));
-            assert_eq!(
-                config
-                    .auth
-                    .client_secret
-                    .as_ref()
-                    .map(|s| s.expose_secret().to_string()),
-                Some("shh".to_string())
-            );
         }
 
         #[test]
@@ -480,40 +425,23 @@ mod tests {
 
             let config = Config::load(&paths(), Some(path), None).unwrap();
             assert!(config.auth.client_id.is_none());
-            assert!(config.auth.client_secret.is_none());
         }
 
-        /// `config show --json` serializes the whole `Config`, and `edit`
-        /// writes a default one. Neither may carry the secret.
+        /// 0.10.0 accepted `client_secret` here. Surfacing the stale key
+        /// beats silently ignoring a credential the CLI no longer reads.
         #[test]
-        fn no_serialization_of_the_config_carries_the_client_secret() {
-            let config = Config {
-                auth: AuthConfig {
-                    client_id: Some("1.2".to_string()),
-                    client_secret: Some(secret::new("super-secret-value")),
-                },
-                ..Config::default()
-            };
-
-            let json = serde_json::to_string_pretty(&config).unwrap();
-            assert!(!json.contains("super-secret-value"), "{json}");
-            assert!(json.contains("1.2"), "client_id should survive: {json}");
-
-            let text = toml::to_string_pretty(&config).unwrap();
-            assert!(!text.contains("super-secret-value"), "{text}");
-        }
-
-        #[cfg(unix)]
-        #[test]
-        fn a_created_config_is_private_from_the_start() {
-            use std::os::unix::fs::PermissionsExt;
-
+        fn load_rejects_the_obsolete_client_secret() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config.toml");
-            create_private(&path, "[auth]\n").unwrap();
+            std::fs::write(&path, "[auth]\nclient_secret = \"shh\"\n").unwrap();
 
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600, "mode was {mode:o}");
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
+            let chain: String = err
+                .chain()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            assert!(chain.contains("client_secret"), "chain: {chain}");
         }
     }
 

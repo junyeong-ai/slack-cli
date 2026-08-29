@@ -31,7 +31,6 @@ pub async fn handle(
             user_token,
             bot_token,
             client_id,
-            client_secret,
             port,
             no_browser,
         } => {
@@ -41,7 +40,6 @@ pub async fn handle(
                 user_token: user_token.and_then(non_blank).map(secret::new),
                 bot_token: bot_token.and_then(non_blank).map(secret::new),
                 client_id: client_id.and_then(non_blank),
-                client_secret: client_secret.and_then(non_blank).map(secret::new),
                 port: port.unwrap_or(DEFAULT_CALLBACK_PORT),
                 no_browser,
             };
@@ -84,21 +82,15 @@ struct LoginInput {
     user_token: Option<Secret>,
     bot_token: Option<Secret>,
     client_id: Option<String>,
-    client_secret: Option<Secret>,
     port: u16,
     no_browser: bool,
 }
 
 impl LoginInput {
-    /// The command line and the environment win; `config.toml` supplies
-    /// whichever half of the app credentials they left out. The secret is
-    /// filled only for the method that uses one, so a stored secret never
-    /// contradicts an explicit `--method pkce`.
-    fn with_stored_app(mut self, auth: &AuthConfig, method: AuthMethod) -> Self {
+    /// The command line and the environment win; `config.toml` supplies the
+    /// client id when they left it out.
+    fn with_stored_app(mut self, auth: &AuthConfig) -> Self {
         self.client_id = self.client_id.or_else(|| auth.client_id.clone());
-        if method == AuthMethod::ClientSecret {
-            self.client_secret = self.client_secret.or_else(|| auth.client_secret.clone());
-        }
         self
     }
 }
@@ -110,22 +102,21 @@ async fn login(
     authenticator: &Authenticator,
     json: bool,
 ) -> Result<()> {
-    let method = decide_method(&input, &config.auth)?;
-    let input = input.with_stored_app(&config.auth, method);
+    let method = decide_method(&input)?;
+    let input = input.with_stored_app(&config.auth);
 
     let profile = match method {
         AuthMethod::Static => {
             let (user, bot) = collect_static_tokens(input.user_token, input.bot_token)?;
             static_login::run(user, bot, slack).await?
         }
-        AuthMethod::Pkce | AuthMethod::ClientSecret => {
+        AuthMethod::Pkce => {
             let request = browser_login::Request {
-                client: build_client(method, input.client_id, input.client_secret)?,
+                client: build_client(input.client_id)?,
                 api_base_url: config.connection.api_base_url.clone(),
                 port: input.port,
                 no_browser: input.no_browser,
                 user_scopes: owned(scopes::required(TokenKind::User)),
-                bot_scopes: owned(scopes::required(TokenKind::Bot)),
             };
             browser_login::run(request).await?
         }
@@ -160,58 +151,29 @@ async fn login(
     Ok(())
 }
 
-fn decide_method(input: &LoginInput, auth: &AuthConfig) -> Result<AuthMethod> {
+fn decide_method(input: &LoginInput) -> Result<AuthMethod> {
     if let Some(method) = input.method {
         return Ok(method);
     }
     if input.user_token.is_some() || input.bot_token.is_some() {
         return Ok(AuthMethod::Static);
     }
-    if input.client_secret.is_some() || auth.client_secret.is_some() {
-        return Ok(AuthMethod::ClientSecret);
-    }
     if std::io::stdin().is_terminal() {
         Ok(AuthMethod::Pkce)
     } else {
         Err(anyhow!(
-            "no authentication method selected. pass --method pkce|client-secret|static, \
+            "no authentication method selected. pass --method pkce|static, \
              provide --user-token/--bot-token, or run interactively"
         ))
     }
 }
 
-fn build_client(
-    method: AuthMethod,
-    client_id: Option<String>,
-    client_secret: Option<Secret>,
-) -> Result<OAuthClient> {
+fn build_client(client_id: Option<String>) -> Result<OAuthClient> {
     let client_id = client_id.context(
         "browser login requires a client id: pass --client-id, set SLACK_CLI_CLIENT_ID, \
-             or put client_id under [auth] in config.toml",
+         or put client_id under [auth] in config.toml",
     )?;
-
-    match method {
-        AuthMethod::Pkce => {
-            if client_secret.is_some() {
-                anyhow::bail!(
-                    "--method pkce authorizes as a public client and takes no client secret. \
-                     use --method client-secret to authorize as a confidential client"
-                );
-            }
-            Ok(OAuthClient::public(client_id))
-        }
-        AuthMethod::ClientSecret => {
-            let secret = match client_secret {
-                Some(secret) => secret,
-                None => prompt_secret("Client secret: ")?.map(secret::new).context(
-                    "client-secret login requires a secret: pass --client-secret, set \
-                     SLACK_CLI_CLIENT_SECRET, or put client_secret under [auth] in config.toml",
-                )?,
-            };
-            Ok(OAuthClient::confidential(client_id, secret))
-        }
-        AuthMethod::Static => unreachable!("static login does not build an OAuth client"),
-    }
+    Ok(OAuthClient::new(client_id))
 }
 
 fn collect_static_tokens(
@@ -241,8 +203,8 @@ fn collect_static_tokens(
     Ok((user_token, bot_token))
 }
 
-/// Reads a credential from the terminal without echoing it, so a token or
-/// client secret never lands in scrollback or a screen share.
+/// Reads a token from the terminal without echoing it, so it never lands in
+/// scrollback or a screen share.
 fn prompt_secret(label: &str) -> Result<Option<String>> {
     if !std::io::stdin().is_terminal() {
         return Ok(None);
@@ -631,16 +593,21 @@ async fn set_active(name: String, authenticator: &Authenticator, json: bool) -> 
 mod tests {
     use super::*;
 
-    fn input(method: Option<AuthMethod>, secret: Option<&str>) -> LoginInput {
+    fn input(method: Option<AuthMethod>) -> LoginInput {
         LoginInput {
             method,
             profile: None,
             user_token: None,
             bot_token: None,
             client_id: Some("123.456".into()),
-            client_secret: secret.map(secret::new),
             port: DEFAULT_CALLBACK_PORT,
             no_browser: true,
+        }
+    }
+
+    fn stored(client_id: Option<&str>) -> AuthConfig {
+        AuthConfig {
+            client_id: client_id.map(str::to_string),
         }
     }
 
@@ -669,115 +636,37 @@ mod tests {
         assert_eq!(non_blank("  abc  ".into()), Some("abc".to_string()));
     }
 
-    fn stored(client_id: Option<&str>, client_secret: Option<&str>) -> AuthConfig {
-        AuthConfig {
-            client_id: client_id.map(str::to_string),
-            client_secret: client_secret.map(secret::new),
-        }
-    }
-
-    #[test]
-    fn a_client_secret_selects_the_confidential_method() {
-        assert_eq!(
-            decide_method(&input(None, Some("shh")), &stored(None, None)).unwrap(),
-            AuthMethod::ClientSecret
-        );
-    }
-
-    #[test]
-    fn a_stored_client_secret_selects_the_confidential_method() {
-        assert_eq!(
-            decide_method(&input(None, None), &stored(Some("1.2"), Some("shh"))).unwrap(),
-            AuthMethod::ClientSecret
-        );
-    }
-
     #[test]
     fn pasted_tokens_select_the_static_method() {
-        let mut given = input(None, None);
+        let mut given = input(None);
         given.user_token = Some(secret::new("xoxp-1"));
-        assert_eq!(
-            decide_method(&given, &stored(None, None)).unwrap(),
-            AuthMethod::Static
-        );
+        assert_eq!(decide_method(&given).unwrap(), AuthMethod::Static);
     }
 
     #[test]
     fn an_explicit_method_always_wins() {
-        assert_eq!(
-            decide_method(
-                &input(Some(AuthMethod::Pkce), Some("shh")),
-                &stored(None, None)
-            )
-            .unwrap(),
-            AuthMethod::Pkce
-        );
+        let mut given = input(Some(AuthMethod::Static));
+        given.user_token = None;
+        assert_eq!(decide_method(&given).unwrap(), AuthMethod::Static);
     }
 
     #[test]
-    fn the_command_line_outranks_the_stored_app() {
-        let given = input(None, Some("from-flag")).with_stored_app(
-            &stored(Some("stored-id"), Some("from-config")),
-            AuthMethod::ClientSecret,
-        );
-        assert_eq!(
-            given.client_secret.map(|s| s.expose_secret().to_string()),
-            Some("from-flag".to_string())
-        );
-    }
-
-    #[test]
-    fn the_stored_app_fills_what_the_command_line_left_out() {
-        let mut given = input(None, None);
-        given.client_id = None;
-        let given = given.with_stored_app(
-            &stored(Some("stored-id"), Some("from-config")),
-            AuthMethod::ClientSecret,
-        );
-        assert_eq!(given.client_id.as_deref(), Some("stored-id"));
-        assert_eq!(
-            given.client_secret.map(|s| s.expose_secret().to_string()),
-            Some("from-config".to_string())
-        );
-    }
-
-    /// A secret sitting in `config.toml` is a default, not an assertion, so it
-    /// must not turn an explicit public-client login into an error.
-    #[test]
-    fn a_stored_secret_does_not_contradict_an_explicit_pkce_login() {
-        let given = input(Some(AuthMethod::Pkce), None)
-            .with_stored_app(&stored(Some("1.2"), Some("shh")), AuthMethod::Pkce);
-        assert!(given.client_secret.is_none());
+    fn the_command_line_outranks_the_stored_client_id() {
+        let given = input(None).with_stored_app(&stored(Some("stored-id")));
         assert_eq!(given.client_id.as_deref(), Some("123.456"));
     }
 
     #[test]
-    fn pkce_rejects_a_client_secret() {
-        let given = input(Some(AuthMethod::Pkce), Some("shh"));
-        let err = build_client(AuthMethod::Pkce, given.client_id, given.client_secret).unwrap_err();
-        assert!(err.to_string().contains("public client"));
-    }
-
-    #[test]
-    fn pkce_builds_a_public_client() {
-        let client = build_client(AuthMethod::Pkce, Some("123.456".into()), None).unwrap();
-        assert!(client.is_public());
-    }
-
-    #[test]
-    fn client_secret_builds_a_confidential_client() {
-        let client = build_client(
-            AuthMethod::ClientSecret,
-            Some("123.456".into()),
-            Some(secret::new("shh")),
-        )
-        .unwrap();
-        assert!(!client.is_public());
+    fn the_stored_client_id_fills_in_when_the_command_line_omits_it() {
+        let mut given = input(None);
+        given.client_id = None;
+        let given = given.with_stored_app(&stored(Some("stored-id")));
+        assert_eq!(given.client_id.as_deref(), Some("stored-id"));
     }
 
     #[test]
     fn browser_login_requires_a_client_id() {
-        let err = build_client(AuthMethod::Pkce, None, None).unwrap_err();
+        let err = build_client(None).unwrap_err();
         assert!(err.to_string().contains("--client-id"));
     }
 

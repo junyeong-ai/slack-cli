@@ -20,7 +20,6 @@ pub struct Request {
     pub port: u16,
     pub no_browser: bool,
     pub user_scopes: Vec<String>,
-    pub bot_scopes: Vec<String>,
 }
 
 pub async fn run(request: Request) -> Result<Profile> {
@@ -35,7 +34,6 @@ pub async fn run(request: Request) -> Result<Profile> {
     let response = Authorization {
         client: &request.client,
         user_scopes: &request.user_scopes,
-        bot_scopes: &request.bot_scopes,
         no_browser: request.no_browser,
         callback_timeout: CALLBACK_TIMEOUT,
     }
@@ -46,7 +44,7 @@ pub async fn run(request: Request) -> Result<Profile> {
     let team = response.team()?.clone();
 
     Ok(Profile {
-        method: AuthMethod::for_client(&request.client),
+        method: AuthMethod::Pkce,
         workspace: WorkspaceInfo {
             team_id: team.id,
             team_name: team.name,

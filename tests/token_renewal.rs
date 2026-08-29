@@ -6,7 +6,7 @@ use chrono::{Duration, Utc};
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use slack_cli::auth::{AuthLoadOptions, Authenticator, EnvOverrides, TokenKind, TokenPolicy};
-use wiremock::matchers::{body_string_contains, header, method, path};
+use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct Store {
@@ -219,27 +219,6 @@ async fn a_spent_token_without_a_recorded_client_asks_for_a_fresh_login() {
         .expect_err("cannot renew");
     let message = err.to_string();
     assert!(message.contains("not recorded"), "{message}");
-}
-
-#[tokio::test]
-async fn a_confidential_client_renews_with_basic_auth() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/oauth.v2.access"))
-        .and(header("authorization", "Basic MTIzLjQ1Njpzc2g="))
-        .and(body_string_contains("grant_type=refresh_token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(renewed_user_token()))
-        .mount(&server)
-        .await;
-
-    let store = Store::with(profile(
-        expiring_in(30),
-        json!({"id": "123.456", "secret": "ssh"}),
-    ));
-    let auth = store.authenticator(server.uri()).await;
-
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
-    assert_eq!(token.expose_secret(), "xoxe.xoxp-renewed");
 }
 
 #[tokio::test]

@@ -20,9 +20,9 @@ use tracing_subscriber::filter::LevelFilter;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Before anything reads the environment: clap binds `--profile`,
-    // `--client-id` and `--client-secret` to env vars at parse time, and the
-    // log filter below reads RUST_LOG.
+    // Before anything reads the environment: clap binds `--profile` and
+    // `--client-id` to env vars at parse time, and the log filter below reads
+    // RUST_LOG.
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();

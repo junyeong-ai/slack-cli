@@ -6,8 +6,8 @@ Single facade (`Authenticator`) resolves tokens for every Slack API call and own
 
 - **`auth.json`** at the platform config directory (`paths::AppPaths::auth_store`), mode `0600` inside a `0700` directory on Unix — `restrict_file`/`restrict_directory` are no-ops elsewhere, so on Windows the file inherits the `%APPDATA%` ACL. Schema-versioned, atomic write via `tempfile::persist`. Machine-managed; do not hand-edit.
 - **`auth.json.lock`** beside it. Advisory lock only, never read. It is a sibling because writes replace `auth.json` by rename, which would strand a lock held on the unlinked inode.
-- **`config.toml`** carries the OAuth app under `[auth]` (`client_id`, optional `client_secret`) and never a user or bot token. `client_secret` deserializes only — no path that serializes `Config`, `config show --json` included, can print it.
-- **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation. `SLACK_CLI_CLIENT_ID` / `SLACK_CLI_CLIENT_SECRET` name the OAuth app, outranking `config.toml [auth]` and outranked by the flags.
+- **`config.toml`** carries the Slack app's `client_id` under `[auth]` and never a token. The id is the app's public identifier — it travels in the authorize URL — so recording it stores nothing secret.
+- **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation. `SLACK_CLI_CLIENT_ID` names the Slack app, outranking `config.toml [auth]` and outranked by `--client-id`.
 
 ## Layout
 
@@ -18,7 +18,7 @@ auth/
 ├── credential.rs      Credential, Readiness, TokenKind, TokenSet
 ├── env.rs             EnvOverrides — SLACK_USER_TOKEN / SLACK_BOT_TOKEN
 ├── errors.rs          AuthError + OAuthError (thiserror)
-├── method.rs          AuthMethod enum (Static, Pkce, ClientSecret)
+├── method.rs          AuthMethod enum (Static, Pkce)
 ├── migrate.rs         Schema 1 → 2 upgrade
 ├── policy.rs          TokenPolicy — select(kind) / accepts(kind)
 ├── profile.rs         Profile, WorkspaceInfo
@@ -55,7 +55,7 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 
 ## Invariants
 
-1. **User and bot tokens never reach `config.toml` or logs.** `SecretString` auto-zeroizes on drop and masks `Debug`. Tracing macros only see metadata, never token values. The client secret may be *supplied* from `config.toml`, but it is a `Secret` from the moment it is read and is never written back.
+1. **Tokens never reach `config.toml` or logs.** `SecretString` auto-zeroizes on drop and masks `Debug`. Tracing macros only see metadata, never token values.
 2. **`Authenticator::token_for` is the only token-resolution path.** Env tokens take precedence and are never renewed — their lifetime belongs to the caller. Otherwise the profile is resolved via `AuthState::resolve`, then the credential's `readiness` decides.
 3. **Only a lock holder can write.** `AuthStore::write` takes `&StoreGuard`, so a state read before the lock was acquired cannot be written after another process has committed its own. `Authenticator::load` re-reads under the lock before persisting a schema upgrade for the same reason.
 4. **Every mutation is one cross-process transaction.** `transact` and `renew` take the store lock, re-read from disk, apply, write, and only then swap the in-memory copy. Re-reading under the lock is what makes concurrent invocations safe: Slack revokes a refresh token once it is used, so a sibling process that renewed a moment ago has already written the successor, and this process adopts it instead of spending a token that is gone.
@@ -66,18 +66,11 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 9. **Removing the active profile clears active.** No auto-promotion. The user picks the next active via `slack-cli auth use NAME`.
 10. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly.
 
-## Client kind decides the flow
+## The browser flow is always PKCE
 
-`OAuthClient::is_public()` — no secret — is the protocol switch, not a preference:
+Slack rejects a loopback redirect that omits PKCE — *Must use PKCE to redirect to a non-web URI* — and rejects bot scopes on one outright — *Bot scopes are not allowed when redirecting to a non-web URI*. Every address a CLI can receive a callback on is such a URI, so there is no confidential-client variant to pick: the authorize URL always carries `code_challenge`/`S256` and `user_scope` alone, and the exchange sends `client_id` with no secret. Tokens from this flow always rotate. A bot token reaches the CLI only by being pasted into `--method static`.
 
-| | public (PKCE) | confidential (client secret) |
-|---|---|---|
-| authorize params | `code_challenge` + `S256` required | none |
-| scopes requested | `user_scope` only — Slack refuses bot scopes on a desktop redirect | `user_scope` and `scope` |
-| token exchange | `client_id` in the body, no secret | HTTP Basic, nothing in the body |
-| rotation | always | only when the app enables token rotation |
-
-Slack routes a loopback redirect as a desktop redirect for a PKCE-enabled app and as a server redirect otherwise, which is what makes the second column able to carry bot scopes.
+This is RFC 8252 (BCP 212) as Slack enforces it: a distributed CLI cannot keep a client secret, so it authorizes as a public client.
 
 ## Schema migration
 
@@ -91,5 +84,7 @@ Add a schema by bumping `state::SCHEMA_VERSION`, adding the version arm in `stor
 2. `cli.rs`: add a variant to `AuthMethodArg` and the `From` impl.
 3. `auth/login/<name>_login.rs`: implement `pub async fn run(...) -> anyhow::Result<Profile>` returning a fully-populated `Profile`.
 4. `auth/cli_handler.rs`: add the `decide_method` rule and the `login` match arm. If the strategy does not validate the token internally, call `slack.auth.test(token)` before `upsert_profile`.
+
+A browser-based variant has to clear the loopback constraints above before it is worth building.
 
 `Profile`, `Credential`, `TokenSet` are uniform across methods — only the acquisition path differs.

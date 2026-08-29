@@ -70,7 +70,7 @@ fn upgrade(profile: V1Profile) -> Profile {
         method: profile.method,
         workspace: profile.workspace,
         tokens,
-        client: profile.client_id.map(OAuthClient::public),
+        client: profile.client_id.map(OAuthClient::new),
         authorized_at: profile.authorized_at,
     }
 }
@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(profile.method, AuthMethod::Pkce);
         assert_eq!(profile.workspace.team_id, "T1");
         assert_eq!(profile.client.as_ref().unwrap().id, "123.456");
-        assert!(profile.client.as_ref().unwrap().is_public());
+        assert_eq!(profile.client.as_ref().unwrap().id, "123.456");
 
         let user = profile.tokens.user.as_ref().unwrap();
         assert_eq!(user.token.expose_secret(), "xoxp-user");
