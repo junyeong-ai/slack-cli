@@ -95,7 +95,10 @@ pub enum OAuthError {
     #[error("token exchange response was missing field: {0}")]
     MissingField(&'static str),
 
-    #[error("client_id is not configured. set SLACK_CLI_CLIENT_ID or pass --client-id")]
+    #[error(
+        "client_id is not configured. pass --client-id, set SLACK_CLI_CLIENT_ID, or put \
+         client_id under [auth] in config.toml"
+    )]
     MissingClientId,
 
     #[error("could not open the browser. open the URL manually: {url}")]

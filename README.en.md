@@ -158,7 +158,7 @@ cargo build --release   # rust-toolchain.toml selects the 1.98.0 toolchain
 
 ## Authentication
 
-`slack-cli` stores tokens in `auth.json` (mode `0600` inside a `0700` directory on Unix; on Windows it relies on the default `%APPDATA%` ACL), keyed by named workspace profiles. `config.toml` never contains tokens. The empty `auth.json.lock` beside it is the lock file that serialises concurrent invocations; it holds no content.
+`slack-cli` stores tokens in `auth.json` (mode `0600` inside a `0700` directory on Unix; on Windows it relies on the default `%APPDATA%` ACL), keyed by named workspace profiles. `config.toml` never contains user or bot tokens. The empty `auth.json.lock` beside it is the lock file that serialises concurrent invocations; it holds no content.
 
 The scopes are derived from the Slack methods the CLI calls, so you can always read the current list off the binary itself:
 
@@ -293,9 +293,13 @@ Use `install.sh` to move to one of those.
 
 ## Config file
 
-`config.toml` (user preferences, no tokens). The location follows the platform convention — `$XDG_CONFIG_HOME/slack-cli` or `~/.config/slack-cli` on Linux/macOS, `%APPDATA%\slack-cli` on Windows. Run `slack-cli config path` for the resolved path.
+`config.toml` (user preferences; it never holds user or bot tokens — `auth.json` owns those). The location follows the platform convention — `$XDG_CONFIG_HOME/slack-cli` or `~/.config/slack-cli` on Linux/macOS, `%APPDATA%\slack-cli` on Windows. Run `slack-cli config path` for the resolved path.
 
 ```toml
+[auth]
+client_id = "1234.5678"        # the app a browser login authorizes against (= --client-id)
+client_secret = "..."          # optional; present selects client-secret, absent selects pkce
+
 [cache]
 ttl_users_hours = 168          # 1 week
 ttl_channels_hours = 168
@@ -329,6 +333,8 @@ exponential_base = 2.0
 
 Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
 
+`[auth]` resolves as **command-line flag > environment variable > `config.toml`**. Prefer this file over the environment for `client_secret`: a value in the environment is inherited by every process the CLI spawns, and a `.env` sits inside whatever working directory the command ran from — usually a git repository. `config.toml` is a `0600` file inside a `0700` directory and belongs to no repository. `client_secret` is read but never written back, so `config show --json` does not print it.
+
 ### Environment variables
 
 | Variable | Purpose |
@@ -336,8 +342,8 @@ Set `app_distribution` according to Slack's `conversations.history` and `convers
 | `SLACK_USER_TOKEN` | Bypass stored profiles and use this token directly (CI / headless) |
 | `SLACK_BOT_TOKEN` | Same, bot token |
 | `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
-| `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`) |
-| `SLACK_CLI_CLIENT_SECRET` | client_secret for client-secret login (same as `--client-secret`) |
+| `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`; outranks `config.toml [auth]`) |
+| `SLACK_CLI_CLIENT_SECRET` | client_secret for client-secret login (same as `--client-secret`; outranks `config.toml [auth]`) |
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
 
 A `.env` file in the working directory supplies any of the above.

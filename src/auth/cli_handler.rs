@@ -6,7 +6,7 @@ use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 
 use crate::cli::AuthAction;
-use crate::config::Config;
+use crate::config::{AuthConfig, Config};
 use crate::slack::{SlackClient, scopes};
 
 use super::Authenticator;
@@ -89,6 +89,20 @@ struct LoginInput {
     no_browser: bool,
 }
 
+impl LoginInput {
+    /// The command line and the environment win; `config.toml` supplies
+    /// whichever half of the app credentials they left out. The secret is
+    /// filled only for the method that uses one, so a stored secret never
+    /// contradicts an explicit `--method pkce`.
+    fn with_stored_app(mut self, auth: &AuthConfig, method: AuthMethod) -> Self {
+        self.client_id = self.client_id.or_else(|| auth.client_id.clone());
+        if method == AuthMethod::ClientSecret {
+            self.client_secret = self.client_secret.or_else(|| auth.client_secret.clone());
+        }
+        self
+    }
+}
+
 async fn login(
     input: LoginInput,
     config: Config,
@@ -96,7 +110,8 @@ async fn login(
     authenticator: &Authenticator,
     json: bool,
 ) -> Result<()> {
-    let method = decide_method(&input)?;
+    let method = decide_method(&input, &config.auth)?;
+    let input = input.with_stored_app(&config.auth, method);
 
     let profile = match method {
         AuthMethod::Static => {
@@ -145,14 +160,14 @@ async fn login(
     Ok(())
 }
 
-fn decide_method(input: &LoginInput) -> Result<AuthMethod> {
+fn decide_method(input: &LoginInput, auth: &AuthConfig) -> Result<AuthMethod> {
     if let Some(method) = input.method {
         return Ok(method);
     }
     if input.user_token.is_some() || input.bot_token.is_some() {
         return Ok(AuthMethod::Static);
     }
-    if input.client_secret.is_some() {
+    if input.client_secret.is_some() || auth.client_secret.is_some() {
         return Ok(AuthMethod::ClientSecret);
     }
     if std::io::stdin().is_terminal() {
@@ -170,8 +185,10 @@ fn build_client(
     client_id: Option<String>,
     client_secret: Option<Secret>,
 ) -> Result<OAuthClient> {
-    let client_id =
-        client_id.context("browser login requires --client-id or SLACK_CLI_CLIENT_ID")?;
+    let client_id = client_id.context(
+        "browser login requires a client id: pass --client-id, set SLACK_CLI_CLIENT_ID, \
+             or put client_id under [auth] in config.toml",
+    )?;
 
     match method {
         AuthMethod::Pkce => {
@@ -187,7 +204,8 @@ fn build_client(
             let secret = match client_secret {
                 Some(secret) => secret,
                 None => prompt_secret("Client secret: ")?.map(secret::new).context(
-                    "client-secret login requires --client-secret or SLACK_CLI_CLIENT_SECRET",
+                    "client-secret login requires a secret: pass --client-secret, set \
+                     SLACK_CLI_CLIENT_SECRET, or put client_secret under [auth] in config.toml",
                 )?,
             };
             Ok(OAuthClient::confidential(client_id, secret))
@@ -651,10 +669,25 @@ mod tests {
         assert_eq!(non_blank("  abc  ".into()), Some("abc".to_string()));
     }
 
+    fn stored(client_id: Option<&str>, client_secret: Option<&str>) -> AuthConfig {
+        AuthConfig {
+            client_id: client_id.map(str::to_string),
+            client_secret: client_secret.map(secret::new),
+        }
+    }
+
     #[test]
     fn a_client_secret_selects_the_confidential_method() {
         assert_eq!(
-            decide_method(&input(None, Some("shh"))).unwrap(),
+            decide_method(&input(None, Some("shh")), &stored(None, None)).unwrap(),
+            AuthMethod::ClientSecret
+        );
+    }
+
+    #[test]
+    fn a_stored_client_secret_selects_the_confidential_method() {
+        assert_eq!(
+            decide_method(&input(None, None), &stored(Some("1.2"), Some("shh"))).unwrap(),
             AuthMethod::ClientSecret
         );
     }
@@ -663,15 +696,59 @@ mod tests {
     fn pasted_tokens_select_the_static_method() {
         let mut given = input(None, None);
         given.user_token = Some(secret::new("xoxp-1"));
-        assert_eq!(decide_method(&given).unwrap(), AuthMethod::Static);
+        assert_eq!(
+            decide_method(&given, &stored(None, None)).unwrap(),
+            AuthMethod::Static
+        );
     }
 
     #[test]
     fn an_explicit_method_always_wins() {
         assert_eq!(
-            decide_method(&input(Some(AuthMethod::Pkce), Some("shh"))).unwrap(),
+            decide_method(
+                &input(Some(AuthMethod::Pkce), Some("shh")),
+                &stored(None, None)
+            )
+            .unwrap(),
             AuthMethod::Pkce
         );
+    }
+
+    #[test]
+    fn the_command_line_outranks_the_stored_app() {
+        let given = input(None, Some("from-flag")).with_stored_app(
+            &stored(Some("stored-id"), Some("from-config")),
+            AuthMethod::ClientSecret,
+        );
+        assert_eq!(
+            given.client_secret.map(|s| s.expose_secret().to_string()),
+            Some("from-flag".to_string())
+        );
+    }
+
+    #[test]
+    fn the_stored_app_fills_what_the_command_line_left_out() {
+        let mut given = input(None, None);
+        given.client_id = None;
+        let given = given.with_stored_app(
+            &stored(Some("stored-id"), Some("from-config")),
+            AuthMethod::ClientSecret,
+        );
+        assert_eq!(given.client_id.as_deref(), Some("stored-id"));
+        assert_eq!(
+            given.client_secret.map(|s| s.expose_secret().to_string()),
+            Some("from-config".to_string())
+        );
+    }
+
+    /// A secret sitting in `config.toml` is a default, not an assertion, so it
+    /// must not turn an explicit public-client login into an error.
+    #[test]
+    fn a_stored_secret_does_not_contradict_an_explicit_pkce_login() {
+        let given = input(Some(AuthMethod::Pkce), None)
+            .with_stored_app(&stored(Some("1.2"), Some("shh")), AuthMethod::Pkce);
+        assert!(given.client_secret.is_none());
+        assert_eq!(given.client_id.as_deref(), Some("123.456"));
     }
 
     #[test]

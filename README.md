@@ -158,7 +158,7 @@ cargo build --release   # rust-toolchain.toml이 1.98.0 툴체인을 자동 선�
 
 ## 인증
 
-`slack-cli`는 토큰을 `auth.json`에 저장하며(Unix에서는 0600, 상위 디렉터리 0700 — Windows에서는 `%APPDATA%`의 기본 ACL에 의존), 워크스페이스마다 명명된 프로필로 관리합니다. `config.toml`에는 토큰이 들어가지 않습니다. 같은 디렉터리의 빈 `auth.json.lock`은 동시 실행을 직렬화하는 잠금 파일이며 내용이 없습니다.
+`slack-cli`는 토큰을 `auth.json`에 저장하며(Unix에서는 0600, 상위 디렉터리 0700 — Windows에서는 `%APPDATA%`의 기본 ACL에 의존), 워크스페이스마다 명명된 프로필로 관리합니다. `config.toml`에는 사용자·봇 토큰이 들어가지 않습니다. 같은 디렉터리의 빈 `auth.json.lock`은 동시 실행을 직렬화하는 잠금 파일이며 내용이 없습니다.
 
 필요한 scope는 CLI가 호출하는 Slack 메서드에서 그대로 파생되므로, 언제든 아래로 확인할 수 있습니다.
 
@@ -282,9 +282,13 @@ slack-cli self update --version 0.9.0   # 특정 버전으로
 
 ## 설정 파일
 
-`config.toml` (사용자 환경설정, 토큰 없음). 경로는 플랫폼 규약을 따릅니다 — Linux/macOS는 `$XDG_CONFIG_HOME/slack-cli` 또는 `~/.config/slack-cli`, Windows는 `%APPDATA%\slack-cli`. 실제 경로는 `slack-cli config path`로 확인하세요.
+`config.toml` (사용자 환경설정. 사용자·봇 토큰은 들어가지 않습니다 — 그건 `auth.json`이 관리합니다). 경로는 플랫폼 규약을 따릅니다 — Linux/macOS는 `$XDG_CONFIG_HOME/slack-cli` 또는 `~/.config/slack-cli`, Windows는 `%APPDATA%\slack-cli`. 실제 경로는 `slack-cli config path`로 확인하세요.
 
 ```toml
+[auth]
+client_id = "1234.5678"        # 브라우저 로그인이 인가받을 앱 (= --client-id)
+client_secret = "..."          # 선택. 있으면 client-secret 방식, 없으면 pkce
+
 [cache]
 ttl_users_hours = 168          # 1주일
 ttl_channels_hours = 168
@@ -316,6 +320,8 @@ exponential_base = 2.0
 
 `app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
 
+`[auth]`의 우선순위는 **명령행 플래그 > 환경변수 > `config.toml`** 입니다. `client_secret`을 환경이 아니라 여기에 두는 편이 낫습니다 — 환경에 실린 값은 CLI가 띄우는 모든 자식 프로세스가 상속하고, `.env`는 명령을 실행한 작업 디렉터리(대개 git 저장소) 안에 놓입니다. `config.toml`은 `0700` 디렉터리 안의 `0600` 파일이고 어떤 저장소에도 속하지 않습니다. `client_secret`은 읽기만 하고 다시 쓰지 않으므로 `config show --json`에도 나오지 않습니다.
+
 ### 환경변수
 
 | 변수 | 용도 |
@@ -323,8 +329,8 @@ exponential_base = 2.0
 | `SLACK_USER_TOKEN` | 저장된 프로필을 무시하고 이 토큰을 직접 사용 (CI/headless) |
 | `SLACK_BOT_TOKEN` | 위와 동일, bot 토큰 |
 | `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
-| `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`) |
-| `SLACK_CLI_CLIENT_SECRET` | client-secret 로그인 시 client_secret (= `--client-secret`) |
+| `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`, `config.toml [auth]`보다 우선) |
+| `SLACK_CLI_CLIENT_SECRET` | client-secret 로그인 시 client_secret (= `--client-secret`, `config.toml [auth]`보다 우선) |
 | `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
 
 작업 디렉터리에 `.env` 파일이 있으면 위 변수들을 거기서 읽습니다.

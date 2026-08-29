@@ -8,7 +8,7 @@ Rust CLI for the Slack Web API. Single crate, SQLite + FTS5 local cache, async/a
 src/
 ├── main.rs       CLI entry, command dispatch
 ├── cli.rs        clap command definitions
-├── config.rs     TOML config (user preferences only — no tokens)
+├── config.rs     TOML config (user preferences + the OAuth app — no user or bot tokens)
 ├── format.rs     Output formatting (table / JSON)
 ├── lib.rs        Library re-exports
 ├── paths.rs      Platform config/cache directories (XDG on Unix, Known Folders on Windows)

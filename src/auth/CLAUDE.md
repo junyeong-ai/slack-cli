@@ -6,8 +6,8 @@ Single facade (`Authenticator`) resolves tokens for every Slack API call and own
 
 - **`auth.json`** at the platform config directory (`paths::AppPaths::auth_store`), mode `0600` inside a `0700` directory on Unix — `restrict_file`/`restrict_directory` are no-ops elsewhere, so on Windows the file inherits the `%APPDATA%` ACL. Schema-versioned, atomic write via `tempfile::persist`. Machine-managed; do not hand-edit.
 - **`auth.json.lock`** beside it. Advisory lock only, never read. It is a sibling because writes replace `auth.json` by rename, which would strand a lock held on the unlinked inode.
-- **`config.toml`** never contains tokens.
-- **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation.
+- **`config.toml`** carries the OAuth app under `[auth]` (`client_id`, optional `client_secret`) and never a user or bot token. `client_secret` deserializes only — no path that serializes `Config`, `config show --json` included, can print it.
+- **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation. `SLACK_CLI_CLIENT_ID` / `SLACK_CLI_CLIENT_SECRET` name the OAuth app, outranking `config.toml [auth]` and outranked by the flags.
 
 ## Layout
 
@@ -55,7 +55,7 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 
 ## Invariants
 
-1. **Tokens never reach `config.toml` or logs.** `SecretString` auto-zeroizes on drop and masks `Debug`. Tracing macros only see metadata, never token values. The client secret is a stored credential like any other and is masked the same way.
+1. **User and bot tokens never reach `config.toml` or logs.** `SecretString` auto-zeroizes on drop and masks `Debug`. Tracing macros only see metadata, never token values. The client secret may be *supplied* from `config.toml`, but it is a `Secret` from the moment it is read and is never written back.
 2. **`Authenticator::token_for` is the only token-resolution path.** Env tokens take precedence and are never renewed — their lifetime belongs to the caller. Otherwise the profile is resolved via `AuthState::resolve`, then the credential's `readiness` decides.
 3. **Only a lock holder can write.** `AuthStore::write` takes `&StoreGuard`, so a state read before the lock was acquired cannot be written after another process has committed its own. `Authenticator::load` re-reads under the lock before persisting a schema upgrade for the same reason.
 4. **Every mutation is one cross-process transaction.** `transact` and `renew` take the store lock, re-read from disk, apply, write, and only then swap the in-memory copy. Re-reading under the lock is what makes concurrent invocations safe: Slack revokes a refresh token once it is used, so a sibling process that renewed a moment ago has already written the successor, and this process adopts it instead of spending a token that is gone.
