@@ -56,7 +56,7 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 
 ### Scopes
 
-`MethodScopes` on each entry of `API_METHODS` records what a token must carry for *this CLI's* use of the method. Where the CLI always sends an optional argument that widens the requirement, the scope behind it belongs there too: `include_all_metadata` on conversation reads pulls in `metadata.message:read`, and the default `email` output field pulls in `users:read.email`.
+`MethodScopes` on each entry of `API_METHODS` records what a token must carry for *this CLI's* use of the method. Where the CLI always sends an optional argument that widens the requirement, the scope behind it belongs there too: `include_all_metadata` on conversation reads pulls in `metadata.message:read` for bot tokens — Slack supports that scope on no other kind — and the default `email` output field pulls in `users:read.email`.
 
 `slack::scopes::required(kind)` is the union over every method the kind can reach. It is what `auth login` requests and what `auth scopes` prints, so a scope can never drift from the methods that need it. `tests/documented_scopes.rs` holds both READMEs to the same source.
 
