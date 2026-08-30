@@ -234,9 +234,17 @@ async fn run_command(command: &[String], event: &Event, timeout: Duration) -> Re
     let payload = event.to_ndjson()?;
     let feed_and_wait = async {
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(payload.as_bytes()).await?;
-            stdin.write_all(b"\n").await?;
-            stdin.shutdown().await?;
+            // A handler that does not read its input has not failed. It may
+            // exit the moment it starts — a trigger, a notifier, anything that
+            // acts on the fact of an event rather than its contents — and the
+            // write then lands on a pipe that is already closed. Its exit
+            // status is what says whether the work happened, so a broken pipe
+            // here is passed over and the status below decides.
+            match write_event(&mut stdin, payload.as_bytes()).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {}
+                Err(err) => return Err(err),
+            }
         }
         child.wait().await
     };
@@ -285,6 +293,15 @@ async fn post(client: &reqwest::Client, url: &str, event: &Event, timeout: Durat
         anyhow::bail!("{} answered {status}", safe_host(url));
     }
     Ok(())
+}
+
+async fn write_event(
+    stdin: &mut tokio::process::ChildStdin,
+    payload: &[u8],
+) -> std::io::Result<()> {
+    stdin.write_all(payload).await?;
+    stdin.write_all(b"\n").await?;
+    stdin.shutdown().await
 }
 
 /// The scheme and host, which is enough to say which sink failed and carries
@@ -450,6 +467,37 @@ mod tests {
     /// A handler that never reads its stdin blocks the writer once the pipe
     /// buffer fills. One task owns the pipeline, so timing only the wait would
     /// leave a daemon that neither delivers nor shuts down.
+    /// A handler can exit before it reads anything — a trigger that acts on
+    /// the fact of an event rather than its contents. The write then lands on
+    /// a closed pipe, and counting that as a failed delivery would report
+    /// every such handler as broken. It is the exit status that decides.
+    ///
+    /// This is the race macOS lost and Linux won: `true` exits immediately,
+    /// so whether the write completes at all is a matter of scheduling.
+    #[tokio::test]
+    async fn a_handler_that_ignores_its_input_still_counts_as_delivered() {
+        let sinks = SinkSet::build(
+            &[SinkConfig {
+                kind: SinkKind::Exec,
+                command: vec!["true".into()],
+                ..default_sink("agent")
+            }],
+            StdoutFormat::Ndjson,
+        )
+        .unwrap();
+
+        // Large enough that the write cannot complete in one go before the
+        // child has exited, so the broken pipe is reached deterministically.
+        let mut wide = event();
+        wide.text = Some("x".repeat(4 * 1024 * 1024));
+
+        for _ in 0..5 {
+            sinks.deliver(&wide, &["agent".to_string()]).await;
+        }
+        assert_eq!(sinks.failed(), 0, "a closed stdin is not a failed delivery");
+        assert_eq!(sinks.delivered(), 5);
+    }
+
     #[tokio::test]
     async fn a_command_that_never_reads_its_input_is_killed_at_the_timeout() {
         let sinks = SinkSet::build(

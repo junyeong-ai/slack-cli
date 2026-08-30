@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An `exec` sink whose handler exits without reading its input was reported as a failed delivery. A handler that acts on the fact of an event rather than its contents is entitled to do that; the write then lands on a pipe it has already closed, and the broken pipe was being counted rather than its exit status. Caught by CI on macOS, where the race falls the other way than on Linux
 - `scripts/uninstall.sh` offered to remove the configuration directory without saying that it now also holds the event store. The cache is refetchable and a login replaces the auth store, but Socket Mode does not replay: an event collected and not yet read with `events pull` is there and nowhere else, so the prompt names it
 - `.env.example` documented `DATA_PATH`, which nothing has ever read. The cache and event-store locations are `[cache] data_path` and `[events] data_path` in `config.toml`
 
