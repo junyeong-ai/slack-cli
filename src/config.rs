@@ -397,22 +397,45 @@ impl Config {
     }
 }
 
-/// `toml` renders a parse failure by quoting the offending line, which prints
-/// whatever value sits there — a token or client secret left behind by an
-/// older schema is rejected, and echoing it would spread the credential to the
-/// terminal and to any log capturing it. Only the position and the diagnostic
-/// cross this boundary.
+/// A rejected config is often one still holding a credential — a `user_token`
+/// from an older schema, a `client_secret` from a newer one — and the rejection
+/// runs on every invocation. `toml` quotes the offending line, and serde's own
+/// diagnostic repeats the value for a type or variant mismatch, so both would
+/// carry the credential to the terminal and into whatever captures it. Only the
+/// position and a diagnostic stripped of the file's own text cross this
+/// boundary.
 fn parse_error(path: &Path, content: &str, error: &toml::de::Error) -> anyhow::Error {
     let Some(span) = error.span() else {
         return anyhow!("{}: {}", path.display(), error.message());
     };
     let (line, column) = line_column(content, span.start);
+    let message = match content.get(span) {
+        Some(source) => without_source_text(error.message(), source),
+        None => error.message().to_string(),
+    };
     anyhow!(
-        "{}: line {line}, column {column}: {}",
-        path.display(),
-        error.message()
+        "{}: line {line}, column {column}: {message}",
+        path.display()
     )
 }
+
+/// Removes the file's own text from a diagnostic when the error points at a
+/// string literal. A bare key is left in place — naming it is what makes the
+/// message actionable, and a key is not a secret.
+fn without_source_text(message: &str, source: &str) -> String {
+    if !source.starts_with(['"', '\'']) {
+        return message.to_string();
+    }
+    let stripped = message.replace(source, REDACTED);
+    let unquoted = source.trim_matches(['"', '\'']);
+    if unquoted.is_empty() {
+        stripped
+    } else {
+        stripped.replace(unquoted, REDACTED)
+    }
+}
+
+const REDACTED: &str = "<redacted>";
 
 fn line_column(content: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
@@ -486,7 +509,8 @@ mod tests {
     #[test]
     fn a_rejected_config_never_echoes_its_contents() {
         let dir = tempfile::tempdir().unwrap();
-        for (name, body, key, value) in [
+        for (name, body, keep, value) in [
+            // An unknown key is named: it is what the user has to delete.
             (
                 "auth.toml",
                 "[auth]\nclient_id = \"1.2\"\nclient_secret = \"shh-canary\"\n",
@@ -497,6 +521,19 @@ mod tests {
                 "legacy.toml",
                 "user_token = \"xoxp-canary\"\n",
                 "user_token",
+                "xoxp-canary",
+            ),
+            // A credential landed in a typed field: serde repeats the value.
+            (
+                "typed.toml",
+                "[cache]\nttl_users_hours = \"xoxp-canary\"\n",
+                "expected u64",
+                "xoxp-canary",
+            ),
+            (
+                "variant.toml",
+                "[cache]\nchannel_types = [\"xoxp-canary\"]\n",
+                "public_channel",
                 "xoxp-canary",
             ),
         ] {
@@ -510,7 +547,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(" | ");
 
-            assert!(chain.contains(key), "{name} should name the key: {chain}");
+            assert!(chain.contains(keep), "{name} lost {keep}: {chain}");
             assert!(!chain.contains(value), "{name} leaked the value: {chain}");
         }
     }
