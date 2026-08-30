@@ -477,11 +477,11 @@ const AUTH_ERROR_CODES: &[&str] = &[
 fn classify_error(err: &anyhow::Error) -> (String, u8) {
     if let Some(api) = err.downcast_ref::<SlackApiError>() {
         return match api {
-            SlackApiError::Api { code } if code == "ratelimited" => (code.clone(), 4),
-            SlackApiError::Api { code } if AUTH_ERROR_CODES.contains(&code.as_str()) => {
+            SlackApiError::Api { code, .. } if code == "ratelimited" => (code.clone(), 4),
+            SlackApiError::Api { code, .. } if AUTH_ERROR_CODES.contains(&code.as_str()) => {
                 (code.clone(), 3)
             }
-            SlackApiError::Api { code } => (code.clone(), 1),
+            SlackApiError::Api { code, .. } => (code.clone(), 1),
             SlackApiError::RateLimitExhausted { .. } => ("rate_limited".to_string(), 4),
             SlackApiError::Http { .. } => ("http_error".to_string(), 1),
             SlackApiError::Transport { .. } => ("network_error".to_string(), 1),
@@ -844,6 +844,8 @@ mod tests {
     fn classify_error_keeps_slack_code_for_generic_api_errors() {
         let err = anyhow::Error::from(SlackApiError::Api {
             code: "channel_not_found".to_string(),
+            method: "conversations.history".into(),
+            required: Vec::new(),
         });
         assert_eq!(classify_error(&err), ("channel_not_found".to_string(), 1));
     }
@@ -852,6 +854,8 @@ mod tests {
     fn classify_error_maps_slack_auth_codes_to_exit_3() {
         let err = anyhow::Error::from(SlackApiError::Api {
             code: "invalid_auth".to_string(),
+            method: "conversations.history".into(),
+            required: Vec::new(),
         });
         assert_eq!(classify_error(&err), ("invalid_auth".to_string(), 3));
     }
@@ -866,6 +870,8 @@ mod tests {
 
         let in_body = anyhow::Error::from(SlackApiError::Api {
             code: "ratelimited".to_string(),
+            method: "conversations.history".into(),
+            required: Vec::new(),
         });
         assert_eq!(classify_error(&in_body), ("ratelimited".to_string(), 4));
     }
@@ -874,6 +880,8 @@ mod tests {
     fn classify_error_survives_context_wrapping() {
         let err = anyhow::Error::from(SlackApiError::Api {
             code: "invalid_auth".to_string(),
+            method: "conversations.history".into(),
+            required: Vec::new(),
         })
         .context("sending message");
         assert_eq!(classify_error(&err).1, 3);

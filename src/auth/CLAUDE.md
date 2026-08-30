@@ -6,7 +6,7 @@ Single facade (`Authenticator`) resolves tokens for every Slack API call and own
 
 - **`auth.json`** at the platform config directory (`paths::AppPaths::auth_store`), mode `0600` inside a `0700` directory on Unix — `restrict_file`/`restrict_directory` are no-ops elsewhere, so on Windows the file inherits the `%APPDATA%` ACL. Schema-versioned, atomic write via `tempfile::persist`. Machine-managed; do not hand-edit.
 - **`auth.json.lock`** beside it. Advisory lock only, never read. It is a sibling because writes replace `auth.json` by rename, which would strand a lock held on the unlinked inode.
-- **`config.toml`** carries the Slack app's `client_id` under `[auth]` and never a token. The id is the app's public identifier — it travels in the authorize URL — so recording it stores nothing secret.
+- **`config.toml`** carries the Slack app's `client_id` under `[auth]`, optionally `exclude_scopes`, and never a token. The id is the app's public identifier — it travels in the authorize URL — so recording it stores nothing secret.
 - **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation. `SLACK_CLI_CLIENT_ID` names the Slack app, outranking `config.toml [auth]` and outranked by `--client-id`.
 
 ## Layout

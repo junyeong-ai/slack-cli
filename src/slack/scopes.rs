@@ -3,6 +3,25 @@ use crate::slack::api_config::{API_METHODS, TokenKind};
 /// The OAuth scopes an installation must grant for a token of this kind to
 /// reach every method the CLI calls. Derived from the API registry, so a
 /// method added there is impossible to forget here.
+/// The scopes `auth login` asks Slack for: everything the kind can reach, less
+/// what the installation has excluded. An excluded scope costs the commands
+/// that need it; `SlackCore` names it when Slack refuses the call.
+pub fn requested(kind: TokenKind, excluded: &[String]) -> Vec<&'static str> {
+    required(kind)
+        .into_iter()
+        .filter(|scope| !excluded.iter().any(|entry| entry == scope))
+        .collect()
+}
+
+/// Whether any method the CLI calls declares this scope, for either kind. What
+/// `exclude_scopes` is validated against, so a name that no method needs is
+/// rejected rather than silently ignored.
+pub fn is_known(scope: &str) -> bool {
+    [TokenKind::User, TokenKind::Bot]
+        .into_iter()
+        .any(|kind| required(kind).contains(&scope))
+}
+
 pub fn required(kind: TokenKind) -> Vec<&'static str> {
     let mut scopes: Vec<&'static str> = API_METHODS
         .iter()
@@ -18,6 +37,33 @@ pub fn required(kind: TokenKind) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_excluded_scope_is_not_requested() {
+        let full = required(TokenKind::User);
+        let dropped = full[0].to_string();
+        let asked = requested(TokenKind::User, std::slice::from_ref(&dropped));
+
+        assert_eq!(asked.len(), full.len() - 1);
+        assert!(!asked.contains(&dropped.as_str()));
+    }
+
+    #[test]
+    fn excluding_nothing_asks_for_everything() {
+        for kind in [TokenKind::User, TokenKind::Bot] {
+            assert_eq!(requested(kind, &[]), required(kind));
+        }
+    }
+
+    /// `exclude_scopes` is validated against this, so a scope no method needs
+    /// is refused rather than silently doing nothing.
+    #[test]
+    fn only_scopes_some_method_declares_are_known() {
+        assert!(is_known("users:read"));
+        assert!(is_known("metadata.message:read"));
+        assert!(!is_known("users:reed"));
+        assert!(!is_known("search:read"));
+    }
 
     #[test]
     fn scopes_are_sorted_and_deduplicated() {

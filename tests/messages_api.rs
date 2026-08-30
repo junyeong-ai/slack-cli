@@ -347,7 +347,7 @@ async fn api_error_surfaces_slack_error_code_as_typed_error() {
         .unwrap_err();
 
     match err.downcast_ref::<slack_cli::slack::SlackApiError>() {
-        Some(slack_cli::slack::SlackApiError::Api { code }) => {
+        Some(slack_cli::slack::SlackApiError::Api { code, .. }) => {
             assert_eq!(code, "channel_not_found");
         }
         other => panic!("expected SlackApiError::Api, got {other:?}"),

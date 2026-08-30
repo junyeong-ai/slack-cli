@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
 
-use crate::auth::Authenticator;
+use crate::auth::{Authenticator, TokenKind};
 use crate::config::{Config, SlackAppDistribution};
 use crate::slack::api_config::{
     API_CONFIGS, ApiConfig, RatePolicy, RequestEncoding, get_api_config,
@@ -76,14 +76,20 @@ impl SlackCore {
 
     pub async fn api_call(&self, method: &str, params: Value) -> Result<Value> {
         let api_config = lookup_config(method)?;
-        let token = self.auth.token_for(api_config.token_policy).await?;
-        self.dispatch(method, api_config, params, token.expose_secret())
-            .await
+        let (token, kind) = self.auth.token_for(api_config.token_policy).await?;
+        self.dispatch(
+            method,
+            api_config,
+            params,
+            token.expose_secret(),
+            Some(kind),
+        )
+        .await
     }
 
     pub async fn api_call_with(&self, method: &str, params: Value, token: &str) -> Result<Value> {
         let api_config = lookup_config(method)?;
-        self.dispatch(method, api_config, params, token).await
+        self.dispatch(method, api_config, params, token, None).await
     }
 
     async fn dispatch(
@@ -92,6 +98,7 @@ impl SlackCore {
         api_config: &'static ApiConfig,
         mut params: Value,
         token: &str,
+        kind: Option<TokenKind>,
     ) -> Result<Value> {
         let rate_policy = Self::effective_rate_policy(
             &self.config.connection.app_distribution,
@@ -209,6 +216,8 @@ impl SlackCore {
                     .unwrap_or("unknown_error");
                 return Err(SlackApiError::Api {
                     code: code.to_string(),
+                    method: method.to_string(),
+                    required: scope_requirement(api_config, kind),
                 }
                 .into());
             }
@@ -237,6 +246,21 @@ impl SlackCore {
 
 fn lookup_config(method: &str) -> Result<&'static ApiConfig> {
     get_api_config(method).ok_or_else(|| anyhow::anyhow!("Unknown API method: {}", method))
+}
+
+/// The scopes the method declares for the kind of token that was actually
+/// sent. Slack says only that a scope is missing, not which; this is what the
+/// registry already knows about the call that failed.
+fn scope_requirement(api_config: &'static ApiConfig, kind: Option<TokenKind>) -> Vec<String> {
+    let Some(kind) = kind else {
+        return Vec::new();
+    };
+    api_config
+        .scopes
+        .of(kind)
+        .iter()
+        .map(|scope| (*scope).to_string())
+        .collect()
 }
 
 #[cfg(test)]

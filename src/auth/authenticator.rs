@@ -67,14 +67,16 @@ impl Authenticator {
         })
     }
 
-    pub async fn token_for(&self, policy: TokenPolicy) -> Result<Secret, AuthError> {
+    /// The token to send, with the kind it came from: a caller that gets a
+    /// scope refusal from Slack needs the kind to name what the method wanted.
+    pub async fn token_for(&self, policy: TokenPolicy) -> Result<(Secret, TokenKind), AuthError> {
         if self.overrides.has_inline_tokens() {
             return policy
                 .select(
                     self.overrides.user_token.is_some(),
                     self.overrides.bot_token.is_some(),
                 )
-                .and_then(|kind| self.overrides.get(kind).cloned())
+                .and_then(|kind| Some((self.overrides.get(kind).cloned()?, kind)))
                 .ok_or_else(|| AuthError::NoTokenForPolicy {
                     profile: "env".into(),
                     policy,
@@ -100,7 +102,7 @@ impl Authenticator {
             (name, kind)
         };
 
-        self.token_for_profile(&name, kind).await
+        Ok((self.token_for_profile(&name, kind).await?, kind))
     }
 
     /// The usable token of one kind from a named profile, renewed first if it

@@ -58,7 +58,11 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 
 `MethodScopes` on each entry of `API_METHODS` records what a token must carry for *this CLI's* use of the method. Where the CLI always sends an optional argument that widens the requirement, the scope behind it belongs there too: `include_all_metadata` on conversation reads pulls in `metadata.message:read` for bot tokens — Slack supports that scope on no other kind — and the default `email` output field pulls in `users:read.email`.
 
-`slack::scopes::required(kind)` is the union over every method the kind can reach. It is what `auth login` requests and what `auth scopes` prints, so a scope can never drift from the methods that need it. `tests/documented_scopes.rs` holds both READMEs to the same source.
+`slack::scopes::required(kind)` is the union over every method the kind can reach, so a scope can never drift from the methods that need it. `tests/documented_scopes.rs` holds both READMEs to the same source.
+
+`scopes::requested(kind, excluded)` is that union less `config.toml [auth].exclude_scopes`, and is what `auth login` asks Slack for and what `auth scopes` prints. Slack grants a scope set atomically, so an app that cannot register one scope cannot be installed at all; subtracting it costs only the methods that declare it. `scopes::is_known` validates each exclusion against the registry, so a name no method needs is refused rather than silently doing nothing.
+
+When Slack answers `missing_scope`, `SlackCore` reports which scopes the method declares for the kind of token it sent — `Authenticator::token_for` returns that kind for this reason. There is no pre-flight check: a pasted token records no scopes, so the only sound signal is Slack's own refusal.
 
 ### Exception: `oauth.v2.access`
 

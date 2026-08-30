@@ -70,7 +70,7 @@ pub async fn handle(
         AuthAction::Use { name } => set_active(name, &authenticator, json).await,
 
         AuthAction::Scopes => {
-            print_scopes(json);
+            print_scopes(&config.auth.exclude_scopes, json);
             Ok(())
         }
     }
@@ -116,7 +116,10 @@ async fn login(
                 api_base_url: config.connection.api_base_url.clone(),
                 port: input.port,
                 no_browser: input.no_browser,
-                user_scopes: owned(scopes::required(TokenKind::User)),
+                user_scopes: owned(scopes::requested(
+                    TokenKind::User,
+                    &config.auth.exclude_scopes,
+                )),
             };
             browser_login::run(request).await?
         }
@@ -240,9 +243,9 @@ fn slugify(input: &str) -> String {
     }
 }
 
-fn print_scopes(json: bool) {
-    let user = scopes::required(TokenKind::User);
-    let bot = scopes::required(TokenKind::Bot);
+fn print_scopes(excluded: &[String], json: bool) {
+    let user = scopes::requested(TokenKind::User, excluded);
+    let bot = scopes::requested(TokenKind::Bot, excluded);
     if json {
         println!("{}", json!({ "user": user, "bot": bot }));
     } else {
@@ -608,6 +611,7 @@ mod tests {
     fn stored(client_id: Option<&str>) -> AuthConfig {
         AuthConfig {
             client_id: client_id.map(str::to_string),
+            exclude_scopes: Vec::new(),
         }
     }
 

@@ -34,6 +34,13 @@ pub struct Config {
 pub struct AuthConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    /// Scopes to leave out of the authorization request, for an app the
+    /// workspace will not grant them to. Every entry must be one the CLI would
+    /// otherwise ask for, so a name no method needs is refused instead of
+    /// quietly doing nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -250,6 +257,15 @@ impl Config {
     }
 
     fn validate(&self) -> Result<()> {
+        for scope in &self.auth.exclude_scopes {
+            if !crate::slack::scopes::is_known(scope) {
+                anyhow::bail!(
+                    "auth.exclude_scopes lists {scope:?}, which no method this CLI calls \
+                     requires. `slack-cli auth scopes` prints the set it asks for"
+                );
+            }
+        }
+
         if self.cache.ttl_users_hours == 0 || self.cache.ttl_channels_hours == 0 {
             anyhow::bail!("cache TTL values must be greater than zero");
         }
@@ -456,6 +472,25 @@ mod tests {
 
             let config = Config::load(&paths(), Some(path), None).unwrap();
             assert_eq!(config.auth.client_id.as_deref(), Some("1.2"));
+        }
+
+        #[test]
+        fn excluded_scopes_load_and_must_be_ones_the_cli_asks_for() {
+            let dir = tempfile::tempdir().unwrap();
+
+            let good = dir.path().join("good.toml");
+            std::fs::write(
+                &good,
+                "[auth]\nexclude_scopes = [\"pins:write\", \"bookmarks:read\"]\n",
+            )
+            .unwrap();
+            let config = Config::load(&paths(), Some(good), None).unwrap();
+            assert_eq!(config.auth.exclude_scopes, ["pins:write", "bookmarks:read"]);
+
+            let bad = dir.path().join("bad.toml");
+            std::fs::write(&bad, "[auth]\nexclude_scopes = [\"pins:wrote\"]\n").unwrap();
+            let err = Config::load(&paths(), Some(bad), None).unwrap_err();
+            assert!(err.to_string().contains("pins:wrote"), "{err}");
         }
 
         #[test]

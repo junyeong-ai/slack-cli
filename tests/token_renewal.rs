@@ -92,7 +92,7 @@ async fn an_expiring_token_is_renewed_before_it_is_handed_out() {
     let store = Store::with(profile(expiring_in(30), json!({"id": "123.456"})));
     let auth = store.authenticator(server.uri()).await;
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxe.xoxp-renewed");
 }
 
@@ -115,7 +115,7 @@ async fn a_renewal_persists_the_successor_pair_to_disk() {
     // A separate process reading the store afterwards must see the successor,
     // not spend the refresh token Slack has already revoked.
     let reopened = store.authenticator(server.uri()).await;
-    let token = reopened.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = reopened.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxe.xoxp-renewed");
 }
 
@@ -132,7 +132,7 @@ async fn a_token_outside_the_renewal_window_is_used_as_is() {
     let store = Store::with(profile(expiring_in(600), json!({"id": "123.456"})));
     let auth = store.authenticator(server.uri()).await;
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxe.xoxp-current");
 }
 
@@ -152,7 +152,7 @@ async fn a_token_without_an_expiry_is_never_renewed() {
     ));
     let auth = store.authenticator(server.uri()).await;
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxp-permanent");
 }
 
@@ -176,7 +176,7 @@ async fn a_token_that_cannot_be_renewed_is_used_until_it_actually_expires() {
     ));
     let auth = store.authenticator(server.uri()).await;
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxe.xoxp-no-refresh");
 }
 
@@ -261,7 +261,7 @@ async fn a_schema_1_store_is_carried_forward_on_first_open() {
     }));
 
     let auth = store.authenticator(server.uri()).await;
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxp-legacy");
 
     let saved = store.read();
@@ -305,8 +305,8 @@ async fn concurrent_invocations_renew_a_credential_exactly_once() {
         second.token_for(TokenPolicy::UserRequired),
     );
 
-    assert_eq!(a.unwrap().expose_secret(), "xoxe.xoxp-renewed");
-    assert_eq!(b.unwrap().expose_secret(), "xoxe.xoxp-renewed");
+    assert_eq!(a.unwrap().0.expose_secret(), "xoxe.xoxp-renewed");
+    assert_eq!(b.unwrap().0.expose_secret(), "xoxe.xoxp-renewed");
 
     // `.expect(1)` is asserted when the server drops; make that explicit here
     // so the reason for the assertion is visible at the point it matters.
@@ -323,7 +323,7 @@ async fn a_refused_renewal_falls_back_to_the_token_still_in_date() {
     let store = Store::with(profile(expiring_in(30), json!({"id": "123.456"})));
     let auth = store.authenticator(server.uri()).await;
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxe.xoxp-current");
 }
 
@@ -338,7 +338,7 @@ async fn a_missing_client_falls_back_to_the_token_still_in_date() {
     let store = Store::with(contents);
     let auth = store.authenticator(server.uri()).await;
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxe.xoxp-current");
 }
 
@@ -410,6 +410,6 @@ async fn environment_tokens_bypass_the_store_entirely() {
     .await
     .unwrap();
 
-    let token = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
+    let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxp-from-env");
 }

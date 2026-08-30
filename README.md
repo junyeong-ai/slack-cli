@@ -268,6 +268,7 @@ slack-cli self update --version 0.9.0   # 특정 버전으로
 ```toml
 [auth]
 client_id = "1234.5678"        # 브라우저 로그인이 인가받을 앱 (= --client-id)
+exclude_scopes = []            # 워크스페이스가 허용하지 않는 scope (아래 참조)
 
 [cache]
 ttl_users_hours = 168          # 1주일
@@ -301,6 +302,10 @@ exponential_base = 2.0
 `app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
 
 `[auth]`의 우선순위는 **명령행 플래그 > 환경변수 > `config.toml`** 입니다. `client_id`를 여기 두면 `auth login`에 매번 플래그나 환경변수를 붙일 필요가 없습니다.
+
+`exclude_scopes`는 앱이나 워크스페이스가 허용하지 않는 scope를 인가 요청에서 뺍니다. Slack은 scope 집합을 통째로 승인하므로, 등록할 수 없는 scope가 하나라도 섞이면 로그인 전체가 거부됩니다. 항목은 CLI가 원래 요청하는 scope여야 하며, 아닌 이름은 설정 로드 시점에 거부됩니다. `auth scopes`는 제외를 반영한 실효 목록을 출력하므로 그대로 앱에 등록하면 됩니다.
+
+제외한 scope가 필요한 명령은 Slack이 거부하고, CLI가 어느 scope였는지 알려줍니다 — `Slack API error: missing_scope. bookmarks.list needs bookmarks:read`.
 
 ### 환경변수
 

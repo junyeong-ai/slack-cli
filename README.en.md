@@ -279,6 +279,7 @@ Use `install.sh` to move to one of those.
 ```toml
 [auth]
 client_id = "1234.5678"        # the app a browser login authorizes against (= --client-id)
+exclude_scopes = []            # scopes the workspace will not grant (see below)
 
 [cache]
 ttl_users_hours = 168          # 1 week
@@ -314,6 +315,10 @@ exponential_base = 2.0
 Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
 
 `[auth]` resolves as **command-line flag > environment variable > `config.toml`**. Recording `client_id` here spares every `auth login` a flag or an environment variable.
+
+`exclude_scopes` leaves scopes out of the authorization request for an app or workspace that will not grant them. Slack approves a scope set as a whole, so one scope the app cannot register fails the whole login. Every entry must be a scope the CLI would otherwise ask for; anything else is refused when the config loads. `auth scopes` prints the effective list, so what you register on the Slack app is what the login requests.
+
+A command that needs an excluded scope is refused by Slack, and the CLI names the scope: `Slack API error: missing_scope. bookmarks.list needs bookmarks:read`.
 
 ### Environment variables
 
