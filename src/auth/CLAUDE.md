@@ -30,7 +30,7 @@ auth/
 │   └── browser_login.rs  Bind loopback → authorize → Profile
 └── oauth/
     ├── flow.rs          Authorization — consent screen through token exchange
-    ├── client.rs        OAuthClient — client id + optional secret, Basic auth
+    ├── client.rs        OAuthClient — the Slack app's client id
     ├── pkce.rs          RFC 7636 verifier + S256 challenge
     ├── callback.rs      LoopbackReceiver (127.0.0.1 only, single-shot accept)
     ├── browser.rs       `open` crate wrapper, honours --no-browser

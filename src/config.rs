@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::paths::{self, AppPaths};
 use crate::slack::ConversationType;
@@ -229,7 +229,8 @@ impl Config {
         if path.exists() {
             let content = std::fs::read_to_string(&path)
                 .context(format!("Failed to read config: {}", path.display()))?;
-            config = toml::from_str(&content).context("Failed to parse config.toml")?;
+            config =
+                toml::from_str(&content).map_err(|error| parse_error(&path, &content, &error))?;
         }
 
         if let Some(dir) = cli_data_dir {
@@ -396,6 +397,40 @@ impl Config {
     }
 }
 
+/// `toml` renders a parse failure by quoting the offending line, which prints
+/// whatever value sits there — a token or client secret left behind by an
+/// older schema is rejected, and echoing it would spread the credential to the
+/// terminal and to any log capturing it. Only the position and the diagnostic
+/// cross this boundary.
+fn parse_error(path: &Path, content: &str, error: &toml::de::Error) -> anyhow::Error {
+    let Some(span) = error.span() else {
+        return anyhow!("{}: {}", path.display(), error.message());
+    };
+    let (line, column) = line_column(content, span.start);
+    anyhow!(
+        "{}: line {line}, column {column}: {}",
+        path.display(),
+        error.message()
+    )
+}
+
+fn line_column(content: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut column = 1;
+    for (index, character) in content.char_indices() {
+        if index >= offset {
+            break;
+        }
+        if character == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +477,41 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(" | ");
             assert!(chain.contains("client_secret"), "chain: {chain}");
+        }
+    }
+
+    /// A config the CLI refuses is often one holding a credential from an
+    /// older schema. The diagnostic has to name the key and the position
+    /// without carrying the value into the terminal or a log.
+    #[test]
+    fn a_rejected_config_never_echoes_its_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, body, key, value) in [
+            (
+                "auth.toml",
+                "[auth]\nclient_id = \"1.2\"\nclient_secret = \"shh-canary\"\n",
+                "client_secret",
+                "shh-canary",
+            ),
+            (
+                "legacy.toml",
+                "user_token = \"xoxp-canary\"\n",
+                "user_token",
+                "xoxp-canary",
+            ),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+
+            let err = Config::load(&paths(), Some(path), None).unwrap_err();
+            let chain: String = err
+                .chain()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(" | ");
+
+            assert!(chain.contains(key), "{name} should name the key: {chain}");
+            assert!(!chain.contains(value), "{name} leaked the value: {chain}");
         }
     }
 

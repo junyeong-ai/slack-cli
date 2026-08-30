@@ -8,9 +8,8 @@ sigstore signatures published with each release.
 
 ## Credential storage
 
-`slack-cli` writes every credential it holds — user and bot access tokens,
-their refresh tokens, and the OAuth client secret when the confidential-client
-flow is used — to `auth.json` in the platform config directory, with mode
+`slack-cli` writes every credential it holds — user and bot access tokens and
+their refresh tokens — to `auth.json` in the platform config directory, with mode
 `0600` and its parent directory tightened to `0700` on Unix. The file is
 rewritten atomically and guarded by an advisory lock so concurrent invocations
 cannot interleave writes. Permissions are re-tightened on every read, and a
