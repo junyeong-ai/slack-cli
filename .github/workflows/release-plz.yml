@@ -12,31 +12,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release-pr:
-    name: Open release PR
-    if: vars.ENABLE_RELEASE_PLZ == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
-        with:
-          cache: false
-
-      - name: Run release-plz release-pr
-        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
-        with:
-          command: release-pr
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
-
   release:
     name: Tag releases
     if: vars.ENABLE_RELEASE_PLZ == 'true'
