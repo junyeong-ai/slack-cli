@@ -15,30 +15,46 @@ fn rejected(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-/// A do-nothing editor. `true` is not a program on a stock Windows install, so
-/// a stub keeps these tests measuring the CLI rather than the machine.
-fn stub_editor(dir: &std::path::Path) -> std::path::PathBuf {
+/// An editor that records the file it was asked to open. `true` is not a
+/// program on a stock Windows install, and a stub that only exits proves
+/// nothing about whether the editor ran at all.
+fn stub_editor(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let opened = dir.join("opened.txt");
     let (name, body) = if cfg!(windows) {
-        ("editor.cmd", "@exit /b 0\r\n")
+        (
+            "editor.cmd",
+            format!("@echo %1> \"{}\"\r\n", opened.display()),
+        )
     } else {
-        ("editor.sh", "#!/bin/sh\nexit 0\n")
+        (
+            "editor.sh",
+            format!("#!/bin/sh\nprintf '%s' \"$1\" > '{}'\n", opened.display()),
+        )
     };
-    let path = dir.join(name);
-    std::fs::write(&path, body).unwrap();
+    let editor = dir.join(name);
+    std::fs::write(&editor, body).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    path
+    (editor, opened)
 }
 
 fn run(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let (editor, _) = stub_editor(dir);
     Command::new(BIN)
         .args(args)
-        .env("EDITOR", stub_editor(dir))
+        .env("EDITOR", editor)
         .output()
         .expect("binary runs")
+}
+
+/// What the editor was handed, or `None` when it was never launched.
+fn opened_file(dir: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(dir.join("opened.txt"))
+        .ok()
+        .map(|opened| opened.trim().to_string())
 }
 
 #[test]
@@ -83,6 +99,11 @@ fn config_edit_opens_a_valid_config() {
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("unreachable"), "{stderr}");
+    assert_eq!(
+        opened_file(dir.path()).as_deref(),
+        Some(path.to_str().unwrap()),
+        "the editor must be handed the config"
+    );
 }
 
 /// `show` reads the config, so it stays refused — the repair commands are the
