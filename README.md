@@ -305,7 +305,7 @@ exponential_base = 2.0
 
 `exclude_scopes`는 앱이나 워크스페이스가 허용하지 않는 scope를 인가 요청에서 뺍니다. Slack은 scope 집합을 통째로 승인하므로, 등록할 수 없는 scope가 하나라도 섞이면 로그인 전체가 거부됩니다. 항목은 CLI가 원래 요청하는 scope여야 하며, 아닌 이름은 설정 로드 시점에 거부됩니다. `auth scopes`는 제외를 반영한 실효 목록을 출력하므로 그대로 앱에 등록하면 됩니다.
 
-제외한 scope가 필요한 명령은 Slack이 거부하고, CLI가 어느 scope였는지 알려줍니다 — `Slack API error: missing_scope. bookmarks.list needs bookmarks:read`.
+제외한 scope가 필요한 명령은 Slack이 거부하고, CLI가 어느 scope였는지 알려줍니다 — `Slack API error: missing_scope. bookmarks.list needs bookmarks:read; the token in use was not granted it`.
 
 ### 환경변수
 

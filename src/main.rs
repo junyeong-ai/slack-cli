@@ -63,10 +63,18 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<()> {
     let paths = AppPaths::resolve()?;
+    // `config path` and `config edit` are how a rejected config gets repaired,
+    // so neither may depend on it loading.
+    if let Command::Config { action } = &cli.command
+        && let Some(outcome) = handle_unloadable_config(action, cli.config.clone(), &paths)
+    {
+        return outcome;
+    }
+
     let config = config::Config::load(&paths, cli.config.clone(), cli.data_dir.clone())?;
 
     if let Command::Config { action } = &cli.command {
-        return handle_config_action(action, cli.json, cli.config.clone(), &paths, &config);
+        return handle_config_action(action, cli.json, &paths, &config);
     }
 
     // Neither an auth store nor a cache is involved in replacing the binary.
@@ -518,21 +526,36 @@ async fn handle_self_action(action: &SelfAction, as_json: bool) -> Result<()> {
     Ok(())
 }
 
+/// The config actions that must run while the file itself is unusable: `path`
+/// says where it is, `edit` opens it. `None` for the action that needs the
+/// config to have loaded.
+fn handle_unloadable_config(
+    action: &ConfigAction,
+    config_path: Option<std::path::PathBuf>,
+    paths: &AppPaths,
+) -> Option<Result<()>> {
+    match action {
+        ConfigAction::Path => {
+            let path = config_path.unwrap_or_else(|| paths.config_file());
+            println!("{}", path.display());
+            Some(Ok(()))
+        }
+        ConfigAction::Edit => Some(config::Config::edit(paths, config_path)),
+        ConfigAction::Show => None,
+    }
+}
+
 fn handle_config_action(
     action: &ConfigAction,
     as_json: bool,
-    config_path: Option<std::path::PathBuf>,
     paths: &AppPaths,
     config: &config::Config,
 ) -> Result<()> {
     match action {
         ConfigAction::Show => config.show(paths, as_json),
-        ConfigAction::Path => {
-            let path = config_path.unwrap_or_else(|| paths.config_file());
-            println!("{}", path.display());
-            Ok(())
+        ConfigAction::Path | ConfigAction::Edit => {
+            unreachable!("handled before the config is loaded")
         }
-        ConfigAction::Edit => config::Config::edit(paths, config_path),
     }
 }
 
@@ -837,6 +860,23 @@ async fn refresh_cache(
 
 #[cfg(test)]
 mod tests {
+    /// `path` and `edit` are the way out of a config the CLI refuses, so they
+    /// must not be routed through the load. The match in
+    /// `handle_unloadable_config` is exhaustive, so a new action has to choose.
+    #[test]
+    fn only_show_waits_for_the_config_to_load() {
+        let paths = AppPaths::resolve().unwrap();
+        assert!(handle_unloadable_config(&ConfigAction::Show, None, &paths).is_none());
+        assert!(
+            handle_unloadable_config(
+                &ConfigAction::Path,
+                Some(std::path::PathBuf::from("/tmp/does-not-matter.toml")),
+                &paths,
+            )
+            .is_some()
+        );
+    }
+
     use super::*;
     use serde_json::json;
 

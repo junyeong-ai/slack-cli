@@ -1,7 +1,9 @@
 //! The README is this project's user-facing reference, so the scope lists it
-//! publishes must be the ones `auth login` actually requests. Both are derived
-//! from the same API registry here, and drift fails the build rather than
-//! sending users to configure a Slack app that cannot serve the CLI.
+//! publishes must be the full set the API registry derives — what an app has to
+//! register to serve every command. `auth scopes` prints that set less whatever
+//! the local `exclude_scopes` drops, which is per-installation and must not
+//! reach the README. Drift fails the build rather than sending users to
+//! configure a Slack app that cannot serve the CLI.
 
 use slack_cli::slack::api_config::TokenKind;
 use slack_cli::slack::scopes;
@@ -43,8 +45,9 @@ fn every_readme_publishes_the_scopes_the_cli_requests() {
             assert_eq!(
                 documented(language, readme, marker),
                 required(kind),
-                "{language} documents the wrong {marker} scopes; \
-                 run `slack-cli auth scopes` and update the block"
+                "{language} documents the wrong {marker} scopes; they must \
+                 match `slack::scopes::required`, which is what `auth scopes` \
+                 prints with no exclusions configured"
             );
         }
     }

@@ -251,17 +251,20 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
-        config.validate()?;
+        config.validate(&path)?;
 
         Ok(config)
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, path: &Path) -> Result<()> {
+        // Every command loads the config, so this message has to stand on its
+        // own: the command it would otherwise point at fails the same way.
         for scope in &self.auth.exclude_scopes {
             if !crate::slack::scopes::is_known(scope) {
                 anyhow::bail!(
-                    "auth.exclude_scopes lists {scope:?}, which no method this CLI calls \
-                     requires. `slack-cli auth scopes` prints the set it asks for"
+                    "{}: auth.exclude_scopes lists {scope:?}, which no method this CLI calls \
+                     requires. Remove that entry",
+                    path.display()
                 );
             }
         }
@@ -330,6 +333,7 @@ impl Config {
             "  client_id: {}",
             self.auth.client_id.as_deref().unwrap_or("(unset)")
         );
+        println!("  exclude_scopes: {:?}", self.auth.exclude_scopes);
         println!("\nCache:");
         println!("  ttl_users_hours: {}", self.cache.ttl_users_hours);
         println!("  ttl_channels_hours: {}", self.cache.ttl_channels_hours);
@@ -489,8 +493,16 @@ mod tests {
 
             let bad = dir.path().join("bad.toml");
             std::fs::write(&bad, "[auth]\nexclude_scopes = [\"pins:wrote\"]\n").unwrap();
-            let err = Config::load(&paths(), Some(bad), None).unwrap_err();
-            assert!(err.to_string().contains("pins:wrote"), "{err}");
+            let err = Config::load(&paths(), Some(bad.clone()), None).unwrap_err();
+            let message = err.to_string();
+            assert!(message.contains("pins:wrote"), "{message}");
+            // Every command loads the config, so the one it would point at
+            // fails too; the message has to name the file instead.
+            assert!(
+                message.contains(&bad.display().to_string()),
+                "should name the file: {message}"
+            );
+            assert!(!message.contains("auth scopes"), "{message}");
         }
 
         #[test]

@@ -111,15 +111,13 @@ async fn login(
             static_login::run(user, bot, slack).await?
         }
         AuthMethod::Pkce => {
+            let user_scopes = login_scopes(&config.auth.exclude_scopes)?;
             let request = browser_login::Request {
                 client: build_client(input.client_id)?,
                 api_base_url: config.connection.api_base_url.clone(),
                 port: input.port,
                 no_browser: input.no_browser,
-                user_scopes: owned(scopes::requested(
-                    TokenKind::User,
-                    &config.auth.exclude_scopes,
-                )),
+                user_scopes,
             };
             browser_login::run(request).await?
         }
@@ -169,6 +167,20 @@ fn decide_method(input: &LoginInput) -> Result<AuthMethod> {
              provide --user-token/--bot-token, or run interactively"
         ))
     }
+}
+
+/// The user scopes a browser login asks for. An installation that has excluded
+/// every one of them would open a consent screen granting nothing, so it is
+/// refused here rather than in the browser.
+fn login_scopes(excluded: &[String]) -> Result<Vec<String>> {
+    let scopes = owned(scopes::requested(TokenKind::User, excluded));
+    if scopes.is_empty() {
+        anyhow::bail!(
+            "auth.exclude_scopes leaves no scope to request, so the authorization would \
+             grant nothing. Remove entries until at least one remains"
+        );
+    }
+    Ok(scopes)
 }
 
 fn build_client(client_id: Option<String>) -> Result<OAuthClient> {
@@ -666,6 +678,19 @@ mod tests {
         given.client_id = None;
         let given = given.with_stored_app(&stored(Some("stored-id")));
         assert_eq!(given.client_id.as_deref(), Some("stored-id"));
+    }
+
+    #[test]
+    fn a_login_that_would_request_nothing_is_refused() {
+        let everything: Vec<String> = scopes::required(TokenKind::User)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let err = login_scopes(&everything).unwrap_err();
+        assert!(err.to_string().contains("exclude_scopes"), "{err}");
+
+        let kept = login_scopes(&everything[1..]).unwrap();
+        assert_eq!(kept.len(), 1);
     }
 
     #[test]
