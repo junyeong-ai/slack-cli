@@ -506,6 +506,24 @@ mod tests {
                 "user_token",
                 "xoxp-canary",
             ),
+            (
+                "legacy-bot.toml",
+                "bot_token = \"xoxb-canary\"\n",
+                "bot_token",
+                "xoxb-canary",
+            ),
+            (
+                "pool.toml",
+                "[connection]\nmax_idle_per_host = \"canary\"\n",
+                "max_idle_per_host",
+                "canary",
+            ),
+            (
+                "pool-dotted.toml",
+                "connection.pool_idle_timeout_seconds = \"canary\"\n",
+                "pool_idle_timeout_seconds",
+                "canary",
+            ),
         ] {
             let path = dir.path().join(name);
             std::fs::write(&path, body).unwrap();
