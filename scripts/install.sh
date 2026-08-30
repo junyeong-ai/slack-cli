@@ -1,6 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+    cat <<EOF
+Usage: install.sh [-h]
+
+Settings come from the environment, so they survive \`curl … | bash\`:
+
+  SLACK_CLI_VERSION   Release tag to install (default: the latest)
+  INSTALL_DIR         Where the binary goes (default: \$HOME/.local/bin)
+
+Options:
+  -h, --help          Show this help
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
 BINARY_NAME="slack-cli"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 REPO="junyeong-ai/slack-cli"
@@ -158,9 +186,9 @@ download_binary() {
 
     echo "🔐 Verifying checksum..." >&2
     if ! (cd "$BINARY_TMP_DIR" && curl -fsSLO "$checksum_url"); then
-        echo "❌ Checksum download failed" >&2
+        echo "❌ Checksum download failed for $archive" >&2
         rm -rf "$BINARY_TMP_DIR"
-        return 1
+        return 2
     fi
 
     # Compare digests directly instead of `sha256sum -c`: the "latest" alias
@@ -172,33 +200,33 @@ download_binary() {
     actual=$(compute_sha256 "$BINARY_TMP_DIR/$archive") || {
         echo "❌ No checksum tool found (need sha256sum or shasum)" >&2
         rm -rf "$BINARY_TMP_DIR"
-        return 1
+        return 2
     }
     if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
         echo "❌ Checksum mismatch for $archive" >&2
         echo "   expected: ${expected:-<empty>}" >&2
         echo "   actual:   $actual" >&2
         rm -rf "$BINARY_TMP_DIR"
-        return 1
+        return 2
     fi
     echo "   ✅ SHA-256 verified" >&2
 
     verify_signature "$url" "$archive" || {
         rm -rf "$BINARY_TMP_DIR"
-        return 1
+        return 2
     }
 
     echo "📦 Extracting..." >&2
     if ! (cd "$BINARY_TMP_DIR" && tar -xzf "$archive") >&2; then
         rm -rf "$BINARY_TMP_DIR"
-        return 1
+        return 2
     fi
     binary_path="$BINARY_TMP_DIR/$BINARY_NAME"
 
     if [ ! -x "$binary_path" ]; then
         echo "❌ Archive did not contain executable $BINARY_NAME" >&2
         rm -rf "$BINARY_TMP_DIR"
-        return 1
+        return 2
     fi
 
     echo "$binary_path"
@@ -469,12 +497,15 @@ main() {
     local display_install_dir
     local command_name
     local method
+    local download_status
+    local pinned
     target=$(detect_platform)
     version="${SLACK_CLI_VERSION:-}"
     version="${version#v}"
     if [ "$version" = "latest" ]; then
         version=""
     fi
+    pinned="$version"
 
     if command -v curl >/dev/null; then
         if [ -z "$version" ]; then
@@ -505,10 +536,24 @@ main() {
                 binary_path=$(build_from_source)
                 ;;
             1|"")
-                binary_path=$(download_binary "$version" "$target") || {
-                    echo "⚠️  Download or verification failed, falling back to source build" >&2
+                # A binary that could not be fetched may be built instead. One
+                # that arrived and failed its checksum or signature may not:
+                # falling back would turn a tampered download into a silent
+                # change of install method.
+                download_status=0
+                binary_path=$(download_binary "$version" "$target") || download_status=$?
+                if [ "$download_status" -eq 2 ]; then
+                    exit 1
+                elif [ "$download_status" -ne 0 ]; then
+                    # Building a different version than the one asked for is a
+                    # substitution, not a fallback.
+                    if [ -n "$pinned" ]; then
+                        echo "❌ No prebuilt binary for v$pinned on $target" >&2
+                        exit 1
+                    fi
+                    echo "⚠️  Could not download a prebuilt binary; building from source" >&2
                     binary_path=$(build_from_source)
-                }
+                fi
                 binary_dir="$(dirname "$binary_path")"
                 case "$(basename "$binary_dir")" in
                     slack-cli-install.*) BINARY_TMP_DIR="$binary_dir" ;;
