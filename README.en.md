@@ -173,7 +173,7 @@ slack-cli auth login --client-id <client-id>
 SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 ```
 
-`auth login` briefly binds a callback server on `127.0.0.1:53682`, opens the Slack authorization page in your browser, and exchanges the code for a user token. One-time setup:
+`auth login` briefly binds a callback server on `127.0.0.1:53682` (`--port` to change it), opens the Slack authorization page in your browser, and exchanges the code for a user token. The port has to match the Redirect URL registered on the app exactly. The browser opens only when the command is run from a terminal; anywhere else — a script, CI — the URL is printed instead, which `--no-browser` also forces. One-time setup:
 
 1. Create an app at [api.slack.com/apps](https://api.slack.com/apps)
 2. **OAuth & Permissions** → add the User Token Scopes below
@@ -375,7 +375,7 @@ A `.env` file in the working directory supplies any of the above.
 ### Common Options
 - `--json` — JSON output
 - `--profile <name>` — Use a specific profile for this invocation (env: `SLACK_PROFILE`)
-- `--config <path>` — Override the config.toml path
+- `--config <path>` — Override the config.toml path. A named file that is absent is an error, not a fall back to defaults
 - `--verbose` — Enable debug logs
 
 ### users/channels Options

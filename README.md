@@ -173,7 +173,7 @@ slack-cli auth login --client-id <client-id>
 SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
 ```
 
-`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 사전 준비:
+`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`(`--port`로 변경)에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 포트는 앱에 등록한 Redirect URL과 정확히 같아야 합니다. 터미널에서 실행할 때만 브라우저를 열고, 그 외(스크립트·CI)에는 URL을 출력합니다 — `--no-browser`로 항상 출력하게 할 수 있습니다. 사전 준비:
 
 1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성
 2. **OAuth & Permissions** → User Token Scopes에 아래 항목 추가
@@ -362,7 +362,7 @@ exponential_base = 2.0
 ### 공통 옵션
 - `--json` — JSON 출력
 - `--profile <name>` — 1회 호출에 사용할 프로필 (env: `SLACK_PROFILE`)
-- `--config <path>` — config.toml 경로 override
+- `--config <path>` — config.toml 경로 override. 지정한 파일이 없으면 기본값으로 넘어가지 않고 오류입니다
 - `--verbose` — debug 로그 활성
 
 ### users/channels 옵션

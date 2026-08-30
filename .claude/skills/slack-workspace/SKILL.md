@@ -174,7 +174,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `search --capabilities --json` → `{is_ai_search_enabled}`. When false the workspace ranks by keyword whatever `--no-semantic` says.
 - `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot}, authorized_at}`. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null for tokens that do not expire. On `auth status --verify`, the `verified` object echoes the live `auth.test` shape (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`).
 - `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
-- `auth scopes --json` → `{user: [...], bot: [...]}`, the scopes to register on the Slack app.
+- `auth scopes --json` → `{user: [...], bot: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops.
 
 ## Message metadata (idempotency)
 
