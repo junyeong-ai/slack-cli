@@ -405,8 +405,9 @@ impl Config {
 ///
 /// serde names the rejected key but not what it holds, which is what makes this
 /// enough for every key a schema change has dropped. It does echo a value that
-/// lands in a field of the wrong type — a shape no schema change produces, and
-/// one `config.toml` keeps no credential for.
+/// lands in a field of the wrong type or fails to name an enum variant, neither
+/// of which a schema change produces: no field here has changed type and no
+/// variant has been renamed.
 fn parse_error(path: &Path, content: &str, error: &toml::de::Error) -> anyhow::Error {
     let Some(span) = error.span() else {
         return anyhow!("{}: {}", path.display(), error.message());
@@ -522,22 +523,37 @@ mod tests {
     }
 
     /// The position is what sends the user to the right line once the offending
-    /// line is no longer quoted back at them.
+    /// line is no longer quoted back at them. Columns count characters, as
+    /// `toml`'s own rendering does, so a multi-byte line still points at the
+    /// right place.
     #[test]
     fn a_parse_failure_reports_where_it_happened() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "[cache]\n# 한글 주석\nttl_users_hours = \n").unwrap();
+        for (name, body, line, column) in [
+            (
+                "trailing.toml",
+                "[cache]\n# 한글 주석\nttl_users_hours = \n",
+                3,
+                19,
+            ),
+            ("multibyte.toml", "\"한글키\" = \n", 1, 9),
+            ("first.toml", "user_token = \"x\"\n", 1, 1),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
 
-        let err = Config::load(&paths(), Some(path.clone()), None).unwrap_err();
-        let message = err.to_string();
+            let err = Config::load(&paths(), Some(path.clone()), None).unwrap_err();
+            let message = err.to_string();
 
-        assert!(message.contains("line 3"), "{message}");
-        assert!(message.contains("column 19"), "{message}");
-        assert!(
-            message.contains(&path.display().to_string()),
-            "should name the file: {message}"
-        );
+            assert!(
+                message.contains(&format!("line {line}, column {column}:")),
+                "{name}: {message}"
+            );
+            assert!(
+                message.contains(&path.display().to_string()),
+                "{name} should name the file: {message}"
+            );
+        }
     }
 
     mod config_defaults {
