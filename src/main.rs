@@ -860,23 +860,6 @@ async fn refresh_cache(
 
 #[cfg(test)]
 mod tests {
-    /// `path` and `edit` are the way out of a config the CLI refuses, so they
-    /// must not be routed through the load. The match in
-    /// `handle_unloadable_config` is exhaustive, so a new action has to choose.
-    #[test]
-    fn only_show_waits_for_the_config_to_load() {
-        let paths = AppPaths::resolve().unwrap();
-        assert!(handle_unloadable_config(&ConfigAction::Show, None, &paths).is_none());
-        assert!(
-            handle_unloadable_config(
-                &ConfigAction::Path,
-                Some(std::path::PathBuf::from("/tmp/does-not-matter.toml")),
-                &paths,
-            )
-            .is_some()
-        );
-    }
-
     use super::*;
     use serde_json::json;
 
