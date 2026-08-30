@@ -385,6 +385,10 @@ impl Config {
     pub fn edit(paths: &AppPaths, config_path: Option<PathBuf>) -> Result<()> {
         let path = config_path.unwrap_or_else(|| paths.config_file());
 
+        if path.exists() && !path.is_file() {
+            anyhow::bail!("{} is not a file", path.display());
+        }
+
         if !path.exists() {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -503,6 +507,7 @@ mod tests {
                 "should name the file: {message}"
             );
             assert!(!message.contains("auth scopes"), "{message}");
+            assert!(message.contains("Remove that entry"), "{message}");
         }
 
         #[test]

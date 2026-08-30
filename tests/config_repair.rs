@@ -72,3 +72,18 @@ fn config_show_still_refuses_it() {
     assert!(stderr.contains("users:reed"), "{stderr}");
     assert!(stderr.contains(&path.display().to_string()), "{stderr}");
 }
+
+/// Reaching the editor before the config loads means the load no longer
+/// rejects a `--config` that is not a file at all.
+#[test]
+fn config_edit_refuses_a_path_that_is_not_a_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("a-directory");
+    std::fs::create_dir(&target).unwrap();
+
+    let output = run(&["--config", target.to_str().unwrap(), "config", "edit"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "{output:?}");
+    assert!(stderr.contains("is not a file"), "{stderr}");
+}
