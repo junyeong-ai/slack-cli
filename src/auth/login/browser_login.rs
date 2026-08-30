@@ -18,7 +18,7 @@ pub struct Request {
     pub client: OAuthClient,
     pub api_base_url: String,
     pub port: u16,
-    pub no_browser: bool,
+    pub open_browser: bool,
     pub user_scopes: Vec<String>,
 }
 
@@ -34,7 +34,7 @@ pub async fn run(request: Request) -> Result<Profile> {
     let response = Authorization {
         client: &request.client,
         user_scopes: &request.user_scopes,
-        no_browser: request.no_browser,
+        open_browser: request.open_browser,
         callback_timeout: CALLBACK_TIMEOUT,
     }
     .run(receiver, exchange)

@@ -33,7 +33,7 @@ auth/
     ├── client.rs        OAuthClient — the Slack app's client id
     ├── pkce.rs          RFC 7636 verifier + S256 challenge
     ├── callback.rs      LoopbackReceiver (127.0.0.1 only, single-shot accept)
-    ├── browser.rs       `open` crate wrapper, honours --no-browser
+    ├── browser.rs       `open` crate wrapper
     └── exchange.rs      POST oauth.v2.access (raw reqwest, no SlackCore)
 ```
 
@@ -61,10 +61,11 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 4. **Every mutation is one cross-process transaction.** `transact` and `renew` take the store lock, re-read from disk, apply, write, and only then swap the in-memory copy. Re-reading under the lock is what makes concurrent invocations safe: Slack revokes a refresh token once it is used, so a sibling process that renewed a moment ago has already written the successor, and this process adopts it instead of spending a token that is gone.
 5. **The lock is acquired on the blocking pool.** Waiting on another process is unbounded; doing it on a runtime worker would strand the task that is meant to release the lock.
 6. **PKCE verifier and OAuth state are inputs, not outputs, of `Authorization::run_with`.** `run` is the convenience wrapper that generates them; tests pass fixed values.
-7. **Callback server binds `127.0.0.1` only** on a fixed port (default `53682`, configurable via `--port`). Slack's redirect-URI matching is exact — no auto-fallback. Single accept, then drop.
-8. **`oauth.v2.access` bypasses `SlackCore::api_call`.** It has no `Authorization: Bearer` header and a different response envelope. See `src/slack/CLAUDE.md` for the documented exception.
-9. **Removing the active profile clears active.** No auto-promotion. The user picks the next active via `slack-cli auth use NAME`.
-10. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly.
+7. **A browser opens only for someone at a terminal.** `should_open_browser` decides from `--no-browser` and whether stdin is a terminal, at the CLI boundary; `Authorization` receives the answer. A script, a CI job or a test gets the URL printed instead, which is what such a caller can act on — and what keeps a regression in the flow from opening windows on the machine running the tests.
+8. **Callback server binds `127.0.0.1` only** on a fixed port (default `53682`, configurable via `--port`). Slack's redirect-URI matching is exact — no auto-fallback. Single accept, then drop.
+9. **`oauth.v2.access` bypasses `SlackCore::api_call`.** It has no `Authorization: Bearer` header and a different response envelope. See `src/slack/CLAUDE.md` for the documented exception.
+10. **Removing the active profile clears active.** No auto-promotion. The user picks the next active via `slack-cli auth use NAME`.
+11. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly.
 
 ## The browser flow is always PKCE
 

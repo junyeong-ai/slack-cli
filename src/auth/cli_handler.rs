@@ -116,7 +116,7 @@ async fn login(
                 client: build_client(input.client_id)?,
                 api_base_url: config.connection.api_base_url.clone(),
                 port: input.port,
-                no_browser: input.no_browser,
+                open_browser: should_open_browser(input.no_browser, std::io::stdin().is_terminal()),
                 user_scopes,
             };
             browser_login::run(request).await?
@@ -181,6 +181,13 @@ fn login_scopes(excluded: &[String]) -> Result<Vec<String>> {
         );
     }
     Ok(scopes)
+}
+
+/// Opening a browser assumes someone is at this machine to see it. Without a
+/// terminal there is no one — a script, a CI job, a test — and the URL printed
+/// instead is what such a caller can act on.
+const fn should_open_browser(no_browser: bool, interactive: bool) -> bool {
+    !no_browser && interactive
 }
 
 fn build_client(client_id: Option<String>) -> Result<OAuthClient> {
@@ -691,6 +698,14 @@ mod tests {
 
         let kept = login_scopes(&everything[1..]).unwrap();
         assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn a_browser_opens_only_for_someone_at_a_terminal() {
+        assert!(should_open_browser(false, true));
+        assert!(!should_open_browser(true, true));
+        assert!(!should_open_browser(false, false));
+        assert!(!should_open_browser(true, false));
     }
 
     #[test]

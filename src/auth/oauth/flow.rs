@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::auth::errors::OAuthError;
 
-use super::browser::BrowserOpener;
+use super::browser;
 use super::callback::LoopbackReceiver;
 use super::client::OAuthClient;
 use super::exchange::{Grant, TokenExchange, TokenResponse};
@@ -18,7 +18,7 @@ const AUTHORIZE_URL: &str = "https://slack.com/oauth/v2/authorize";
 pub struct Authorization<'a> {
     pub client: &'a OAuthClient,
     pub user_scopes: &'a [String],
-    pub no_browser: bool,
+    pub open_browser: bool,
     pub callback_timeout: Duration,
 }
 
@@ -49,12 +49,7 @@ impl Authorization<'_> {
         let redirect_uri = receiver.redirect_uri();
         let url = self.authorize_url(&redirect_uri, &verifier, &expected_state);
 
-        let browser = if self.no_browser {
-            BrowserOpener::disabled()
-        } else {
-            BrowserOpener::auto()
-        };
-        if browser.open(url.as_str()).is_ok() {
+        if self.open_browser && browser::open(url.as_str()) {
             eprintln!("Opened browser for Slack authorization.");
         } else {
             eprintln!("Open this URL in a browser to authorize:\n  {url}");
@@ -106,7 +101,7 @@ mod tests {
         let authorization = Authorization {
             client: &client,
             user_scopes: &user,
-            no_browser: true,
+            open_browser: false,
             callback_timeout: Duration::from_secs(1),
         };
         authorization

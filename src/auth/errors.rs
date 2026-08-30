@@ -95,9 +95,6 @@ pub enum OAuthError {
     #[error("token exchange response was missing field: {0}")]
     MissingField(&'static str),
 
-    #[error("could not open the browser. open the URL manually: {url}")]
-    BrowserFailed { url: String },
-
     #[error("HTTP error during OAuth: {0}")]
     Http(#[from] reqwest::Error),
 

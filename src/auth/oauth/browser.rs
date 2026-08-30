@@ -1,26 +1,6 @@
-use crate::auth::errors::OAuthError;
-
-pub struct BrowserOpener {
-    enabled: bool,
-}
-
-impl BrowserOpener {
-    pub fn auto() -> Self {
-        Self { enabled: true }
-    }
-
-    pub fn disabled() -> Self {
-        Self { enabled: false }
-    }
-
-    pub fn open(&self, url: &str) -> Result<(), OAuthError> {
-        if !self.enabled {
-            return Err(OAuthError::BrowserFailed {
-                url: url.to_string(),
-            });
-        }
-        open::that(url).map_err(|_| OAuthError::BrowserFailed {
-            url: url.to_string(),
-        })
-    }
+/// Hands the URL to whatever the platform opens links with, reporting only
+/// whether that worked: the caller prints the URL either way, so a failure
+/// carries nothing the fallback does not already say.
+pub fn open(url: &str) -> bool {
+    open::that(url).is_ok()
 }
