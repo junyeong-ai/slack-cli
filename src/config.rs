@@ -397,61 +397,27 @@ impl Config {
     }
 }
 
-/// A rejected config is often one still holding a credential — a `user_token`
-/// from an older schema, a `client_secret` from a newer one — and the rejection
-/// runs on every invocation. `toml` quotes the offending line, and serde's own
-/// diagnostic repeats the value for a type or variant mismatch, so both would
-/// carry the credential to the terminal and into whatever captures it. Only the
-/// position and a diagnostic stripped of the file's own text cross this
-/// boundary.
+/// `toml` reports a parse failure by quoting the offending line. A config the
+/// CLI refuses is often one still holding a credential a newer schema no longer
+/// accepts, and the refusal repeats on every invocation, so that rendering
+/// would spread the value to the terminal and to whatever captures it. The
+/// position carries the same information without it.
+///
+/// serde names the rejected key but not what it holds, which is what makes this
+/// enough for every key a schema change has dropped. It does echo a value that
+/// lands in a field of the wrong type — a shape no schema change produces, and
+/// one `config.toml` keeps no credential for.
 fn parse_error(path: &Path, content: &str, error: &toml::de::Error) -> anyhow::Error {
     let Some(span) = error.span() else {
         return anyhow!("{}: {}", path.display(), error.message());
     };
     let (line, column) = line_column(content, span.start);
-    let message = match content.get(span) {
-        Some(source) => without_source_text(error.message(), source),
-        None => error.message().to_string(),
-    };
     anyhow!(
-        "{}: line {line}, column {column}: {message}",
-        path.display()
+        "{}: line {line}, column {column}: {}",
+        path.display(),
+        error.message()
     )
 }
-
-/// Removes the value the file supplied from a diagnostic when the error points
-/// at a string literal. A bare key is left in place — naming it is what tells
-/// the user what to delete, and a key is not a secret.
-///
-/// serde reports the *decoded* string, so the literal is decoded through `toml`
-/// rather than matched as written; an escaped credential reaches the message in
-/// a spelling the file never contains. Only the first occurrence is removed:
-/// the value serde received precedes the schema-derived list of what it
-/// expected, and that list is this crate's own text.
-fn without_source_text(message: &str, source: &str) -> String {
-    let Some(value) = decoded_literal(source) else {
-        return message.to_string();
-    };
-
-    let literal = message.replace(source, REDACTED);
-    if literal != message {
-        return literal;
-    }
-    if value.is_empty() {
-        return literal;
-    }
-    literal.replacen(&value, REDACTED, 1)
-}
-
-fn decoded_literal(source: &str) -> Option<String> {
-    if !source.starts_with(['"', '\'']) {
-        return None;
-    }
-    let table: toml::Table = format!("value = {source}").parse().ok()?;
-    table.get("value")?.as_str().map(str::to_string)
-}
-
-const REDACTED: &str = "<redacted>";
 
 fn line_column(content: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
@@ -519,14 +485,14 @@ mod tests {
         }
     }
 
-    /// A config the CLI refuses is often one holding a credential from an
-    /// older schema. The diagnostic has to name the key and the position
-    /// without carrying the value into the terminal or a log.
+    /// A key the schema has dropped is often still holding the credential it
+    /// was added for, and the refusal repeats on every invocation. The
+    /// diagnostic has to name the key and the position so the user can delete
+    /// the line, without carrying the value into the terminal or a log.
     #[test]
-    fn a_rejected_config_never_echoes_its_contents() {
+    fn a_dropped_key_is_named_without_its_value() {
         let dir = tempfile::tempdir().unwrap();
-        for (name, body, keep, value) in [
-            // An unknown key is named: it is what the user has to delete.
+        for (name, body, key, value) in [
             (
                 "auth.toml",
                 "[auth]\nclient_id = \"1.2\"\nclient_secret = \"shh-canary\"\n",
@@ -539,39 +505,6 @@ mod tests {
                 "user_token",
                 "xoxp-canary",
             ),
-            // A credential landed in a typed field: serde repeats the value,
-            // decoded, so the spelling in the file need not match.
-            (
-                "typed.toml",
-                "[cache]\nttl_users_hours = \"xoxp-canary\"\n",
-                "expected u64",
-                "xoxp-canary",
-            ),
-            (
-                "escaped.toml",
-                "[cache]\nttl_users_hours = \"xoxp-\\u0063anary\"\n",
-                "expected u64",
-                "xoxp-canary",
-            ),
-            (
-                "multiline.toml",
-                "[cache]\nttl_users_hours = \'\'\'xoxp-canary\'\'\'\n",
-                "expected u64",
-                "xoxp-canary",
-            ),
-            (
-                "variant.toml",
-                "[cache]\nchannel_types = [\"xoxp-canary\"]\n",
-                "public_channel",
-                "xoxp-canary",
-            ),
-            // Redaction must not eat the schema-derived half of the message.
-            (
-                "collision.toml",
-                "[cache]\nttl_users_hours = \"u64\"\n",
-                "expected u64",
-                "\"u64\"",
-            ),
         ] {
             let path = dir.path().join(name);
             std::fs::write(&path, body).unwrap();
@@ -583,9 +516,28 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(" | ");
 
-            assert!(chain.contains(keep), "{name} lost {keep}: {chain}");
-            assert!(!chain.contains(value), "{name} leaked the value: {chain}");
+            assert!(chain.contains(key), "{name} lost the key: {chain}");
+            assert!(!chain.contains(value), "{name} echoed the value: {chain}");
         }
+    }
+
+    /// The position is what sends the user to the right line once the offending
+    /// line is no longer quoted back at them.
+    #[test]
+    fn a_parse_failure_reports_where_it_happened() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[cache]\n# 한글 주석\nttl_users_hours = \n").unwrap();
+
+        let err = Config::load(&paths(), Some(path.clone()), None).unwrap_err();
+        let message = err.to_string();
+
+        assert!(message.contains("line 3"), "{message}");
+        assert!(message.contains("column 19"), "{message}");
+        assert!(
+            message.contains(&path.display().to_string()),
+            "should name the file: {message}"
+        );
     }
 
     mod config_defaults {
