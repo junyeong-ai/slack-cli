@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-30
+
+### Added
+
+- **`config.toml [auth].exclude_scopes`.** Slack approves a scope set as a whole, so an app that may not register one of the scopes this CLI derives cannot be installed at all — which left such a workspace with no browser login. Exclusions subtract from the derived set rather than replacing it, so a method added to the registry still reaches every installation, and each entry is checked against that set: a name no method needs is refused when the config loads. `auth scopes` prints the effective set, so what you register on the Slack app is what the login requests
+- A command refused for a scope now says which one: `missing_scope. bookmarks.list needs bookmarks:read`. Slack reports only that a scope is missing, while the registry already knows what the method declares
+
+### Fixed
+
+- **A browser opened for callers with no one to see it.** `auth login` opened one whenever `--no-browser` was absent, so a script, a CI job or a test could put an authorization window on a desktop. It opens only when the command is run from a terminal; anywhere else the URL is printed, which such a caller can act on
+- **`--config` naming a file that is not there loaded defaults and exited zero,** discarding the argument. A config that could not be stat'd — behind a trailing slash, or an unsearchable parent — vanished the same way. Only a default location that has never been created falls back to defaults now
+- **`config edit` was refused by the very config it repairs.** It and `config path` run before the config loads, so any rejected value can still be fixed. `config edit` refuses a path that is not a file, which the load used to catch
+- `--port 0` asks for an ephemeral port, which no app can register as a Redirect URL; it produced `http://127.0.0.1:0/callback` and a refusal from Slack after the browser had opened. It is rejected as the usage error it is
+
 ## [0.11.0] - 2026-08-30
 
 ### Removed
