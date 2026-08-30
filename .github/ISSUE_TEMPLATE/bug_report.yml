@@ -56,5 +56,5 @@ body:
     id: config
     attributes:
       label: Relevant configuration
-      description: Sanitised `config.toml` excerpt, if applicable — `slack-cli config path` prints its location. It holds no tokens, but redact anything workspace-identifying.
+      description: Sanitised `config.toml` excerpt, if applicable — `slack-cli config path` prints its location. Current versions keep no credential there, but a file carried over from an earlier release can still hold a `user_token` or a `client_secret`; redact every value before pasting.
       render: toml

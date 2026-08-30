@@ -419,20 +419,36 @@ fn parse_error(path: &Path, content: &str, error: &toml::de::Error) -> anyhow::E
     )
 }
 
-/// Removes the file's own text from a diagnostic when the error points at a
-/// string literal. A bare key is left in place — naming it is what makes the
-/// message actionable, and a key is not a secret.
+/// Removes the value the file supplied from a diagnostic when the error points
+/// at a string literal. A bare key is left in place — naming it is what tells
+/// the user what to delete, and a key is not a secret.
+///
+/// serde reports the *decoded* string, so the literal is decoded through `toml`
+/// rather than matched as written; an escaped credential reaches the message in
+/// a spelling the file never contains. Only the first occurrence is removed:
+/// the value serde received precedes the schema-derived list of what it
+/// expected, and that list is this crate's own text.
 fn without_source_text(message: &str, source: &str) -> String {
-    if !source.starts_with(['"', '\'']) {
+    let Some(value) = decoded_literal(source) else {
         return message.to_string();
+    };
+
+    let literal = message.replace(source, REDACTED);
+    if literal != message {
+        return literal;
     }
-    let stripped = message.replace(source, REDACTED);
-    let unquoted = source.trim_matches(['"', '\'']);
-    if unquoted.is_empty() {
-        stripped
-    } else {
-        stripped.replace(unquoted, REDACTED)
+    if value.is_empty() {
+        return literal;
     }
+    literal.replacen(&value, REDACTED, 1)
+}
+
+fn decoded_literal(source: &str) -> Option<String> {
+    if !source.starts_with(['"', '\'']) {
+        return None;
+    }
+    let table: toml::Table = format!("value = {source}").parse().ok()?;
+    table.get("value")?.as_str().map(str::to_string)
 }
 
 const REDACTED: &str = "<redacted>";
@@ -523,10 +539,23 @@ mod tests {
                 "user_token",
                 "xoxp-canary",
             ),
-            // A credential landed in a typed field: serde repeats the value.
+            // A credential landed in a typed field: serde repeats the value,
+            // decoded, so the spelling in the file need not match.
             (
                 "typed.toml",
                 "[cache]\nttl_users_hours = \"xoxp-canary\"\n",
+                "expected u64",
+                "xoxp-canary",
+            ),
+            (
+                "escaped.toml",
+                "[cache]\nttl_users_hours = \"xoxp-\\u0063anary\"\n",
+                "expected u64",
+                "xoxp-canary",
+            ),
+            (
+                "multiline.toml",
+                "[cache]\nttl_users_hours = \'\'\'xoxp-canary\'\'\'\n",
                 "expected u64",
                 "xoxp-canary",
             ),
@@ -535,6 +564,13 @@ mod tests {
                 "[cache]\nchannel_types = [\"xoxp-canary\"]\n",
                 "public_channel",
                 "xoxp-canary",
+            ),
+            // Redaction must not eat the schema-derived half of the message.
+            (
+                "collision.toml",
+                "[cache]\nttl_users_hours = \"u64\"\n",
+                "expected u64",
+                "\"u64\"",
             ),
         ] {
             let path = dir.path().join(name);
