@@ -15,10 +15,28 @@ fn rejected(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-fn run(args: &[&str]) -> std::process::Output {
+/// A do-nothing editor. `true` is not a program on a stock Windows install, so
+/// a stub keeps these tests measuring the CLI rather than the machine.
+fn stub_editor(dir: &std::path::Path) -> std::path::PathBuf {
+    let (name, body) = if cfg!(windows) {
+        ("editor.cmd", "@exit /b 0\r\n")
+    } else {
+        ("editor.sh", "#!/bin/sh\nexit 0\n")
+    };
+    let path = dir.join(name);
+    std::fs::write(&path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    path
+}
+
+fn run(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
     Command::new(BIN)
         .args(args)
-        .env("EDITOR", "true")
+        .env("EDITOR", stub_editor(dir))
         .output()
         .expect("binary runs")
 }
@@ -28,7 +46,10 @@ fn config_path_answers_while_the_config_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = rejected(dir.path());
 
-    let output = run(&["--config", path.to_str().unwrap(), "config", "path"]);
+    let output = run(
+        dir.path(),
+        &["--config", path.to_str().unwrap(), "config", "path"],
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "{output:?}");
@@ -40,7 +61,10 @@ fn config_edit_opens_while_the_config_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = rejected(dir.path());
 
-    let output = run(&["--config", path.to_str().unwrap(), "config", "edit"]);
+    let output = run(
+        dir.path(),
+        &["--config", path.to_str().unwrap(), "config", "edit"],
+    );
     assert!(output.status.success(), "{output:?}");
 }
 
@@ -52,7 +76,10 @@ fn config_edit_opens_a_valid_config() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "[cache]\nttl_users_hours = 24\n").unwrap();
 
-    let output = run(&["--config", path.to_str().unwrap(), "config", "edit"]);
+    let output = run(
+        dir.path(),
+        &["--config", path.to_str().unwrap(), "config", "edit"],
+    );
     assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("unreachable"), "{stderr}");
@@ -65,7 +92,10 @@ fn config_show_still_refuses_it() {
     let dir = tempfile::tempdir().unwrap();
     let path = rejected(dir.path());
 
-    let output = run(&["--config", path.to_str().unwrap(), "config", "show"]);
+    let output = run(
+        dir.path(),
+        &["--config", path.to_str().unwrap(), "config", "show"],
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success(), "{output:?}");
@@ -81,7 +111,10 @@ fn config_edit_refuses_a_path_that_is_not_a_file() {
     let target = dir.path().join("a-directory");
     std::fs::create_dir(&target).unwrap();
 
-    let output = run(&["--config", target.to_str().unwrap(), "config", "edit"]);
+    let output = run(
+        dir.path(),
+        &["--config", target.to_str().unwrap(), "config", "edit"],
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success(), "{output:?}");

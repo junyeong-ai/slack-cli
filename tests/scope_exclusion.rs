@@ -7,15 +7,32 @@ use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_slack-cli");
 
+/// The config directory is resolved per platform — XDG on Unix, the Known
+/// Folders on Windows — so a test that redirects only `HOME` still reads and
+/// writes the developer's real store on Windows.
+fn isolate(command: &mut Command, dir: &std::path::Path) {
+    command
+        .env("HOME", dir)
+        .env("XDG_CONFIG_HOME", dir)
+        .env("USERPROFILE", dir)
+        .env("APPDATA", dir);
+}
+
 /// Every user scope the CLI would request, excluded, so the authorization
 /// would grant nothing.
 fn excludes_everything(dir: &std::path::Path) -> std::path::PathBuf {
-    let listed = Command::new(BIN)
-        .args(["--json", "auth", "scopes"])
-        .env("HOME", dir)
-        .env("XDG_CONFIG_HOME", dir)
-        .output()
-        .expect("binary runs");
+    let empty = dir.join("defaults.toml");
+    std::fs::write(&empty, "").unwrap();
+    let mut listed = Command::new(BIN);
+    listed.args([
+        "--config",
+        empty.to_str().unwrap(),
+        "--json",
+        "auth",
+        "scopes",
+    ]);
+    isolate(&mut listed, dir);
+    let listed = listed.output().expect("binary runs");
     let scopes: serde_json::Value =
         serde_json::from_slice(&listed.stdout).expect("auth scopes emits JSON");
     let entries: Vec<&str> = scopes["user"]
@@ -43,7 +60,8 @@ fn a_login_excluding_every_scope_is_refused_before_the_browser_opens() {
     let dir = tempfile::tempdir().unwrap();
     let path = excludes_everything(dir.path());
 
-    let mut child = Command::new(BIN)
+    let mut command = Command::new(BIN);
+    command
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -53,12 +71,10 @@ fn a_login_excluding_every_scope_is_refused_before_the_browser_opens() {
             "pkce",
             "--no-browser",
         ])
-        .env("HOME", dir.path())
-        .env("XDG_CONFIG_HOME", dir.path())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("binary runs");
+        .stderr(std::process::Stdio::piped());
+    isolate(&mut command, dir.path());
+    let mut child = command.spawn().expect("binary runs");
 
     // A login that is not refused binds the callback port and waits minutes for
     // a redirect, so finishing at all is part of what this asserts.
@@ -67,10 +83,12 @@ fn a_login_excluding_every_scope_is_refused_before_the_browser_opens() {
         if let Some(status) = child.try_wait().expect("child is waitable") {
             break status;
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the login was not refused; it waited for a callback"
-        );
+        if std::time::Instant::now() >= deadline {
+            // It is holding the callback port and would keep it for minutes.
+            child.kill().ok();
+            child.wait().ok();
+            panic!("the login was not refused; it waited for a callback");
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
     let output = child.wait_with_output().expect("output is readable");

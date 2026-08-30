@@ -395,7 +395,8 @@ impl Config {
             }
             let default = Self::default();
             let content = toml::to_string_pretty(&default)?;
-            std::fs::write(&path, content)?;
+            std::fs::write(&path, content)
+                .with_context(|| format!("could not create {}", path.display()))?;
         }
 
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
