@@ -21,9 +21,13 @@ fn rejected(dir: &std::path::Path) -> std::path::PathBuf {
 fn stub_editor(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf) {
     let opened = dir.join("opened.txt");
     let (name, body) = if cfg!(windows) {
+        // `%~1`, not `%1`: Rust wraps every argument it hands a batch file in
+        // quotes, and `~` is what strips them back off. The space before the
+        // redirection keeps a path ending in a digit from reading as a stream
+        // number; the trailing space it writes is trimmed on the way back in.
         (
             "editor.cmd",
-            format!("@echo %1> \"{}\"\r\n", opened.display()),
+            format!("@echo %~1 > \"{}\"\r\n", opened.display()),
         )
     } else {
         (
