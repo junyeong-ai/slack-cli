@@ -141,3 +141,47 @@ fn config_edit_refuses_a_path_that_is_not_a_file() {
     assert!(!output.status.success(), "{output:?}");
     assert!(stderr.contains("is not a file"), "{stderr}");
 }
+
+/// Slack matches a redirect URL exactly, so a port the app cannot have
+/// registered — an ephemeral one above all — is refused where an invalid
+/// argument belongs: at the parser, before a browser is ever opened.
+#[test]
+fn an_unusable_callback_port_is_a_usage_error() {
+    let mut child = Command::new(BIN)
+        // A test for a refusal must not depend on the refusal to stay
+        // harmless: without `--no-browser`, the regression it exists to catch
+        // opens a browser on the machine running it.
+        .args([
+            "auth",
+            "login",
+            "--method",
+            "pkce",
+            "--no-browser",
+            "--port",
+            "0",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("binary runs");
+
+    // Accepting the port instead binds one and waits minutes for a redirect,
+    // so finishing at all is part of what this asserts.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("child is waitable") {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().ok();
+            child.wait().ok();
+            panic!("the port was accepted; the login waited for a callback");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let output = child.wait_with_output().expect("output is readable");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--port"), "{stderr}");
+}

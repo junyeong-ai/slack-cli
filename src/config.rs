@@ -232,12 +232,23 @@ impl Config {
     ) -> Result<Self> {
         let mut config = Self::default();
 
+        // Reading decides whether the file is there, rather than a prior
+        // `exists()`: that question cannot tell a path the user named from the
+        // default one, and answers "no" for a file it merely failed to stat —
+        // silently discarding a `--config` argument, or a real config behind a
+        // trailing slash or an unsearchable parent.
+        let named = config_path.is_some();
         let path = config_path.unwrap_or_else(|| paths.config_file());
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .context(format!("Failed to read config: {}", path.display()))?;
-            config =
-                toml::from_str(&content).map_err(|error| parse_error(&path, &content, &error))?;
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                config = toml::from_str(&content)
+                    .map_err(|error| parse_error(&path, &content, &error))?;
+            }
+            // A default location that has not been created is a fresh install.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !named => {}
+            Err(error) => {
+                return Err(error).context(format!("could not read {}", path.display()));
+            }
         }
 
         if let Some(dir) = cli_data_dir {
@@ -625,6 +636,33 @@ mod tests {
                 "{name} should name the file: {message}"
             );
         }
+    }
+
+    /// `exists()` cannot tell a path the user named from the default one, and
+    /// answers "no" for a file it merely failed to stat. Only a default
+    /// location that has never been created may load silently.
+    #[test]
+    fn only_a_missing_default_location_falls_back_to_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let absent = dir.path().join("named.toml");
+        let err = Config::load(&paths(), Some(absent.clone()), None).unwrap_err();
+        assert!(
+            err.to_string().contains(&absent.display().to_string()),
+            "a named path that is absent must be reported: {err}"
+        );
+
+        let file = dir.path().join("real.toml");
+        std::fs::write(&file, "[cache]\nttl_users_hours = 24\n").unwrap();
+        let unstattable = dir.path().join("real.toml/");
+        let err = Config::load(&paths(), Some(unstattable), None).unwrap_err();
+        assert!(
+            err.to_string().contains("real.toml"),
+            "a path that cannot be stat'd must be reported: {err}"
+        );
+
+        let loaded = Config::load(&paths(), Some(file), None).unwrap();
+        assert_eq!(loaded.cache.ttl_users_hours, 24);
     }
 
     mod config_defaults {

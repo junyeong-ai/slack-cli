@@ -405,7 +405,11 @@ pub enum AuthAction {
         )]
         client_id: Option<String>,
 
-        #[arg(long, help = "Loopback callback port for OAuth")]
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(u16).range(1..),
+            help = "Loopback callback port for OAuth; must match a redirect URL registered on the app"
+        )]
         port: Option<u16>,
 
         #[arg(long, help = "Do not open a browser; print the URL instead")]
