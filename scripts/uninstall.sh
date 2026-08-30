@@ -150,6 +150,22 @@ echo
 
 if [ -d "$CONFIG_DIR" ]; then
     echo "Found configuration directory: $CONFIG_DIR"
+
+    # The cache is refetchable and the auth store can be replaced by logging in
+    # again. The event store is neither: Socket Mode does not replay, so an
+    # event that has arrived and not yet been acknowledged exists here and
+    # nowhere else. Say so before the same prompt takes all three.
+    if [ -d "$CONFIG_DIR/events" ]; then
+        echo
+        echo "⚠️  This also removes the Socket Mode event store:"
+        echo "     $CONFIG_DIR/events"
+        echo "   Slack does not replay events, so anything collected and not yet"
+        echo "   read with \`slack-cli events pull\` is only here. Stop the daemon"
+        echo "   and drain it first if you want to keep it."
+    fi
+    echo
+    echo "ℹ️  If config.toml sets [events] data_path, the store lives outside this"
+    echo "   directory and is NOT removed — check \`slack-cli events path\` first."
     echo
 
     if prompt_yes_no "Remove configuration and cache? [y/N]: " "n" "$REMOVE_CONFIG"; then
@@ -173,9 +189,14 @@ echo
 echo "• Project-level skill (if any) remains at .claude/skills/$SKILL_NAME"
 echo "  This is distributed via git and shared with your team"
 echo
+echo "• A running \`slack-cli daemon\` is not stopped by this script."
+echo "  Stop it through whatever supervises it (launchd, systemd, or"
+echo "  \`slack-cli daemon stop\`) before removing the binary"
+echo
 echo "• Environment variables are not removed automatically:"
 echo "  - SLACK_BOT_TOKEN"
 echo "  - SLACK_USER_TOKEN"
+echo "  - SLACK_APP_TOKEN"
 echo
 echo "• To reinstall: ./install.sh"
 echo

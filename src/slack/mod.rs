@@ -1,4 +1,5 @@
 pub mod api_config;
+pub mod apps;
 pub mod auth;
 pub mod bookmarks;
 pub mod channels;
@@ -14,6 +15,7 @@ pub mod search;
 pub mod types;
 pub mod users;
 
+pub use apps::SlackAppsClient;
 pub use auth::SlackAuthIdentity;
 pub use bookmarks::Bookmark;
 pub use client::SlackClient;

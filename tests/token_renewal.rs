@@ -404,6 +404,7 @@ async fn environment_tokens_bypass_the_store_entirely() {
                 "xoxp-from-env".to_string().into_boxed_str(),
             )),
             bot_token: None,
+            app_token: None,
         },
         explicit_profile: None,
     })

@@ -280,6 +280,28 @@ pub enum Command {
     #[command(about = "List bookmarks")]
     Bookmarks { channel: String },
 
+    #[command(
+        about = "Stream matching Slack events to stdout as they happen",
+        long_about = "Stream matching Slack events to stdout as they happen.\n\
+                      Runs in the foreground and overrides both halves of the configured \n\
+                      delivery: nothing is stored whatever `events.mode` says, and events go \n\
+                      to stdout whatever sinks are configured. A consumer that is not reading \n\
+                      misses what arrives. Use `daemon run` for the persistent form."
+    )]
+    Watch,
+
+    #[command(about = "Socket Mode daemon")]
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonAction,
+    },
+
+    #[command(about = "Event log")]
+    Events {
+        #[command(subcommand)]
+        action: EventsAction,
+    },
+
     #[command(about = "Authentication management")]
     Auth {
         #[command(subcommand)]
@@ -399,6 +421,12 @@ pub enum AuthAction {
 
         #[arg(
             long,
+            help = "App-level token (xapp-...) for Socket Mode; on its own it attaches to the resolved profile"
+        )]
+        app_token: Option<String>,
+
+        #[arg(
+            long,
             env = "SLACK_CLI_CLIENT_ID",
             hide_env_values = true,
             help = "OAuth client ID for the browser login"
@@ -467,6 +495,77 @@ impl From<AuthMethodArg> for AuthMethod {
             AuthMethodArg::Pkce => AuthMethod::Pkce,
         }
     }
+}
+
+#[derive(Subcommand)]
+pub enum DaemonAction {
+    #[command(
+        about = "Run the Socket Mode daemon in the foreground",
+        long_about = "Run the Socket Mode daemon in the foreground.\n\
+                      It does not detach: run it under launchd, systemd or a supervisor, \n\
+                      which restarts it and owns its logs. Slack splits an app's events \n\
+                      across its open connections, so run exactly one per Slack app."
+    )]
+    Run,
+
+    #[command(about = "Report what the running daemon last published")]
+    Status,
+
+    #[command(about = "Ask the running daemon to stop")]
+    Stop,
+}
+
+#[derive(Subcommand)]
+pub enum EventsAction {
+    #[command(
+        about = "Read events a consumer has not acknowledged yet",
+        long_about = "Read events a consumer has not acknowledged yet.\n\
+                      Each named consumer keeps its own position, so an agent that restarts \n\
+                      resumes where it stopped. Needs events.mode = spool or archive."
+    )]
+    Pull {
+        #[arg(
+            long,
+            default_value = "default",
+            help = "Which position to read from; each name has its own"
+        )]
+        consumer: String,
+
+        #[arg(
+            long,
+            default_value = "50",
+            value_parser = clap::value_parser!(u16).range(1..),
+            help = "Maximum events per batch"
+        )]
+        limit: u16,
+
+        #[arg(
+            long,
+            help = "Acknowledge the batch as it is emitted (at-most-once; without it a crash re-reads)"
+        )]
+        ack: bool,
+
+        #[arg(long, help = "Keep polling for new events instead of exiting")]
+        follow: bool,
+    },
+
+    #[command(about = "Move a consumer's position forward")]
+    Ack {
+        #[arg(long, default_value = "default")]
+        consumer: String,
+
+        #[arg(long, help = "Acknowledge every event up to and including this seq")]
+        through: i64,
+    },
+
+    #[command(about = "Show the event log's size, age and consumer backlogs")]
+    Stats,
+
+    #[command(about = "Apply the retention policy now")]
+    Prune,
+
+    #[command(about = "Show where the daemon keeps its files")]
+    Path,
 }
 
 #[derive(Subcommand)]

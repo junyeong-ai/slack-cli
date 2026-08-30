@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::auth::Authenticator;
 use crate::config::Config;
 
+use super::apps::SlackAppsClient;
 use super::auth::SlackAuthClient;
 use super::bookmarks::SlackBookmarkClient;
 use super::channels::SlackChannelClient;
@@ -17,6 +18,7 @@ use super::search::SlackSearchClient;
 use super::users::SlackUserClient;
 
 pub struct SlackClient {
+    pub apps: SlackAppsClient,
     pub auth: SlackAuthClient,
     pub messages: SlackMessageClient,
     pub users: SlackUserClient,
@@ -33,6 +35,7 @@ impl SlackClient {
         let core = Arc::new(SlackCore::new(config, auth)?);
 
         Ok(Self {
+            apps: SlackAppsClient::new(core.clone()),
             auth: SlackAuthClient::new(core.clone()),
             messages: SlackMessageClient::new(core.clone()),
             users: SlackUserClient::new(core.clone()),

@@ -44,6 +44,15 @@ impl SlackAuthClient {
         serde_json::from_value(response).context("auth.test response did not match expected shape")
     }
 
+    /// `auth.test` with the token the profile resolves to — who this
+    /// installation is. The daemon needs its own user id to decide what counts
+    /// as a mention, and asking for it this way keeps the secret inside the
+    /// authenticator.
+    pub async fn identity(&self) -> Result<SlackAuthIdentity> {
+        let response = self.core.api_call("auth.test", json!({})).await?;
+        serde_json::from_value(response).context("auth.test response did not match expected shape")
+    }
+
     /// Calls `auth.revoke` against Slack with an explicit token.
     pub async fn revoke(&self, token: &str) -> Result<()> {
         self.core

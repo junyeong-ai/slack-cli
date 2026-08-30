@@ -22,6 +22,9 @@ pub struct Config {
 
     #[serde(default)]
     pub connection: ConnectionConfig,
+
+    #[serde(default)]
+    pub events: EventsConfig,
 }
 
 /// The Slack app a browser login authorizes against.
@@ -156,6 +159,522 @@ pub struct ConnectionConfig {
     pub app_distribution: SlackAppDistribution,
 }
 
+/// How long a matched event is kept, and therefore how much of other people's
+/// conversation reaches this disk at all.
+///
+/// The axis is duration, not volume: `Stream` keeps nothing, `Spool` keeps an
+/// event only until a consumer has acknowledged it, and `Archive` keeps it for
+/// `retention_days`. How *much* of each event is kept is the separate
+/// `store_body` decision, so a workspace that forbids storing message text can
+/// still replay which threads moved.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventRetention {
+    /// Nothing reaches the event log. Sinks are the only delivery, so a
+    /// consumer that is not running when an event arrives never sees it.
+    Stream,
+    /// Kept until a consumer acknowledges it, then deleted.
+    #[default]
+    Spool,
+    /// Kept for `retention_days`, so past events can be replayed.
+    Archive,
+}
+
+impl EventRetention {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stream => "stream",
+            Self::Spool => "spool",
+            Self::Archive => "archive",
+        }
+    }
+
+    /// Whether an event log exists at all. `false` selects the null store, and
+    /// with it the commands that read back events stop being answerable.
+    pub const fn durable(self) -> bool {
+        !matches!(self, Self::Stream)
+    }
+}
+
+/// What to do when the in-flight buffer is full because a sink cannot keep up.
+///
+/// Blocking is deliberately not an option: the socket task acknowledges an
+/// envelope to Slack before handing it on, and making that path wait on a slow
+/// consumer would turn a slow agent into redelivery and, past Slack's
+/// threshold, into a disabled subscription.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverflowPolicy {
+    /// Discard the oldest queued event. Keeps the newest view of the
+    /// workspace, which is what an assistant reacting to now wants.
+    #[default]
+    DropOldest,
+    /// Discard the event that would not fit, preserving arrival order.
+    DropNewest,
+}
+
+impl OverflowPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DropOldest => "drop_oldest",
+            Self::DropNewest => "drop_newest",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventKindConfig {
+    Message,
+    ReactionAdded,
+    ReactionRemoved,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventsConfig {
+    #[serde(default)]
+    pub mode: EventRetention,
+
+    /// Whether a stored event keeps the message text and the raw payload.
+    /// With it off the log is an index of references — channel, ts, author,
+    /// which rule matched — and Slack stays the only copy of what was said.
+    #[serde(default)]
+    pub store_body: bool,
+
+    /// Whether an event carries the Slack payload it was built from.
+    ///
+    /// Off by default and worth turning on only while writing rules, when
+    /// seeing the shape Slack actually sent is the whole point. It puts the
+    /// complete message — every field, not just the ones the CLI models — into
+    /// the stream, and into the log when `store_body` is also on.
+    #[serde(default)]
+    pub store_raw: bool,
+
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u64,
+
+    #[serde(default = "default_event_buffer")]
+    pub buffer: usize,
+
+    #[serde(default)]
+    pub on_overflow: OverflowPolicy,
+
+    /// Ceiling on the *live data* in the event log, enforced regardless of
+    /// retention, so a misconfigured rule cannot fill the disk.
+    ///
+    /// Live data, not file size: SQLite keeps the pages a delete frees on a
+    /// freelist and returns them to the filesystem only as it vacuums, so the
+    /// file trails this figure down rather than tracking it. Measuring the
+    /// file instead would make each prune see no progress and delete the whole
+    /// log to satisfy a limit only vacuuming could meet.
+    #[serde(default = "default_events_max_bytes")]
+    pub max_bytes: u64,
+
+    /// Whether a reconnect asks Slack for what was missed. Socket Mode
+    /// replays nothing, so this is the only recovery there is — and it reads
+    /// `conversations.history`, which for a non-Marketplace app is one request
+    /// a minute, hence the bounds below.
+    #[serde(default = "default_true")]
+    pub backfill: bool,
+
+    #[serde(default = "default_backfill_max_channels")]
+    pub backfill_max_channels: usize,
+
+    #[serde(default = "default_backfill_max_age_hours")]
+    pub backfill_max_age_hours: i64,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_path: Option<PathBuf>,
+
+    #[serde(default, rename = "sink", skip_serializing_if = "Vec::is_empty")]
+    pub sinks: Vec<SinkConfig>,
+
+    #[serde(default, rename = "rule", skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<RuleConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SinkKind {
+    #[default]
+    Stdout,
+    Exec,
+    Http,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SinkConfig {
+    pub name: String,
+
+    #[serde(default, rename = "type")]
+    pub kind: SinkKind,
+
+    /// `exec`: the program and its arguments. The event JSON arrives on stdin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
+
+    /// `http`: where to POST the event JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+
+    /// How long one delivery may take, covering the whole handoff. Delivery
+    /// is serial by design — one task owns the pipeline, which is what keeps
+    /// events in order and the deduplication gate race-free — so this is the
+    /// only bound on how long a slow sink can hold it.
+    #[serde(default = "default_sink_timeout_seconds")]
+    pub timeout_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleConfig {
+    pub name: String,
+
+    /// Which events the rule looks at. A rule that subscribes on a reaction
+    /// still has to list `message` to match the replies that follow.
+    #[serde(default = "default_rule_events")]
+    pub on: Vec<EventKindConfig>,
+
+    /// Matches a message that mentions the authenticated user.
+    #[serde(default)]
+    pub mentions_me: bool,
+
+    /// Case-insensitive substrings; any one matching is enough.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub from_users: Vec<String>,
+
+    /// Restricts the rule to these conversations. Channel IDs, not names: a
+    /// name is ambiguous and would make the rule depend on a cache the daemon
+    /// otherwise has no reason to hold.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<String>,
+
+    /// Reacting with this emoji subscribes the thread; removing it
+    /// unsubscribes. Every later reply in a subscribed thread matches, which
+    /// is what makes an emoji a subscribe button.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscribe_emoji: Option<String>,
+
+    /// Whether the authenticated user's own messages can match. Off by
+    /// default: an assistant that answers itself is a loop.
+    #[serde(default)]
+    pub include_own_messages: bool,
+
+    /// Which sinks receive a match. Empty means every configured sink.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sinks: Vec<String>,
+}
+
+fn default_retention_days() -> u64 {
+    7
+}
+fn default_event_buffer() -> usize {
+    1024
+}
+fn default_events_max_bytes() -> u64 {
+    256 * 1024 * 1024
+}
+fn default_backfill_max_channels() -> usize {
+    20
+}
+fn default_backfill_max_age_hours() -> i64 {
+    24
+}
+fn default_sink_timeout_seconds() -> u64 {
+    30
+}
+fn default_true() -> bool {
+    true
+}
+fn default_rule_events() -> Vec<EventKindConfig> {
+    vec![EventKindConfig::Message]
+}
+
+impl Default for EventsConfig {
+    fn default() -> Self {
+        Self {
+            mode: EventRetention::default(),
+            store_body: false,
+            store_raw: false,
+            retention_days: default_retention_days(),
+            buffer: default_event_buffer(),
+            on_overflow: OverflowPolicy::default(),
+            max_bytes: default_events_max_bytes(),
+            backfill: true,
+            backfill_max_channels: default_backfill_max_channels(),
+            backfill_max_age_hours: default_backfill_max_age_hours(),
+            data_path: None,
+            sinks: Vec::new(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+impl EventsConfig {
+    /// The sink used when none is configured: the events themselves, one JSON
+    /// object per line, on stdout. It is what `watch` piped into an agent
+    /// needs, and it writes nothing anywhere else.
+    pub const DEFAULT_SINK: &'static str = "stdout";
+
+    /// The rule used when none is configured. A personal assistant that
+    /// forwards only what names you is the lean default; anything wider is a
+    /// deliberate choice made in `config.toml`.
+    pub const DEFAULT_RULE: &'static str = "mention";
+
+    pub fn effective_sinks(&self) -> Vec<SinkConfig> {
+        if self.sinks.is_empty() {
+            return vec![default_sink(Self::DEFAULT_SINK)];
+        }
+        self.sinks.clone()
+    }
+
+    pub fn effective_rules(&self) -> Vec<RuleConfig> {
+        if self.rules.is_empty() {
+            return vec![RuleConfig {
+                name: Self::DEFAULT_RULE.to_string(),
+                on: default_rule_events(),
+                mentions_me: true,
+                keywords: Vec::new(),
+                from_users: Vec::new(),
+                channels: Vec::new(),
+                subscribe_emoji: None,
+                include_own_messages: false,
+                sinks: Vec::new(),
+            }];
+        }
+        self.rules.clone()
+    }
+}
+
+/// A sink with the defaults filled in. Named here so tests and the built-in
+/// stdout sink construct one the same way the deserializer does.
+pub fn default_sink(name: &str) -> SinkConfig {
+    SinkConfig {
+        name: name.to_string(),
+        kind: SinkKind::default(),
+        command: Vec::new(),
+        url: None,
+        timeout_seconds: default_sink_timeout_seconds(),
+    }
+}
+
+impl EventsConfig {
+    /// Every way an events configuration can be wrong, refused at load.
+    ///
+    /// A daemon runs unattended for days, so a rule that names a sink that
+    /// does not exist, or a channel by a name it cannot resolve, has to fail
+    /// where someone is watching — not silently forward nothing at 3am.
+    fn validate(&self) -> Result<()> {
+        if self.buffer == 0 {
+            anyhow::bail!("events.buffer must be greater than zero");
+        }
+        // Below a megabyte the schema and its indexes alone exceed the limit,
+        // so every prune would empty the log to chase a figure it can never
+        // reach.
+        const MIN_MAX_BYTES: u64 = 1024 * 1024;
+        if self.max_bytes < MIN_MAX_BYTES {
+            anyhow::bail!(
+                "events.max_bytes is {} but an empty event log is already larger than that. \
+                 Use at least {MIN_MAX_BYTES}",
+                self.max_bytes
+            );
+        }
+        if self.mode == EventRetention::Archive && self.retention_days == 0 {
+            anyhow::bail!(
+                "events.mode = \"archive\" keeps events for events.retention_days, which \
+                 must be greater than zero. Use events.mode = \"spool\" to keep them only \
+                 until a consumer acknowledges them"
+            );
+        }
+        if self.backfill && (self.backfill_max_channels == 0 || self.backfill_max_age_hours <= 0) {
+            anyhow::bail!(
+                "events.backfill_max_channels and events.backfill_max_age_hours must be \
+                 greater than zero while events.backfill is enabled"
+            );
+        }
+
+        let sinks = self.effective_sinks();
+        let mut seen_sinks: Vec<&str> = Vec::new();
+        for sink in &sinks {
+            if sink.name.trim().is_empty() {
+                anyhow::bail!("every events sink needs a non-empty name");
+            }
+            if seen_sinks.contains(&sink.name.as_str()) {
+                anyhow::bail!("events sink {:?} is declared more than once", sink.name);
+            }
+            seen_sinks.push(&sink.name);
+
+            if sink.timeout_seconds == 0 {
+                anyhow::bail!(
+                    "events sink {:?}: timeout_seconds must be greater than zero",
+                    sink.name
+                );
+            }
+            match sink.kind {
+                SinkKind::Stdout => {
+                    if !sink.command.is_empty() || sink.url.is_some() {
+                        anyhow::bail!(
+                            "events sink {:?} is type \"stdout\" and takes neither command \
+                             nor url",
+                            sink.name
+                        );
+                    }
+                }
+                SinkKind::Exec => {
+                    if sink.command.is_empty() {
+                        anyhow::bail!(
+                            "events sink {:?} is type \"exec\" and needs a command",
+                            sink.name
+                        );
+                    }
+                }
+                SinkKind::Http => {
+                    let url = sink.url.as_deref().unwrap_or_default();
+                    if !(url.starts_with("http://") || url.starts_with("https://")) {
+                        anyhow::bail!(
+                            "events sink {:?} is type \"http\" and needs an http(s) url",
+                            sink.name
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut seen_rules: Vec<&str> = Vec::new();
+        for rule in &self.effective_rules() {
+            if rule.name.trim().is_empty() {
+                anyhow::bail!("every events rule needs a non-empty name");
+            }
+            if seen_rules.contains(&rule.name.as_str()) {
+                anyhow::bail!("events rule {:?} is declared more than once", rule.name);
+            }
+            seen_rules.push(&rule.name);
+
+            if rule.on.is_empty() {
+                anyhow::bail!(
+                    "events rule {:?} subscribes to no event kind. List at least one of \
+                     message, reaction_added, reaction_removed under `on`",
+                    rule.name
+                );
+            }
+            if rule
+                .keywords
+                .iter()
+                .any(|keyword| keyword.trim().is_empty())
+            {
+                anyhow::bail!(
+                    "events rule {:?} lists an empty keyword, which every message contains. \
+                     Remove it, or the rule forwards the whole workspace",
+                    rule.name
+                );
+            }
+            if !rule.matches_anything_specific() {
+                anyhow::bail!(
+                    "events rule {:?} states no condition, so it would forward every event \
+                     the workspace produces. Give it mentions_me, keywords, from_users, \
+                     channels or subscribe_emoji",
+                    rule.name
+                );
+            }
+            // A predicate that reads message text needs message events to
+            // read. A rule listing only reaction kinds alongside one would
+            // validate and then never fire.
+            let reads_text = rule.mentions_me || !rule.keywords.is_empty();
+            if reads_text && !rule.on.contains(&EventKindConfig::Message) {
+                anyhow::bail!(
+                    "events rule {:?} matches on message text but does not list message under \
+                     `on`, so it would never fire — a reaction event carries no text",
+                    rule.name
+                );
+            }
+
+            if let Some(emoji) = &rule.subscribe_emoji {
+                if emoji.contains(':') || emoji.trim().is_empty() {
+                    anyhow::bail!(
+                        "events rule {:?}: subscribe_emoji is a name without colons, e.g. \"eyes\"",
+                        rule.name
+                    );
+                }
+                // The subscription is driven by the reaction, so a rule that
+                // never sees one would sit there subscribing nothing.
+                if !rule.on.contains(&EventKindConfig::ReactionAdded) {
+                    anyhow::bail!(
+                        "events rule {:?} subscribes on :{emoji}: but does not list \
+                         reaction_added under `on`, so it would never see the reaction",
+                        rule.name
+                    );
+                }
+                if !rule.on.contains(&EventKindConfig::Message) {
+                    anyhow::bail!(
+                        "events rule {:?} subscribes threads on :{emoji}: but does not list \
+                         message under `on`, so no reply in a subscribed thread would match",
+                        rule.name
+                    );
+                }
+                // Taking the emoji off is how a thread is unsubscribed. A rule
+                // that never sees the removal subscribes threads it can never
+                // let go of.
+                if !rule.on.contains(&EventKindConfig::ReactionRemoved) {
+                    anyhow::bail!(
+                        "events rule {:?} subscribes on :{emoji}: but does not list \
+                         reaction_removed under `on`, so a thread it subscribes could never \
+                         be unsubscribed",
+                        rule.name
+                    );
+                }
+            }
+            for channel in &rule.channels {
+                if !is_conversation_id(channel) {
+                    anyhow::bail!(
+                        "events rule {:?} lists channel {channel:?}. Rules take conversation \
+                         IDs, not names — run `slack-cli channels {channel}` to find it",
+                        rule.name
+                    );
+                }
+            }
+            for name in &rule.sinks {
+                if !seen_sinks.contains(&name.as_str()) {
+                    anyhow::bail!(
+                        "events rule {:?} sends to sink {name:?}, which is not declared",
+                        rule.name
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl RuleConfig {
+    /// Whether the rule narrows the stream at all. A rule with no condition
+    /// matches every message in the workspace, which at Slack's event volume
+    /// is never what someone meant to write.
+    fn matches_anything_specific(&self) -> bool {
+        self.mentions_me
+            || self.subscribe_emoji.is_some()
+            || !self.keywords.is_empty()
+            || !self.from_users.is_empty()
+            || !self.channels.is_empty()
+    }
+}
+
+/// The shape of a Slack conversation id: `C`/`D`/`G` and then upper-case
+/// alphanumerics. Mirrors the check `main` makes on a `<channel>` argument.
+fn is_conversation_id(input: &str) -> bool {
+    let mut chars = input.chars();
+    match chars.next() {
+        Some('C' | 'D' | 'G') => {}
+        _ => return false,
+    }
+    chars.clone().count() >= 8 && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
 fn default_ttl_hours() -> u64 {
     168
 }
@@ -271,6 +790,17 @@ impl Config {
         // Every command loads the config, so this message has to stand on its
         // own: the command it would otherwise point at fails the same way.
         for scope in &self.auth.exclude_scopes {
+            // An app-level scope is refused for a different reason than an
+            // unknown one, and saying "no method requires it" would be false:
+            // one does, on an axis this setting cannot reach.
+            if scope == crate::slack::scopes::APP_SCOPE {
+                anyhow::bail!(
+                    "{}: auth.exclude_scopes lists {scope:?}, which is an app-level scope. It is \
+                     granted in the Slack app's own configuration rather than by an \
+                     authorization, so excluding it here would do nothing. Remove that entry",
+                    path.display()
+                );
+            }
             if !crate::slack::scopes::is_known(scope) {
                 anyhow::bail!(
                     "{}: auth.exclude_scopes lists {scope:?}, which no method this CLI calls \
@@ -321,7 +851,17 @@ impl Config {
             anyhow::bail!("connection timeout and rate limit values must be greater than zero");
         }
 
+        self.events.validate()?;
+
         Ok(())
+    }
+
+    pub fn events_dir(&self, paths: &AppPaths) -> PathBuf {
+        self.events
+            .data_path
+            .as_deref()
+            .map(paths::expand_home)
+            .unwrap_or_else(|| paths.events_dir())
     }
 
     pub fn db_path(&self, paths: &AppPaths) -> PathBuf {
@@ -388,6 +928,31 @@ impl Config {
                 SlackAppDistribution::CommercialExternal => "commercial_external",
                 SlackAppDistribution::MarketplaceOrInternal => "marketplace_or_internal",
             }
+        );
+        println!("\nEvents:");
+        println!("  mode: {}", self.events.mode.as_str());
+        println!("  store_body: {}", self.events.store_body);
+        println!("  retention_days: {}", self.events.retention_days);
+        println!("  buffer: {}", self.events.buffer);
+        println!("  on_overflow: {}", self.events.on_overflow.as_str());
+        println!("  max_bytes: {}", self.events.max_bytes);
+        println!("  backfill: {}", self.events.backfill);
+        println!("  data_path: {}", self.events_dir(paths).display());
+        println!(
+            "  sinks: {:?}",
+            self.events
+                .effective_sinks()
+                .iter()
+                .map(|sink| sink.name.clone())
+                .collect::<Vec<_>>()
+        );
+        println!(
+            "  rules: {:?}",
+            self.events
+                .effective_rules()
+                .iter()
+                .map(|rule| rule.name.clone())
+                .collect::<Vec<_>>()
         );
 
         Ok(())

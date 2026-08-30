@@ -9,7 +9,7 @@ Verb-only, no noun redundancy. Match the Slack API verb when one exists.
 - `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`, `messages.permalink`
 - `users.list`, `channels.list`, `channels.members`
 - `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`, `search.info`
-- `auth.test`, `auth.revoke`
+- `auth.test`, `auth.revoke`, `apps.connection`
 
 Never `send_message`, `fetch_all_*`, `get_*`. When the Slack API verb is `getX` (e.g. `chat.getPermalink`), drop the `get` prefix so the method reads as a noun.
 
@@ -49,6 +49,7 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 - `BotPreferred` — bot first, user fallback
 - `UserPreferred` — user first, bot fallback
 - `UserRequired` — user only (e.g. `assistant.search.context`, where bot calls would need an `action_token` a CLI never receives)
+- `AppRequired` — the app-level token only (`apps.connections.open`). Disjoint from the installation axes in both directions
 
 `Authenticator::token_for(policy)` is the single resolution point. Domain clients never touch tokens directly.
 
@@ -57,6 +58,8 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 ### Scopes
 
 `MethodScopes` on each entry of `API_METHODS` records what a token must carry for *this CLI's* use of the method. Where the CLI always sends an optional argument that widens the requirement, the scope behind it belongs there too: `include_all_metadata` on conversation reads pulls in `metadata.message:read` for bot tokens — Slack supports that scope on no other kind — and the default `email` output field pulls in `users:read.email`.
+
+`MethodScopes` carries a third field, `app`, for the same reason `TokenPolicy` carries a fourth variant: an app-level scope belongs to a different namespace and is never part of an OAuth grant. Declaring `connections:write` under `user` or `bot` would union it into what `auth login` asks Slack for, and Slack refuses a grant that mixes the two — the failure `metadata.message:read` once caused. `MethodScopes::installation` and `::app_level` are the constructors that make the axis explicit.
 
 `slack::scopes::required(kind)` is the union over every method the kind can reach, so a scope can never drift from the methods that need it. `tests/documented_scopes.rs` holds both READMEs to the same source.
 
@@ -72,7 +75,7 @@ For ad-hoc validation with an explicit token (login flows before persistence), u
 
 ## Adding a new API method
 
-1. **`api_config.rs`**: insert into `API_METHODS` with `RequestEncoding`, `TokenPolicy`, `RatePolicy` and `MethodScopes`. The scopes are declared here and nowhere else — the OAuth request set and the README both derive from them.
+1. **`api_config.rs`**: insert into `API_METHODS` with `RequestEncoding`, `TokenPolicy`, `RatePolicy` and `MethodScopes`. `Query` is a GET, `Json` a POST with a JSON body — the convention Slack accepts almost everywhere — and `Form` a POST with `application/x-www-form-urlencoded`, for the methods where the documented content type is the only assurance there is. `apps.connections.open` is the one such method here, because the daemon cannot start without it and nothing else would reveal a mismatch. The scopes are declared here and nowhere else — the OAuth request set and the README both derive from them.
 2. **`slack/{module}.rs`**: add the method to the matching `Slack*Client`. Verb-only name matching the Slack API verb.
 3. **`cli.rs`**: add a `Command` variant. Mirror Slack API parameter names for fields; use clap `long = "..."` for terse user-facing flags.
 4. **`main.rs`**: add the match arm. Resolve channel name → ID via `resolve_channel`; convert ISO dates via `parse_unix_seconds` / `parse_timestamp`.

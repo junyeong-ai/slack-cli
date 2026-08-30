@@ -310,6 +310,35 @@ max_attempts = 3               # 429 retries (Retry-After takes precedence)
 initial_delay_ms = 1000        # first backoff when no Retry-After header
 max_delay_ms = 60000
 exponential_base = 2.0
+
+[events]
+mode = "spool"                 # stream | spool | archive — how long an event is kept
+store_body = false             # false stores references only (no text, no raw payload)
+store_raw = false              # true carries Slack's own payload on the event (for writing rules)
+retention_days = 7             # the archive window, and the safety cap on a spool
+buffer = 1024                  # in-flight queue depth
+on_overflow = "drop_oldest"    # drop_oldest | drop_newest (a drop is always counted)
+max_bytes = 268435456          # ceiling on the log's live data (256MiB, minimum 1MiB)
+backfill = true                # recover what a disconnect missed
+backfill_max_channels = 20     # how many channels one recovery may read
+backfill_max_age_hours = 24    # how far back a read may reach (an older cursor reads from here, with a warning)
+# data_path = "~/other/place"   # where the event store lives (default: events/ under the config dir)
+
+[[events.sink]]
+name = "agent"
+type = "stdout"                # stdout | exec | http
+                               # exec/http push; `events pull` pulls.
+                               # Using both delivers every event twice.
+
+[[events.rule]]
+name = "mention"
+on = ["message"]
+mentions_me = true
+
+[[events.rule]]
+name = "watched-thread"
+on = ["message", "reaction_added", "reaction_removed"]
+subscribe_emoji = "eyes"       # follow replies in threads I reacted to with :eyes:
 ```
 
 Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
@@ -326,6 +355,7 @@ A command that needs an excluded scope is refused by Slack, and the CLI names th
 |---|---|
 | `SLACK_USER_TOKEN` | Bypass stored profiles and use this token directly (CI / headless) |
 | `SLACK_BOT_TOKEN` | Same, bot token |
+| `SLACK_APP_TOKEN` | App-level token (`xapp-`) for the Socket Mode connection. It never displaces a stored user or bot token. Running on `SLACK_USER_TOKEN` stores events under an `env` namespace rather than a profile's |
 | `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`; outranks `config.toml [auth]`) |
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
@@ -367,6 +397,15 @@ A `.env` file in the working directory supplies any of the above.
 | `bookmark <ch> <title> <url>` | Add bookmark |
 | `unbookmark <ch> <id>` | Remove bookmark |
 | `bookmarks <ch>` | List bookmarks |
+| `watch` | Stream matching events to stdout (stores nothing, ignores configured sinks) |
+| `daemon run` | Run the Socket Mode daemon in the foreground |
+| `daemon status` | The daemon's last heartbeat and counters |
+| `daemon stop` | Signal the running daemon to stop (Unix only; use the service manager on Windows) |
+| `events pull [--consumer --ack --follow]` | Read events a consumer has not acknowledged |
+| `events ack --through <seq>` | Move a consumer's position forward |
+| `events stats` | Event log size, age and consumer backlogs |
+| `events prune` | Apply the retention policy now |
+| `events path` | Where the daemon keeps its files |
 | `cache stats/refresh` | Cache management |
 | `config show/path/edit` | Config management |
 | `self update` | Replace this binary with the latest release |
@@ -439,6 +478,99 @@ Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` enve
 - `--sort-dir <asc|desc>` — Sort direction
 
 ---
+
+## Real-time events (Socket Mode)
+
+Opens the WebSocket Slack pushes events down, and forwards only what a rule matches. `conversations.history` is capped at one request a minute and 15 messages for a non-Marketplace app, so polling cannot follow more than a channel or two. Event delivery is a separate axis from that limit.
+
+### App setup
+
+1. Turn on **Socket Mode**.
+2. Under **Basic Information → App-Level Tokens**, create a token with the `connections:write` scope (it starts with `xapp-`).
+3. Under **Event Subscriptions → Subscribe to events on behalf of users**, add `message.channels`, `message.groups`, `message.im`, `message.mpim`, `reaction_added` and `reaction_removed`. These are **user events**, not bot events — that is what delivers the conversations you can see without inviting a bot to every channel.
+4. Register the token:
+
+```bash
+# Attaches an app-level token to an existing profile (it creates no new one)
+slack-cli auth login --app-token xapp-1-A0000-000-abc
+
+# Or through the environment
+export SLACK_APP_TOKEN=xapp-1-A0000-000-abc
+```
+
+No OAuth grant issues an app-level token, so the browser flow cannot produce one. `connections:write` is never mixed into a user or bot scope request — Slack refuses the whole authorization when it is.
+
+```bash
+slack-cli watch                     # foreground. Stores nothing, and goes to stdout rather than the configured sinks
+slack-cli watch --json | my-agent   # NDJSON stream
+slack-cli daemon run                # long-lived, under launchd or systemd
+slack-cli daemon status
+```
+
+### Retention modes
+
+`events.mode` decides **how long** an event is kept and `events.store_body` decides **how much** of it. Cursors, thread subscriptions and deduplication keys live in a separate state database in every mode, and none of them holds anything anyone said.
+
+| Mode | What reaches the disk | Delivery guarantee |
+|---|---|---|
+| `stream` | Nothing (beyond the state database) | Best-effort — an event that arrives while the consumer is down is gone |
+| `spool` | Kept until acknowledged | At-least-once |
+| `archive` | Kept for `retention_days` | At-least-once, with replay |
+
+With `store_body = false` the log becomes an index of references — channel, ts, author, which rule matched. Fetch the body with `slack-cli thread` when it is actually needed, and Slack stays the only copy.
+
+In `stream` mode `events pull` fails with the reason rather than returning an empty result that looks like a quiet workspace.
+
+### Rules
+
+Rules are configuration, not code, and a wrong one is refused when the config loads. So is a rule with no condition at all, which would forward the entire workspace.
+
+- `mentions_me` — messages that name you
+- `keywords` — case-insensitive substrings
+- `from_users` — specific authors
+- `channels` — an allowlist of conversation IDs, not names (`slack-cli channels <name>` prints them)
+- `subscribe_emoji` — **your own** reaction subscribes that message's thread, and every later reply matches. Removing the reaction unsubscribes. The emoji is the subscribe button.
+
+`include_own_messages` defaults to `false`: an assistant that answers its own messages is a loop.
+
+### Wiring it to an agent
+
+Events arrive as one JSON object per line under the `slack-cli.event/1` schema. There are two ways to receive them, and you want **one of them** — using both delivers every event twice.
+
+- **push** — an `exec` or `http` sink calls the agent the moment a rule matches. Lowest latency, but **not the guaranteed path**: a failure is counted and never retried, because retrying inline would stall every event behind it. Whatever arrived while the agent was down is gone.
+- **pull** — `events pull` reads from a cursor, so an agent that restarts resumes where it stopped. Needs `mode` set to `spool` or `archive`.
+
+Replying needs no new protocol — it is the CLI you already have:
+
+```bash
+slack-cli events pull --consumer agent --follow --json |
+  while read -r event; do
+    ts=$(echo "$event" | jq -r '.thread_ts // .ts')
+    ch=$(echo "$event" | jq -r '.channel')
+    id=$(echo "$event" | jq -r '.id')
+    reply=$(my-agent "$event")
+    slack-cli send "$ch" --thread "$ts" -t "$reply" \
+      -m "{\"event_type\":\"assistant_reply\",\"event_payload\":{\"source_event\":\"$id\"}}"
+  done
+```
+
+Carrying the source event id in `--metadata` is what stops a restarted agent from answering the same message twice. Delivery is at-least-once, so a consumer has to be idempotent.
+
+> **Warning**: a message sent with a user token goes out **under your own name**, with no bot badge. Send automatically with a bot token, or have the agent DM you a draft and send it yourself.
+
+### Limits
+
+- Socket Mode **does not replay** what a disconnect missed. Recovery reads `conversations.history` for channels and `conversations.replies` for subscribed threads, and only for channels a rule cares about, bounded by a count. The age bound clamps where a read *starts* rather than excluding a channel: an older cursor is read from the horizon, and the stretch before it is reported. Reaction events can be read back by neither, so subscription changes made during a disconnect are lost.
+- An **edit or deletion made during a disconnect is not recovered**. `conversations.history` returns an edited message under its original ts, which collapses onto the original the daemon already saw. That is the floor of a ts-keyed recovery model, not a bug in it.
+- A subscribed thread is re-read **from where it was last followed**. Without that cursor every reconnect would read the thread from its first message, and once the deduplication layers lapsed it would deliver the whole thread again.
+- A gap deeper than `backfill_max_channels` and the five-page bound leaves its oldest part unread, with a warning. The cursor advances to the newest recovered message, so that stretch stays unrecovered afterwards.
+- Events are **isolated per profile**, and running on `SLACK_USER_TOKEN` uses an `env` namespace rather than a profile's. The daemon and `daemon status` / `events pull` must run **under the same environment** to see the same store — `daemon status` and `events stats` print which one they are reading on their `profile :` line.
+- Delivery is **serial**. One task owns the whole pipeline, which is what makes the deduplication gate race-free and what keeps a consumer seeing events in arrival order. A slow sink holds the pipeline, and the bounded queue in front of it absorbs — that is, discards — the pressure.
+- The app-level token and the user token are registered separately, and Slack never checks they belong to the same workspace. A payload not authorized for this installation is discarded and reported. The judgement reads `authorizations`, not the top-level `team_id` — in a Slack Connect channel that field names the partner org, so judging on it would drop everything they say.
+- Slack **splits** an app's events across its open connections. Registering one app token under two differently named profiles gives them separate locks, so two daemons start and each sees half. Two daemons see half a workspace each, which is why one is locked per profile. Use two Slack apps if you need two machines.
+- An emoji subscription has to land on the **thread's first message** (or a top-level one). Reacting to a reply subscribes a thread rooted at that reply.
+- A Socket Mode app cannot be listed in the public Slack Marketplace (org-wide distribution is fine).
+- `watch` and `daemon run` cannot run at once for the same profile. They share cursors, thread subscriptions and deduplication keys, so only one holds the lock.
 
 ## Troubleshooting
 

@@ -295,6 +295,35 @@ max_attempts = 3               # 429 재시도 횟수 (Retry-After 우선)
 initial_delay_ms = 1000        # Retry-After 헤더가 없을 때의 최초 백오프
 max_delay_ms = 60000
 exponential_base = 2.0
+
+[events]
+mode = "spool"                 # stream | spool | archive — 이벤트를 얼마나 오래 보관할지
+store_body = false             # false면 참조만 저장 (본문·원본 payload 제외)
+store_raw = false              # true면 Slack 원본 payload를 이벤트에 실음 (룰 작성용)
+retention_days = 7             # archive 모드의 보관 기간, spool 모드의 안전 상한
+buffer = 1024                  # 처리 대기 큐 크기
+on_overflow = "drop_oldest"    # drop_oldest | drop_newest (버림은 항상 카운트됨)
+max_bytes = 268435456          # 이벤트 로그의 실데이터 상한 (256MiB, 최소 1MiB)
+backfill = true                # 재연결 시 놓친 메시지 복구
+backfill_max_channels = 20     # 복구 대상 채널 수 상한
+backfill_max_age_hours = 24    # 복구가 거슬러 올라가는 한계 (커서가 더 오래됐으면 여기서부터 읽고 경고)
+# data_path = "~/other/place"   # 이벤트 저장소 위치 (기본: 설정 디렉터리의 events/)
+
+[[events.sink]]
+name = "agent"
+type = "stdout"                # stdout | exec | http
+                               # exec/http는 push, `events pull`은 pull입니다.
+                               # 둘 다 쓰면 같은 이벤트가 두 번 전달됩니다.
+
+[[events.rule]]
+name = "mention"
+on = ["message"]
+mentions_me = true
+
+[[events.rule]]
+name = "watched-thread"
+on = ["message", "reaction_added", "reaction_removed"]
+subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을 추적
 ```
 
 알 수 없는 키는 무시되지 않고 오류로 처리됩니다 — 이전 버전의 잔여 키(`user_token`, `bot_token`, `max_idle_per_host`, `pool_idle_timeout_seconds`)가 있으면 명시적 에러로 표면화되니 제거하세요.
@@ -313,6 +342,7 @@ exponential_base = 2.0
 |---|---|
 | `SLACK_USER_TOKEN` | 저장된 프로필을 무시하고 이 토큰을 직접 사용 (CI/headless) |
 | `SLACK_BOT_TOKEN` | 위와 동일, bot 토큰 |
+| `SLACK_APP_TOKEN` | Socket Mode 연결에 쓸 app-level 토큰 (`xapp-`). 저장된 user/bot 토큰을 대체하지 않습니다. `SLACK_USER_TOKEN`으로 실행하면 이벤트는 프로필이 아니라 `env` 네임스페이스에 저장됩니다 |
 | `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`, `config.toml [auth]`보다 우선) |
 | `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
@@ -354,6 +384,15 @@ exponential_base = 2.0
 | `bookmark <ch> <title> <url>` | 북마크 추가 |
 | `unbookmark <ch> <id>` | 북마크 제거 |
 | `bookmarks <ch>` | 북마크 목록 |
+| `watch` | 매칭 이벤트를 stdout으로 스트리밍 (저장 없음, 설정된 싱크도 무시) |
+| `daemon run` | Socket Mode 데몬을 포그라운드로 실행 |
+| `daemon status` | 데몬의 마지막 하트비트와 카운터 |
+| `daemon stop` | 실행 중인 데몬에 종료 신호 (Unix 전용; Windows에서는 서비스 관리자로) |
+| `events pull [--consumer --ack --follow]` | 아직 ack하지 않은 이벤트 읽기 |
+| `events ack --through <seq>` | 소비자 위치 전진 |
+| `events stats` | 이벤트 로그 크기·보존·소비자 지연 |
+| `events prune` | 보존 정책 즉시 적용 |
+| `events path` | 데몬 파일 위치 |
 | `cache stats/refresh` | 캐시 관리 |
 | `config show/path/edit` | 설정 관리 |
 | `self update` | 최신 릴리스로 이 바이너리를 교체 |
@@ -426,6 +465,99 @@ exponential_base = 2.0
 - `--sort-dir <asc|desc>` — 정렬 방향
 
 ---
+
+## 실시간 이벤트 (Socket Mode)
+
+Slack이 이벤트를 밀어주는 WebSocket 연결을 열고, 규칙에 걸린 것만 골라 로컬로 전달합니다. `conversations.history`는 비-Marketplace 앱에서 분당 1회·15건으로 제한되므로 폴링으로는 여러 채널을 따라갈 수 없습니다. 이벤트 전달은 그 제한과 별개 축입니다.
+
+### 앱 설정
+
+1. **Socket Mode**를 켭니다.
+2. **Basic Information → App-Level Tokens**에서 `connections:write` scope로 토큰을 만듭니다 (`xapp-`로 시작).
+3. **Event Subscriptions → Subscribe to events on behalf of users**에 `message.channels`, `message.groups`, `message.im`, `message.mpim`, `reaction_added`, `reaction_removed`를 등록합니다. 봇 이벤트가 아니라 **사용자 대행 이벤트**입니다 — 그래야 봇을 채널마다 초대하지 않고도 내가 보는 대화가 그대로 옵니다.
+4. 토큰을 등록합니다:
+
+```bash
+# 기존 프로필에 app-level 토큰을 붙입니다 (프로필을 새로 만들지 않습니다)
+slack-cli auth login --app-token xapp-1-A0000-000-abc
+
+# 또는 환경변수로
+export SLACK_APP_TOKEN=xapp-1-A0000-000-abc
+```
+
+app-level 토큰은 OAuth로 발급되지 않으므로 `auth login`의 브라우저 흐름이 만들어내지 않습니다. `connections:write`는 user/bot scope 요청에 절대 섞이지 않습니다 — 섞이면 Slack이 인가 전체를 거부합니다.
+
+```bash
+slack-cli watch                     # 포그라운드. 저장하지 않고, 설정된 싱크 대신 stdout으로
+slack-cli watch --json | my-agent   # NDJSON 스트림
+slack-cli daemon run                # launchd/systemd 아래에서 상주
+slack-cli daemon status
+```
+
+### 보존 모드
+
+`events.mode`는 **얼마나 오래** 보관할지, `events.store_body`는 **얼마나 많이** 보관할지를 정합니다. 커서·스레드 구독·중복 판정은 어느 모드에서든 별도의 상태 DB에 남으며, 거기에는 남의 메시지 내용이 들어가지 않습니다.
+
+| 모드 | 디스크에 남는 것 | 배달 보장 |
+|---|---|---|
+| `stream` | 없음 (상태 DB 제외) | best-effort — 소비자가 꺼져 있으면 그 이벤트는 사라집니다 |
+| `spool` | ack될 때까지만 | at-least-once |
+| `archive` | `retention_days` 동안 | at-least-once + 재생 |
+
+`store_body = false`면 로그는 참조 인덱스가 됩니다(채널·ts·작성자·매칭 규칙). 본문이 필요하면 그때 `slack-cli thread`로 가져오면 되고, Slack이 유일한 원본으로 남습니다.
+
+`stream` 모드에서는 `events pull`이 조용히 빈 결과를 주지 않고 이유를 말하며 실패합니다.
+
+### 규칙
+
+규칙은 코드가 아니라 설정이고, 잘못된 규칙은 설정 로드 시점에 거부됩니다. 조건이 하나도 없는 규칙(= 워크스페이스 전체 전달)도 거부됩니다.
+
+- `mentions_me` — 나를 멘션한 메시지
+- `keywords` — 대소문자 무시 부분 문자열
+- `from_users` — 특정 작성자
+- `channels` — 대화 ID 허용 목록 (이름이 아니라 ID — `slack-cli channels <name>`으로 확인)
+- `subscribe_emoji` — **내가** 그 이모지를 찍은 메시지의 스레드를 구독하고, 이후 답글이 매칭됩니다. 이모지를 떼면 구독이 해제됩니다. 이모지가 곧 구독 버튼입니다.
+
+`include_own_messages`는 기본 `false`입니다 — 자기 메시지에 반응하는 비서는 루프가 됩니다.
+
+### 에이전트에 연결하기
+
+이벤트는 `slack-cli.event/1` 스키마의 JSON 한 줄로 전달됩니다. 전달 경로는 두 가지이고, **둘 중 하나만** 고르세요 — 같이 쓰면 같은 이벤트가 두 번 갑니다.
+
+- **push** — `exec`/`http` 싱크가 매칭 즉시 에이전트를 호출합니다. 저지연이지만 **보장 경로는 아닙니다**: 실패는 카운트되고 재시도하지 않습니다(인라인 재시도는 뒤의 모든 이벤트를 막습니다). 에이전트가 꺼져 있던 동안의 호출은 그대로 사라집니다.
+- **pull** — `events pull`이 커서 기준으로 읽습니다. 에이전트가 재시작해도 이어서 받습니다. `mode`가 `spool` 또는 `archive`여야 합니다.
+
+회신은 새 프로토콜 없이 기존 CLI 그대로입니다:
+
+```bash
+slack-cli events pull --consumer agent --follow --json |
+  while read -r event; do
+    ts=$(echo "$event" | jq -r '.thread_ts // .ts')
+    ch=$(echo "$event" | jq -r '.channel')
+    id=$(echo "$event" | jq -r '.id')
+    reply=$(my-agent "$event")
+    slack-cli send "$ch" --thread "$ts" -t "$reply" \
+      -m "{\"event_type\":\"assistant_reply\",\"event_payload\":{\"source_event\":\"$id\"}}"
+  done
+```
+
+`--metadata`에 원본 이벤트 id를 실으면 에이전트가 재시작해도 같은 답을 두 번 보내지 않습니다. 배달은 at-least-once이므로 소비자는 멱등해야 합니다.
+
+> **경고**: user 토큰으로 보낸 메시지는 봇 표시 없이 **본인 이름으로** 나갑니다. 자동 전송은 봇 토큰으로 하거나, 초안을 본인에게 DM으로 보내고 승인 후 전송하세요.
+
+### 한계
+
+- Socket Mode는 끊긴 동안의 이벤트를 **재생하지 않습니다**. 복구는 `conversations.history`(채널)와 `conversations.replies`(구독 중인 스레드)로 하며, 규칙이 관심 있는 채널만, 개수 상한 안에서 읽습니다. 시간 상한은 **읽기 시작점을 자르는 것**이지 채널을 빼는 것이 아닙니다 — 커서가 더 오래됐으면 그 지점부터 읽고, 읽지 못한 구간을 경고로 남깁니다. 리액션 이벤트는 어느 쪽으로도 되읽을 수 없어 끊긴 동안의 구독 변경은 유실됩니다.
+- 끊긴 동안 일어난 **편집·삭제는 복구되지 않습니다**. `conversations.history`는 편집된 메시지를 원래 ts로 돌려주므로 이미 본 원본과 같은 키가 되어 합쳐집니다. 복구가 ts를 기준으로 하는 한 피할 수 없는 바닥입니다.
+- 구독 중인 스레드는 **마지막으로 따라간 지점부터** 다시 읽습니다. 그 커서가 없으면 재연결마다 스레드를 처음부터 읽고, 중복 판정이 만료된 뒤에는 스레드 전체를 다시 배달하게 됩니다.
+- 갭이 `backfill_max_channels`·5페이지 한도보다 깊으면 가장 오래된 부분은 읽지 못하고 경고만 남깁니다. 커서는 읽어온 최신 지점으로 전진하므로 그 구간은 이후에도 복구되지 않습니다.
+- 이벤트는 **프로필별로 격리**되며, `SLACK_USER_TOKEN`으로 실행하면 프로필이 아니라 `env` 네임스페이스를 씁니다. 데몬과 `daemon status`/`events pull`은 **같은 환경에서** 실행해야 같은 저장소를 봅니다 — 어느 쪽을 읽고 있는지는 `daemon status`와 `events stats`가 `profile :` 줄로 알려줍니다.
+- 전달은 **순차적**입니다. 하나의 태스크가 파이프라인 전체를 소유하는 것이 중복 판정 게이트를 경합 없이 만들고 소비자에게 도착 순서를 보장합니다. 느린 싱크는 파이프라인을 붙잡고, 그 압력은 앞의 유계 큐가 흡수합니다(= 버립니다).
+- app-level 토큰과 user 토큰은 따로 등록되고 Slack은 둘이 같은 워크스페이스인지 확인하지 않습니다. 이 설치에 인가되지 않은 페이로드는 폐기하고 오류를 남깁니다. 판정은 `authorizations` 기준입니다 — Slack Connect 공유 채널에서는 최상위 `team_id`가 상대 조직의 것이므로, 그걸로 판정하면 상대가 보낸 메시지를 전부 버리게 됩니다.
+- Slack은 한 앱의 이벤트를 열려 있는 연결들에 **나눠서** 보냅니다. 같은 app 토큰을 서로 다른 이름의 프로필 둘에 등록하면 잠금이 분리되어 데몬 둘이 각자 절반만 보게 됩니다. 두 대에서 데몬을 띄우면 각자 절반만 봅니다 — 그래서 프로필당 하나만 실행되도록 잠급니다. 두 대가 필요하면 Slack 앱을 두 개 만드세요.
+- 이모지 구독은 **스레드 시작 메시지**(또는 최상위 메시지)에 찍어야 합니다. 답글에 찍으면 그 답글이 루트인 스레드를 구독하게 됩니다.
+- Socket Mode 앱은 공개 Slack Marketplace에 등재할 수 없습니다 (조직 내 배포는 가능).
+- `watch`와 `daemon run`은 같은 프로필에서 동시에 실행할 수 없습니다. 커서·스레드 구독·중복 판정을 공유하기 때문에 하나만 잠금을 가집니다.
 
 ## 문제 해결
 

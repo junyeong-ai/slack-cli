@@ -11,6 +11,7 @@ use crate::slack::SlackClient;
 pub async fn run(
     user_token: Option<Secret>,
     bot_token: Option<Secret>,
+    app_token: Option<Secret>,
     slack: &SlackClient,
 ) -> Result<Profile> {
     let validation = user_token
@@ -29,6 +30,7 @@ pub async fn run(
         tokens: TokenSet {
             user: user_token.map(|token| Credential::permanent(token, Vec::new())),
             bot: bot_token.map(|token| Credential::permanent(token, Vec::new())),
+            app: app_token.map(crate::auth::app_credential),
         },
         client: None,
         authorized_at: Utc::now(),

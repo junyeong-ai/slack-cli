@@ -4,7 +4,7 @@ use std::time::Duration;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
-use super::credential::{Readiness, TokenKind};
+use super::credential::{Credential, Readiness, TokenKind};
 use super::env::EnvOverrides;
 use super::errors::AuthError;
 use super::oauth::exchange::{Grant, TokenExchange};
@@ -70,12 +70,18 @@ impl Authenticator {
     /// The token to send, with the kind it came from: a caller that gets a
     /// scope refusal from Slack needs the kind to name what the method wanted.
     pub async fn token_for(&self, policy: TokenPolicy) -> Result<(Secret, TokenKind), AuthError> {
+        // The app axis is resolved first and on its own terms. An app-level
+        // token is not an installation credential — no OAuth grant issues it,
+        // it never rotates, and it answers no workspace call — so neither the
+        // env-override shortcut for installation tokens nor the renewal path
+        // below has anything to say about it.
+        if policy == TokenPolicy::AppRequired {
+            return self.app_token().await.map(|token| (token, TokenKind::App));
+        }
+
         if self.overrides.has_inline_tokens() {
             return policy
-                .select(
-                    self.overrides.user_token.is_some(),
-                    self.overrides.bot_token.is_some(),
-                )
+                .select(|kind| self.overrides.holds(kind))
                 .and_then(|kind| Some((self.overrides.get(kind).cloned()?, kind)))
                 .ok_or_else(|| AuthError::NoTokenForPolicy {
                     profile: "env".into(),
@@ -94,7 +100,7 @@ impl Authenticator {
                 .get(&name)
                 .ok_or_else(|| AuthError::UnknownProfile(name.clone()))?;
             let kind = policy
-                .select(profile.tokens.user.is_some(), profile.tokens.bot.is_some())
+                .select(|kind| profile.tokens.holds(kind))
                 .ok_or_else(|| AuthError::NoTokenForPolicy {
                     profile: name.clone(),
                     policy,
@@ -103,6 +109,35 @@ impl Authenticator {
         };
 
         Ok((self.token_for_profile(&name, kind).await?, kind))
+    }
+
+    /// The app-level token: the environment first, then the resolved profile.
+    ///
+    /// Its absence is its own error rather than `NotConfigured`, because a
+    /// fully authenticated installation still holds none until one is
+    /// registered, and "run auth login" would be the wrong instruction.
+    async fn app_token(&self) -> Result<Secret, AuthError> {
+        if let Some(token) = self.overrides.get(TokenKind::App).cloned() {
+            return Ok(token);
+        }
+
+        let name = {
+            let state = self.state.read().await;
+            state
+                .resolve(self.explicit_profile.as_deref())
+                .filter(|name| {
+                    state
+                        .profiles
+                        .get(*name)
+                        .is_some_and(|profile| profile.tokens.holds(TokenKind::App))
+                })
+                .map(ToOwned::to_owned)
+        };
+
+        match name {
+            Some(name) => self.token_for_profile(&name, TokenKind::App).await,
+            None => Err(AuthError::NoAppToken),
+        }
     }
 
     /// The usable token of one kind from a named profile, renewed first if it
@@ -233,6 +268,10 @@ impl Authenticator {
         let issued = match kind {
             TokenKind::User => response.user,
             TokenKind::Bot => response.bot,
+            // Unreachable: an app-level token records no expiry, so it is
+            // always `Ready` and never enters this path. Reported rather than
+            // panicked so a future credential shape cannot crash a daemon.
+            TokenKind::App => None,
         };
         let Some(issued) = issued else {
             return self
@@ -287,6 +326,14 @@ impl Authenticator {
         Ok(token)
     }
 
+    /// Whether the environment is supplying the installation tokens, in which
+    /// case no stored profile is in play at all. Anything that namespaces
+    /// state by profile has to know, or it would file one installation's data
+    /// under another's name.
+    pub fn uses_env_tokens(&self) -> bool {
+        self.overrides.has_inline_tokens()
+    }
+
     pub async fn snapshot(&self) -> AuthState {
         self.state.read().await.clone()
     }
@@ -326,6 +373,28 @@ impl Authenticator {
     pub async fn clear_all(&self) -> Result<(), AuthError> {
         self.transact(|state| {
             *state = AuthState::default();
+            Ok(())
+        })
+        .await
+    }
+
+    /// Adds one credential to an existing profile, leaving the others alone.
+    ///
+    /// This is how a token that no login flow can produce reaches the store:
+    /// an app-level token is minted in the Slack app's own configuration, so
+    /// it is attached to the installation rather than issued alongside it.
+    pub async fn attach_token(
+        &self,
+        name: &str,
+        kind: TokenKind,
+        credential: Credential,
+    ) -> Result<(), AuthError> {
+        self.transact(|state| {
+            let profile = state
+                .profiles
+                .get_mut(name)
+                .ok_or_else(|| AuthError::UnknownProfile(name.to_string()))?;
+            profile.tokens.set(kind, credential);
             Ok(())
         })
         .await

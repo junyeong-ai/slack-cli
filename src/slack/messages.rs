@@ -212,11 +212,18 @@ impl SlackMessageClient {
         Ok((messages, next_cursor))
     }
 
+    /// Replies in a thread, oldest first.
+    ///
+    /// `oldest` is what makes this usable for recovery: without it the pages
+    /// start at the top of the thread, so a caller asking for `limit` messages
+    /// gets the oldest ones — which for a long thread is the part it has
+    /// already seen, never the part it missed.
     pub async fn replies(
         &self,
         channel: &str,
         thread_ts: &str,
         limit: usize,
+        oldest: Option<&str>,
     ) -> Result<Vec<SlackMessage>> {
         let mut all_messages = Vec::new();
         let mut cursor: Option<String> = None;
@@ -230,6 +237,9 @@ impl SlackMessageClient {
                 "include_all_metadata": true,
             });
 
+            if let Some(oldest) = oldest {
+                params["oldest"] = json!(oldest);
+            }
             if let Some(c) = &cursor {
                 params["cursor"] = json!(c);
             }

@@ -10,6 +10,7 @@ use crate::config::{AuthConfig, Config};
 use crate::slack::{SlackClient, scopes};
 
 use super::Authenticator;
+use super::app_credential;
 use super::credential::{Credential, TokenKind, TokenSet};
 use super::login::{browser_login, static_login};
 use super::method::AuthMethod;
@@ -30,6 +31,7 @@ pub async fn handle(
             method,
             user_token,
             bot_token,
+            app_token,
             client_id,
             port,
             no_browser,
@@ -39,6 +41,7 @@ pub async fn handle(
                 profile: profile.and_then(non_blank),
                 user_token: user_token.and_then(non_blank).map(secret::new),
                 bot_token: bot_token.and_then(non_blank).map(secret::new),
+                app_token: app_token.and_then(non_blank).map(secret::new),
                 client_id: client_id.and_then(non_blank),
                 port: port.unwrap_or(DEFAULT_CALLBACK_PORT),
                 no_browser,
@@ -81,12 +84,20 @@ struct LoginInput {
     profile: Option<String>,
     user_token: Option<Secret>,
     bot_token: Option<Secret>,
+    app_token: Option<Secret>,
     client_id: Option<String>,
     port: u16,
     no_browser: bool,
 }
 
 impl LoginInput {
+    /// An app-level token on its own has no installation to create. It answers
+    /// no `auth.test`, so there is no workspace it could name, and it is
+    /// attached to a profile that already exists instead.
+    fn attaches_only(&self) -> bool {
+        self.app_token.is_some() && self.user_token.is_none() && self.bot_token.is_none()
+    }
+
     /// The command line and the environment win; `config.toml` supplies the
     /// client id when they left it out.
     fn with_stored_app(mut self, auth: &AuthConfig) -> Self {
@@ -102,13 +113,20 @@ async fn login(
     authenticator: &Authenticator,
     json: bool,
 ) -> Result<()> {
+    if let Some(token) = input.app_token.as_ref() {
+        validate_app_token(token)?;
+    }
+    if input.attaches_only() {
+        return attach_app_token(input, authenticator, json).await;
+    }
+
     let method = decide_method(&input)?;
     let input = input.with_stored_app(&config.auth);
 
     let profile = match method {
         AuthMethod::Static => {
             let (user, bot) = collect_static_tokens(input.user_token, input.bot_token)?;
-            static_login::run(user, bot, slack).await?
+            static_login::run(user, bot, input.app_token.clone(), slack).await?
         }
         AuthMethod::Pkce => {
             let user_scopes = login_scopes(&config.auth.exclude_scopes)?;
@@ -150,6 +168,57 @@ async fn login(
 
     print_login_result(&profile_name, &profile, json);
     Ok(())
+}
+
+/// Attaches an app-level token to a profile that already exists.
+///
+/// The target is the same one every other command resolves — `--profile` or
+/// the active one — so the token lands on the installation the daemon will
+/// run as, and nowhere else.
+async fn attach_app_token(
+    input: LoginInput,
+    authenticator: &Authenticator,
+    json: bool,
+) -> Result<()> {
+    let token = input.app_token.expect("attaches_only implies an app token");
+
+    let snapshot = authenticator.snapshot().await;
+    let name = snapshot
+        .resolve(input.profile.as_deref())
+        .map(ToOwned::to_owned)
+        .context(
+            "an app-level token attaches to an existing profile, and none is configured. \
+             Run `slack-cli auth login` first, then re-run this with --app-token",
+        )?;
+
+    authenticator
+        .attach_token(&name, TokenKind::App, app_credential(token))
+        .await?;
+
+    if json {
+        println!(
+            "{}",
+            json!({ "profile": name, "attached": TokenKind::App.as_str() })
+        );
+    } else {
+        println!("\u{2713} Added app-level token to profile {name}");
+    }
+    Ok(())
+}
+
+/// An app-level token is checked by shape before it is stored. Slack has no
+/// endpoint that validates one without opening a connection, and a `xoxb-`
+/// pasted into `--app-token` is a plain slip worth catching here rather than
+/// as a daemon that will not start.
+fn validate_app_token(token: &Secret) -> Result<()> {
+    if token.expose_secret().starts_with("xapp-") {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "--app-token expects an app-level token starting with `xapp-`. \
+         Create one under Basic Information \u{2192} App-Level Tokens with the \
+         connections:write scope"
+    ))
 }
 
 fn decide_method(input: &LoginInput) -> Result<AuthMethod> {
@@ -265,13 +334,19 @@ fn slugify(input: &str) -> String {
 fn print_scopes(excluded: &[String], json: bool) {
     let user = scopes::requested(TokenKind::User, excluded);
     let bot = scopes::requested(TokenKind::Bot, excluded);
+    // Not `requested`: an app-level token is minted in the app configuration
+    // rather than granted by an authorization, so nothing about it is
+    // excludable and the full requirement is always what to register.
+    let app = scopes::required(TokenKind::App);
     if json {
-        println!("{}", json!({ "user": user, "bot": bot }));
+        println!("{}", json!({ "user": user, "bot": bot, "app": app }));
     } else {
         println!("User Token Scopes:");
         println!("  {}", user.join(" "));
         println!("Bot Token Scopes:");
         println!("  {}", bot.join(" "));
+        println!("App-Level Token Scopes (Basic Information \u{2192} App-Level Tokens):");
+        println!("  {}", app.join(" "));
     }
 }
 
@@ -439,6 +514,12 @@ async fn revoke_quietly(
     tokens: &TokenSet,
 ) {
     for (kind, _) in tokens.iter() {
+        // An app-level token is not an installation grant: `auth.revoke`
+        // refuses it, and there is nothing at Slack to leave behind by
+        // dropping it locally. Only the app's own configuration can retire it.
+        if kind == TokenKind::App {
+            continue;
+        }
         match authenticator.token_for_profile(profile, kind).await {
             Ok(token) => {
                 if let Err(err) = slack.auth.revoke(token.expose_secret()).await {
@@ -524,6 +605,7 @@ fn print_status_json(
         "tokens": {
             "user": profile.tokens.user.as_ref().map(credential_json),
             "bot": profile.tokens.bot.as_ref().map(credential_json),
+            "app": profile.tokens.app.as_ref().map(credential_json),
         },
         "authorized_at": profile.authorized_at,
     });
@@ -621,6 +703,7 @@ mod tests {
             profile: None,
             user_token: None,
             bot_token: None,
+            app_token: None,
             client_id: Some("123.456".into()),
             port: DEFAULT_CALLBACK_PORT,
             no_browser: true,
@@ -712,6 +795,46 @@ mod tests {
     fn browser_login_requires_a_client_id() {
         let err = build_client(None).unwrap_err();
         assert!(err.to_string().contains("--client-id"));
+    }
+
+    /// `auth.revoke` takes an installation grant. Sending it an app-level
+    /// token earns a refusal and a warning, and revokes nothing — the token
+    /// only ever retires from the app's own configuration.
+    #[test]
+    fn logout_revokes_the_installation_tokens_and_not_the_app_one() {
+        let mut tokens = TokenSet::default();
+        tokens.set(
+            TokenKind::User,
+            Credential::permanent(secret::new("xoxp-1"), vec![]),
+        );
+        tokens.set(
+            TokenKind::App,
+            Credential::permanent(secret::new("xapp-1"), vec![]),
+        );
+
+        let revocable: Vec<TokenKind> = tokens
+            .iter()
+            .map(|(kind, _)| kind)
+            .filter(|kind| *kind != TokenKind::App)
+            .collect();
+        assert_eq!(revocable, vec![TokenKind::User]);
+    }
+
+    #[test]
+    fn an_app_token_alone_attaches_rather_than_logging_in() {
+        let mut given = input(None);
+        given.app_token = Some(secret::new("xapp-1-A01-1-abc"));
+        assert!(given.attaches_only());
+
+        given.user_token = Some(secret::new("xoxp-1"));
+        assert!(!given.attaches_only());
+    }
+
+    #[test]
+    fn an_app_token_is_refused_unless_it_looks_like_one() {
+        assert!(validate_app_token(&secret::new("xapp-1-A01-1-abc")).is_ok());
+        let err = validate_app_token(&secret::new("xoxb-not-an-app-token")).unwrap_err();
+        assert!(err.to_string().contains("xapp-"), "{err}");
     }
 
     #[test]

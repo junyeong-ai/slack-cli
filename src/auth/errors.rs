@@ -28,6 +28,13 @@ pub enum AuthError {
     NoSuchToken { profile: String, kind: TokenKind },
 
     #[error(
+        "no app-level token is available. Create one under Basic Information \u{2192} \
+         App-Level Tokens with the connections:write scope, then run: \
+         slack-cli auth login --app-token xapp-... (or set SLACK_APP_TOKEN)"
+    )]
+    NoAppToken,
+
+    #[error(
         "the OAuth client that issued the {kind} token in profile '{profile}' is not recorded, \
          so the token cannot be renewed. run: slack-cli auth login"
     )]

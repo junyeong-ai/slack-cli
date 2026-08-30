@@ -80,18 +80,34 @@ impl Credential {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The three token axes a Slack app hands out. `User` and `Bot` are
+/// installation credentials issued by OAuth; `App` is the app-level token
+/// (`xapp-`) minted in the app's own configuration, which authorizes nothing
+/// in a workspace and only opens a Socket Mode connection. It is a separate
+/// kind rather than a flag because it is acquired, stored and renewed by
+/// different rules: no OAuth grant issues it and it never rotates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenKind {
     User,
     Bot,
+    App,
 }
 
 impl TokenKind {
+    pub const ALL: [Self; 3] = [Self::User, Self::Bot, Self::App];
+
+    /// The kinds an OAuth authorization can grant. `App` is absent by
+    /// construction: asking Slack for an app-level scope in an installation
+    /// grant fails the whole request, so the OAuth surface derives from this
+    /// list and never from `ALL`.
+    pub const OAUTH: [Self; 2] = [Self::User, Self::Bot];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::User => "user",
             Self::Bot => "bot",
+            Self::App => "app",
         }
     }
 }
@@ -108,6 +124,12 @@ pub struct TokenSet {
     pub user: Option<Credential>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot: Option<Credential>,
+    /// The app-level token (`xapp-`) that opens a Socket Mode connection.
+    /// Absent from every profile until one is registered, which is why it
+    /// carries a serde default: profiles written before it existed read back
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<Credential>,
 }
 
 impl TokenSet {
@@ -115,6 +137,7 @@ impl TokenSet {
         match kind {
             TokenKind::User => self.user.as_ref(),
             TokenKind::Bot => self.bot.as_ref(),
+            TokenKind::App => self.app.as_ref(),
         }
     }
 
@@ -122,16 +145,18 @@ impl TokenSet {
         match kind {
             TokenKind::User => self.user = Some(credential),
             TokenKind::Bot => self.bot = Some(credential),
+            TokenKind::App => self.app = Some(credential),
         }
     }
 
+    pub fn holds(&self, kind: TokenKind) -> bool {
+        self.get(kind).is_some()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (TokenKind, &Credential)> {
-        [
-            (TokenKind::User, self.user.as_ref()),
-            (TokenKind::Bot, self.bot.as_ref()),
-        ]
-        .into_iter()
-        .filter_map(|(kind, credential)| credential.map(|c| (kind, c)))
+        TokenKind::ALL
+            .into_iter()
+            .filter_map(|kind| self.get(kind).map(|c| (kind, c)))
     }
 }
 
@@ -207,5 +232,32 @@ mod tests {
         assert!(tokens.get(TokenKind::User).is_none());
         assert!(tokens.get(TokenKind::Bot).is_some());
         assert_eq!(tokens.iter().count(), 1);
+
+        tokens.set(
+            TokenKind::App,
+            Credential::permanent(secret::new("xapp-1-A-1-abc"), vec![]),
+        );
+        assert!(tokens.holds(TokenKind::App));
+        assert_eq!(tokens.iter().count(), 2);
+    }
+
+    /// A profile written before app-level tokens existed must read back
+    /// unchanged, and one holding no app token must not grow the field.
+    #[test]
+    fn an_absent_app_token_neither_fails_to_read_nor_is_written() {
+        let stored = serde_json::json!({ "user": { "token": "xoxp-old" } });
+        let tokens: TokenSet = serde_json::from_value(stored).unwrap();
+        assert!(tokens.holds(TokenKind::User));
+        assert!(!tokens.holds(TokenKind::App));
+
+        let written = serde_json::to_value(&tokens).unwrap();
+        assert!(written.get("app").is_none());
+    }
+
+    #[test]
+    fn the_oauth_kinds_exclude_the_app_axis() {
+        assert!(!TokenKind::OAUTH.contains(&TokenKind::App));
+        assert_eq!(TokenKind::OAUTH.len(), 2);
+        assert_eq!(TokenKind::ALL.len(), 3);
     }
 }

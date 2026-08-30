@@ -3,7 +3,7 @@ name: slack-workspace
 # version is not part of the official skill frontmatter; scripts/install.sh
 # uses it for upgrade comparison — bump with the crate
 version: 0.12.0
-description: Drive a Slack workspace from the terminal via slack-cli. Use when the user wants to send/edit/delete messages (plain text, Markdown, or Block Kit), search Slack history, look up users or channels by name, read threads or paginated channel history, add reactions, pin or bookmark messages, fetch a message permalink, or attach message metadata for idempotent notifications.
+description: Drive a Slack workspace from the terminal via slack-cli. Use when the user wants to send/edit/delete messages (plain text, Markdown, or Block Kit), search Slack history, look up users or channels by name, read threads or paginated channel history, add reactions, pin or bookmark messages, fetch a message permalink, attach message metadata for idempotent notifications, or read the events a Socket Mode daemon has collected (mentions, replies in watched threads) with `events pull`.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
 
@@ -99,12 +99,21 @@ slack-cli unbookmark <channel> <bookmark_id>
 slack-cli bookmarks  <channel> --json
 slack-cli emoji [--query <q>] --json
 
+# Real-time events (only when a daemon is running — see below)
+slack-cli events pull [--consumer NAME] [--limit N] [--ack] [--follow] --json
+slack-cli events ack --consumer NAME --through <seq>
+slack-cli events stats --json
+slack-cli daemon status --json
+
 # Cache
 slack-cli cache refresh [users|channels|all]
 slack-cli cache stats --json
 
 # `self update` replaces the user's binary — a human setup step, not an
 # agent action. Do not run it.
+#
+# `slack-cli watch` and `slack-cli daemon run` run until killed. Never invoke
+# either: an agent reads what a daemon already collected with `events pull`.
 
 # Auth (read-only inspection; `auth login` is a human setup step)
 slack-cli auth status [--verify] --json
@@ -172,9 +181,9 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `search --json` → `{messages, files, channels, users}` object. Each `.messages[]` uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape.
 - `cache stats --json` → `{users: N, channels: N}`.
 - `search --capabilities --json` → `{is_ai_search_enabled}`. When false the workspace ranks by keyword whatever `--no-semantic` says.
-- `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot}, authorized_at}`. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null for tokens that do not expire. On `auth status --verify`, the `verified` object echoes the live `auth.test` shape (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`).
+- `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot, app}, authorized_at}`. `app` is the Socket Mode app-level token and is `null` unless one has been registered. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null for tokens that do not expire. On `auth status --verify`, the `verified` object echoes the live `auth.test` shape (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`).
 - `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
-- `auth scopes --json` → `{user: [...], bot: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops.
+- `auth scopes --json` → `{user: [...], bot: [...], app: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops. `app` is the app-level token's scope (`connections:write`), which is granted in the app's own configuration rather than by an authorization and is therefore never excludable.
 
 ## Message metadata (idempotency)
 
@@ -211,6 +220,68 @@ Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cl
 | `--sort` | `score` | or `timestamp` |
 | `--sort-dir` | `desc` | or `asc` |
 | `--capabilities` | — | report semantic-search availability instead of querying (takes no query) |
+
+## Real-time events
+
+A Socket Mode daemon (`slack-cli daemon run`, started by a human under launchd
+or systemd) collects the events a rule matched — a mention, a reply in a thread
+the user reacted to. **Reading them is the agent's job; running the daemon is
+not.**
+
+```bash
+# Is anything collecting?  running:false means no daemon — say so, do not start one.
+slack-cli daemon status --json | jq '.running'
+
+# Take the next batch and mark it handled. Each --consumer keeps its own
+# position, so pick one name and keep using it.
+#
+# --ack marks the batch as it is emitted, which makes it at-most-once: if this
+# process dies after the events are printed but before they are acted on, they
+# do not come back. Leave --ack off while working, and acknowledge with
+# `events ack --through <seq>` once the work is actually done.
+slack-cli events pull --consumer assistant --limit 20 --ack --json
+
+# Look without consuming (the same batch comes back next time).
+slack-cli events pull --consumer assistant --limit 20 --json
+```
+
+`events pull --json` emits **one JSON object per line** (NDJSON), not an array —
+read it with `jq -c .` or a `while read` loop, never `jq '.[]'`.
+
+Each line is `{schema: "slack-cli.event/1", id, seq, kind, source, channel, ts,
+thread_ts, user, text, matched: [rule names], received_at}`. `kind` is
+`message` / `reaction_added` / `reaction_removed`; `source` is `socket` (live)
+or `backfill` (read back after a disconnect). `text` is absent when the
+installation stores references only — fetch the body with
+`slack-cli thread <channel> <thread_ts>` when you need it.
+
+The daemon delivers **at-least-once**: the same `id` can arrive twice after a
+restart, so deduplicate on `id`. `--ack` is the one place that flips: it marks
+the batch as it is printed, so a crash between printing and acting loses it.
+When replying, carry the id so a repeat is visible:
+
+```bash
+# No --ack here: the position moves only once the work has actually happened.
+last=""
+slack-cli events pull --consumer assistant --limit 10 --json |
+while read -r event; do
+  ch=$(jq -r '.channel' <<<"$event")
+  ts=$(jq -r '.thread_ts // .ts' <<<"$event")
+  id=$(jq -r '.id' <<<"$event")
+  slack-cli send "$ch" --thread "$ts" -t "on it" \
+    -m "{\"event_type\":\"assistant_reply\",\"event_payload\":{\"source_event\":\"$id\"}}"
+  last=$(jq -r '.seq' <<<"$event")
+done
+[ -n "$last" ] && slack-cli events ack --consumer assistant --through "$last"
+```
+
+`events pull` needs the installation to be storing events. If it fails saying
+`events.mode = "stream"`, the daemon is streaming to a sink instead and there
+is nothing to pull — report that rather than retrying.
+
+> A message sent with a user token goes out **under the user's own name**, with
+> no bot badge. Do not auto-send on someone's behalf unless they asked for
+> exactly that; posting a draft to their DM is the safe default.
 
 ## Multi-workspace
 

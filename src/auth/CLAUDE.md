@@ -7,7 +7,7 @@ Single facade (`Authenticator`) resolves tokens for every Slack API call and own
 - **`auth.json`** at the platform config directory (`paths::AppPaths::auth_store`), mode `0600` inside a `0700` directory on Unix — `restrict_file`/`restrict_directory` are no-ops elsewhere, so on Windows the file inherits the `%APPDATA%` ACL. Schema-versioned, atomic write via `tempfile::persist`. Machine-managed; do not hand-edit.
 - **`auth.json.lock`** beside it. Advisory lock only, never read. It is a sibling because writes replace `auth.json` by rename, which would strand a lock held on the unlinked inode.
 - **`config.toml`** carries the Slack app's `client_id` under `[auth]`, optionally `exclude_scopes`, and never a token. The id is the app's public identifier — it travels in the authorize URL — so recording it stores nothing secret.
-- **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation. `SLACK_CLI_CLIENT_ID` names the Slack app, outranking `config.toml [auth]` and outranked by `--client-id`.
+- **Env vars** `SLACK_USER_TOKEN` / `SLACK_BOT_TOKEN` override the store entirely (CI / headless). `SLACK_APP_TOKEN` is resolved on its own axis and deliberately does *not* count as an inline token: it authorizes a Socket Mode connection and no workspace call, so exporting one must not blank out the stored user and bot tokens. `SLACK_PROFILE` (or global `--profile`) selects which stored profile is active for the invocation. `SLACK_CLI_CLIENT_ID` names the Slack app, outranking `config.toml [auth]` and outranked by `--client-id`.
 
 ## Layout
 
@@ -16,7 +16,7 @@ auth/
 ├── authenticator.rs   Authenticator facade — token_for(policy), renew, transact
 ├── cli_handler.rs     `slack-cli auth …` dispatch
 ├── credential.rs      Credential, Readiness, TokenKind, TokenSet
-├── env.rs             EnvOverrides — SLACK_USER_TOKEN / SLACK_BOT_TOKEN
+├── env.rs             EnvOverrides — SLACK_USER_TOKEN / SLACK_BOT_TOKEN / SLACK_APP_TOKEN
 ├── errors.rs          AuthError + OAuthError (thiserror)
 ├── method.rs          AuthMethod enum (Static, Pkce)
 ├── migrate.rs         Schema 1 → 2 upgrade
@@ -40,6 +40,8 @@ auth/
 ## The credential model
 
 A `Credential` is a token plus everything needed to keep it alive: `refresh_token`, `expires_at`, and the `scopes` it was granted. `TokenSet` holds at most one per `TokenKind`. Scopes live on the credential, never on the profile — Slack's bot and user scope namespaces are distinct and must not be merged.
+
+`TokenKind::App` is a third axis rather than a third installation credential. The `xapp-` token is minted in the Slack app's own configuration, is issued by no OAuth grant, never expires, and answers only `apps.connections.open`. `TokenKind::OAUTH` is the pair an authorization can grant, and every scope derivation runs over it — `TokenKind::ALL` exists for storage and display. `auth login --app-token` on its own attaches to the resolved profile instead of creating one, because there is no `auth.test` an app-level token can answer and so no workspace it could name.
 
 `Credential::readiness(now)` is the single decision point:
 
@@ -65,7 +67,8 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 8. **Callback server binds `127.0.0.1` only** on a fixed port (default `53682`, configurable via `--port`). Slack's redirect-URI matching is exact — no auto-fallback. Single accept, then drop.
 9. **`oauth.v2.access` bypasses `SlackCore::api_call`.** It has no `Authorization: Bearer` header and a different response envelope. See `src/slack/CLAUDE.md` for the documented exception.
 10. **Removing the active profile clears active.** No auto-promotion. The user picks the next active via `slack-cli auth use NAME`.
-11. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly.
+11. **`connections:write` never reaches an authorization request.** `TokenPolicy::AppRequired` accepts only `TokenKind::App`, and no installation policy accepts it, so `scopes::required(User|Bot)` cannot union it. `scopes::requested` asserts on the app kind rather than answering, because an exclusion applies to a request the app axis is not part of.
+12. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly.
 
 ## The browser flow is always PKCE
 

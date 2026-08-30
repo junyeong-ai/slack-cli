@@ -155,6 +155,15 @@ impl SlackCore {
                         .send()
                         .await
                 }
+                RequestEncoding::Form => {
+                    self.http
+                        .post(&endpoint)
+                        .header("Authorization", format!("Bearer {}", token))
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .body(serde_urlencoded::to_string(&params)?)
+                        .send()
+                        .await
+                }
             };
 
             let response = response.map_err(|source| SlackApiError::Transport { source })?;

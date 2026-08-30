@@ -3,6 +3,7 @@ use super::secret::{self, Secret};
 
 const ENV_USER_TOKEN: &str = "SLACK_USER_TOKEN";
 const ENV_BOT_TOKEN: &str = "SLACK_BOT_TOKEN";
+const ENV_APP_TOKEN: &str = "SLACK_APP_TOKEN";
 
 /// Tokens supplied directly by the environment. They bypass the store
 /// entirely, so the CLI never renews or persists them — their lifetime is the
@@ -11,6 +12,7 @@ const ENV_BOT_TOKEN: &str = "SLACK_BOT_TOKEN";
 pub struct EnvOverrides {
     pub user_token: Option<Secret>,
     pub bot_token: Option<Secret>,
+    pub app_token: Option<Secret>,
 }
 
 impl EnvOverrides {
@@ -18,9 +20,15 @@ impl EnvOverrides {
         Self {
             user_token: read_secret(ENV_USER_TOKEN),
             bot_token: read_secret(ENV_BOT_TOKEN),
+            app_token: read_secret(ENV_APP_TOKEN),
         }
     }
 
+    /// Whether the environment supplies an *installation* token, which is what
+    /// makes the store irrelevant for this invocation. `SLACK_APP_TOKEN` is
+    /// deliberately not counted: it authorizes a Socket Mode connection and no
+    /// workspace call, so letting it stand in here would make exporting one
+    /// silently blank out the stored user and bot tokens.
     pub fn has_inline_tokens(&self) -> bool {
         self.user_token.is_some() || self.bot_token.is_some()
     }
@@ -29,7 +37,12 @@ impl EnvOverrides {
         match kind {
             TokenKind::User => self.user_token.as_ref(),
             TokenKind::Bot => self.bot_token.as_ref(),
+            TokenKind::App => self.app_token.as_ref(),
         }
+    }
+
+    pub fn holds(&self, kind: TokenKind) -> bool {
+        self.get(kind).is_some()
     }
 }
 

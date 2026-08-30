@@ -1,4 +1,5 @@
 use crate::cache::SqliteCache;
+use crate::events::{DaemonStatus, Event, PruneOutcome, StoreCaps, StoreStats};
 use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{
     Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchCapabilities, SearchResults,
@@ -779,6 +780,242 @@ pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
             }
         }
     }
+}
+
+/// One JSON object per line, which is what a consuming process reads. Not
+/// `to_string_pretty`: a pulled batch is a stream of records, and a record
+/// that spans lines cannot be read one at a time.
+pub fn print_events(events: &[Event], as_json: bool) {
+    if as_json {
+        for event in events {
+            match event.to_ndjson() {
+                Ok(line) => println!("{line}"),
+                Err(err) => eprintln!("could not encode event {}: {err}", event.id),
+            }
+        }
+        return;
+    }
+
+    if events.is_empty() {
+        println!("No events");
+        return;
+    }
+
+    for event in events {
+        println!(
+            "{:>6}  {}  [{}]  {}  {}  {}",
+            event.seq,
+            event.received_at.format("%Y-%m-%d %H:%M:%S"),
+            event.matched.join(","),
+            event.kind.as_str(),
+            event.channel.as_deref().unwrap_or("-"),
+            event
+                .text
+                .as_deref()
+                .map(|text| {
+                    let single = text.replace('\n', " ");
+                    let mut cut: String = single.chars().take(80).collect();
+                    if single.chars().count() > 80 {
+                        cut.push('…');
+                    }
+                    cut
+                })
+                .unwrap_or_else(|| "(body not stored)".to_string()),
+        );
+    }
+}
+
+pub fn print_event_stats(
+    stats: &StoreStats,
+    caps: &StoreCaps,
+    mode: &str,
+    profile: &str,
+    as_json: bool,
+) {
+    if as_json {
+        println!(
+            "{}",
+            json!({
+                "profile": profile,
+                "mode": mode,
+                "durable": caps.durable,
+                "replayable": caps.replayable,
+                "events": stats.events,
+                "bytes": stats.bytes,
+                "oldest": stats.oldest,
+                "newest": stats.newest,
+                "consumers": stats.consumers,
+            })
+        );
+        return;
+    }
+
+    println!("profile : {profile}");
+    println!("mode    : {mode}");
+    if !caps.durable {
+        println!("events  : not stored (streaming only)");
+        return;
+    }
+
+    println!("events  : {}", stats.events);
+    println!("size    : {}", human_bytes(stats.bytes));
+    if let (Some(oldest), Some(newest)) = (stats.oldest, stats.newest) {
+        println!("oldest  : {}", format_epoch(oldest));
+        println!("newest  : {}", format_epoch(newest));
+    }
+    if stats.consumers.is_empty() {
+        println!("consumers: none registered");
+    } else {
+        println!("consumers:");
+        for consumer in &stats.consumers {
+            println!(
+                "  {:<20} acked {:<10} pending {}",
+                consumer.name, consumer.acked_seq, consumer.pending
+            );
+        }
+    }
+}
+
+pub fn print_daemon_status(
+    status: Option<&DaemonStatus>,
+    profile: &str,
+    stale_after: i64,
+    as_json: bool,
+) {
+    // Named on every line of output, because the events of one installation
+    // live apart from another's: a command run without the environment the
+    // daemon runs under reads a different store, finds it empty, and would
+    // otherwise report a working daemon as absent.
+    let Some(status) = status else {
+        if as_json {
+            println!("{}", json!({ "running": false, "profile": profile }));
+        } else {
+            println!("profile : {profile}");
+            println!(
+                "running : no daemon has run for this profile. Start one: slack-cli daemon run"
+            );
+        }
+        return;
+    };
+
+    // A heartbeat that stopped is how a killed daemon shows up: the record it
+    // left behind is still there, and only its age says it is gone.
+    let age = chrono::Utc::now().timestamp() - status.heartbeat_at;
+    let live = age <= stale_after;
+
+    if as_json {
+        println!(
+            "{}",
+            json!({
+                "running": live,
+                "profile": profile,
+                "pid": status.pid,
+                "connected": status.connected && live,
+                "started_at": status.started_at,
+                "heartbeat_at": status.heartbeat_at,
+                "heartbeat_age_seconds": age,
+                "counters": {
+                    "received": status.counters.received,
+                    "matched": status.counters.matched,
+                    "stored": status.counters.stored,
+                    "dropped": status.counters.dropped,
+                    "delivered": status.counters.delivered,
+                    "failed": status.counters.failed,
+                    "reconnects": status.counters.reconnects,
+                    "backfilled": status.counters.backfilled,
+                },
+            })
+        );
+        return;
+    }
+
+    println!("profile  : {profile}");
+    if live {
+        println!(
+            "running  : pid {} ({}), {}",
+            status.pid,
+            if status.connected {
+                "connected"
+            } else {
+                "reconnecting"
+            },
+            format_epoch(status.started_at)
+        );
+    } else {
+        println!(
+            "stopped  : last heartbeat {}s ago (pid {} was running since {})",
+            age,
+            status.pid,
+            format_epoch(status.started_at)
+        );
+    }
+
+    let counters = &status.counters;
+    println!(
+        "events   : {} received, {} matched, {} stored, {} recovered",
+        counters.received, counters.matched, counters.stored, counters.backfilled
+    );
+    println!(
+        "delivery : {} delivered, {} failed, {} reconnects",
+        counters.delivered, counters.failed, counters.reconnects
+    );
+    if counters.dropped > 0 {
+        println!(
+            "dropped  : {} — the buffer overflowed. Raise events.buffer, or make the sink \
+             faster: delivery is serial, so one slow handler holds the whole pipeline",
+            counters.dropped
+        );
+    }
+}
+
+pub fn print_prune_outcome(outcome: &PruneOutcome, as_json: bool) {
+    if as_json {
+        println!(
+            "{}",
+            json!({
+                "removed": outcome.total(),
+                "acknowledged": outcome.acknowledged,
+                "expired": outcome.expired,
+                "over_budget": outcome.over_budget,
+            })
+        );
+        return;
+    }
+
+    println!(
+        "✓ Removed {} events ({} acknowledged, {} expired, {} over the size budget)",
+        outcome.total(),
+        outcome.acknowledged,
+        outcome.expired,
+        outcome.over_budget
+    );
+}
+
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// A stored epoch as a local timestamp. Public because `main` reports one in
+/// an error, and a raw number there would be the only place the CLI shows one.
+pub fn format_epoch(seconds: i64) -> String {
+    DateTime::from_timestamp(seconds, 0)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| seconds.to_string())
 }
 
 #[cfg(test)]

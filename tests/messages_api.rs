@@ -58,6 +58,7 @@ async fn test_client(server: &MockServer) -> (SlackClient, tempfile::TempDir) {
     let overrides = EnvOverrides {
         user_token: Some(secret("xoxp-test-user")),
         bot_token: Some(secret("xoxb-test-bot")),
+        app_token: None,
     };
     let authenticator = Authenticator::load(AuthLoadOptions {
         store_path,
@@ -373,7 +374,7 @@ async fn replies_always_requests_include_all_metadata() {
     let (client, _store) = test_client(&server).await;
     let messages = client
         .messages
-        .replies("C123", "1700000000.000100", 50)
+        .replies("C123", "1700000000.000100", 50, None)
         .await
         .unwrap();
     assert_eq!(messages.len(), 2);

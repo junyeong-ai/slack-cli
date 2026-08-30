@@ -6,8 +6,15 @@ pub use crate::auth::TokenPolicy;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestEncoding {
+    /// GET with the arguments in the query string.
     Query,
+    /// POST with a JSON body, which is what most write methods take.
     Json,
+    /// POST with a form-encoded body. Slack documents this content type for a
+    /// handful of methods, and sends the rest of the API through JSON quite
+    /// happily — so this exists for the ones where the documented contract is
+    /// the only thing to go on.
+    Form,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +31,11 @@ pub struct RatePolicy {
 pub struct MethodScopes {
     pub user: &'static [&'static str],
     pub bot: &'static [&'static str],
+    /// Scopes an app-level token carries. Its namespace is disjoint from the
+    /// installation ones and it is never part of an OAuth grant, so it lives
+    /// on its own axis: a scope written here can never leak into what
+    /// `auth login` asks Slack for.
+    pub app: &'static [&'static str],
 }
 
 impl MethodScopes {
@@ -31,6 +43,24 @@ impl MethodScopes {
         Self {
             user: scopes,
             bot: scopes,
+            app: &[],
+        }
+    }
+
+    /// Scopes for the installation axes, leaving the app axis empty.
+    pub const fn installation(user: &'static [&'static str], bot: &'static [&'static str]) -> Self {
+        Self {
+            user,
+            bot,
+            app: &[],
+        }
+    }
+
+    pub const fn app_level(scopes: &'static [&'static str]) -> Self {
+        Self {
+            user: &[],
+            bot: &[],
+            app: scopes,
         }
     }
 
@@ -38,6 +68,7 @@ impl MethodScopes {
         match kind {
             TokenKind::User => self.user,
             TokenKind::Bot => self.bot,
+            TokenKind::App => self.app,
         }
     }
 }
@@ -60,21 +91,21 @@ const UNSCOPED: MethodScopes = MethodScopes::shared(&[]);
 /// Slack supports `metadata.message:read` on bot tokens only, so requesting it
 /// as a user scope makes the whole authorization fail with "Invalid permissions
 /// requested" — the grant is refused as a set, not trimmed to what is valid.
-const HISTORY: MethodScopes = MethodScopes {
-    user: &[
+const HISTORY: MethodScopes = MethodScopes::installation(
+    &[
         "channels:history",
         "groups:history",
         "im:history",
         "mpim:history",
     ],
-    bot: &[
+    &[
         "channels:history",
         "groups:history",
         "im:history",
         "mpim:history",
         "metadata.message:read",
     ],
-};
+);
 const CONVERSATIONS: MethodScopes =
     MethodScopes::shared(&["channels:read", "groups:read", "im:read", "mpim:read"]);
 const DIRECTORY: MethodScopes = MethodScopes::shared(&["users:read", "users:read.email"]);
@@ -86,8 +117,8 @@ const WRITE_PINS: MethodScopes = MethodScopes::shared(&["pins:write"]);
 const READ_BOOKMARKS: MethodScopes = MethodScopes::shared(&["bookmarks:read"]);
 const WRITE_BOOKMARKS: MethodScopes = MethodScopes::shared(&["bookmarks:write"]);
 const READ_EMOJI: MethodScopes = MethodScopes::shared(&["emoji:read"]);
-const SEARCH: MethodScopes = MethodScopes {
-    user: &[
+const SEARCH: MethodScopes = MethodScopes::installation(
+    &[
         "search:read.files",
         "search:read.im",
         "search:read.mpim",
@@ -95,13 +126,17 @@ const SEARCH: MethodScopes = MethodScopes {
         "search:read.public",
         "search:read.users",
     ],
-    bot: &[
+    &[
         "search:read.files",
         "search:read.public",
         "search:read.users",
     ],
-};
+);
 const SEARCH_CAPABILITIES: MethodScopes = MethodScopes::shared(&["search:read.public"]);
+/// The one scope an app-level token can hold. It authorizes opening a Socket
+/// Mode connection and nothing else, which is why it never joins an OAuth
+/// request — Slack refuses a grant that mixes it with installation scopes.
+const SOCKET_MODE: MethodScopes = MethodScopes::app_level(&["connections:write"]);
 
 /// Every Slack method this CLI calls, with the request shape, token policy,
 /// rate ceiling and scope requirement each one carries. Nothing about a method
@@ -314,6 +349,19 @@ pub const API_METHODS: &[(&str, ApiConfig)] = &[
             scopes: UNSCOPED,
         },
     ),
+    (
+        "apps.connections.open",
+        ApiConfig {
+            // The one method the daemon cannot start without, and the one
+            // Slack documents as form-encoded. Nothing else in the CLI depends
+            // on a single call this way, so it follows the documented contract
+            // rather than the convention.
+            encoding: RequestEncoding::Form,
+            token_policy: TokenPolicy::AppRequired,
+            rate_policy: rate(20, None),
+            scopes: SOCKET_MODE,
+        },
+    ),
 ];
 
 pub static API_CONFIGS: LazyLock<HashMap<&'static str, &'static ApiConfig>> =
@@ -344,6 +392,30 @@ mod tests {
                 assert!(
                     !config.token_policy.accepts(TokenKind::Bot),
                     "{name} would contribute unusable bot scopes"
+                );
+            }
+        }
+    }
+
+    /// The app axis carries `connections:write` and the installation axes
+    /// carry none of it. This is the registry half of the invariant that keeps
+    /// an app-level scope out of the authorization request.
+    #[test]
+    fn socket_mode_declares_its_scope_on_the_app_axis_alone() {
+        let open = get_api_config("apps.connections.open").unwrap();
+        assert_eq!(open.scopes.app, &["connections:write"]);
+        assert!(open.scopes.user.is_empty());
+        assert!(open.scopes.bot.is_empty());
+        assert_eq!(open.token_policy, TokenPolicy::AppRequired);
+    }
+
+    #[test]
+    fn no_installation_method_declares_an_app_level_scope() {
+        for (name, config) in API_METHODS {
+            if !matches!(config.token_policy, TokenPolicy::AppRequired) {
+                assert!(
+                    config.scopes.app.is_empty(),
+                    "{name} declares an app-level scope on an installation method"
                 );
             }
         }

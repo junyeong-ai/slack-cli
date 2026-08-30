@@ -1,27 +1,45 @@
 use crate::slack::api_config::{API_METHODS, TokenKind};
 
-/// The OAuth scopes an installation must grant for a token of this kind to
-/// reach every method the CLI calls. Derived from the API registry, so a
-/// method added there is impossible to forget here.
+/// The scope an app-level token must carry to open a Socket Mode connection.
+/// Named here because `auth login` has to *exclude* it and the daemon has to
+/// *report* it, and both need one place to read it from.
+pub const APP_SCOPE: &str = "connections:write";
+
 /// The scopes `auth login` asks Slack for: everything the kind can reach, less
 /// what the installation has excluded. An excluded scope costs the commands
 /// that need it; `SlackCore` names it when Slack refuses the call.
+///
+/// Panics on `TokenKind::App`: exclusions apply to an authorization request,
+/// and an app-level token is never part of one. A caller reaching here with
+/// the app kind has confused the two axes, which is a bug rather than a
+/// configuration to honour.
 pub fn requested(kind: TokenKind, excluded: &[String]) -> Vec<&'static str> {
+    assert!(
+        matches!(kind, TokenKind::User | TokenKind::Bot),
+        "app-level scopes are not part of an OAuth request"
+    );
     required(kind)
         .into_iter()
         .filter(|scope| !excluded.iter().any(|entry| entry == scope))
         .collect()
 }
 
-/// Whether any method the CLI calls declares this scope, for either kind. What
-/// `exclude_scopes` is validated against, so a name that no method needs is
-/// rejected rather than silently ignored.
+/// Whether any method the CLI calls declares this scope for a kind an
+/// authorization can grant. What `exclude_scopes` is validated against, so a
+/// name that no method needs is rejected rather than silently ignored.
+///
+/// Only the OAuth kinds are consulted: `exclude_scopes` trims what
+/// `auth login` asks for, and an app-level scope is never in that request, so
+/// naming one there would silently do nothing.
 pub fn is_known(scope: &str) -> bool {
-    [TokenKind::User, TokenKind::Bot]
+    TokenKind::OAUTH
         .into_iter()
         .any(|kind| required(kind).contains(&scope))
 }
 
+/// Every scope a token of this kind must carry to reach every method the CLI
+/// calls it for. Derived from the API registry, so a method added there is
+/// impossible to forget here.
 pub fn required(kind: TokenKind) -> Vec<&'static str> {
     let mut scopes: Vec<&'static str> = API_METHODS
         .iter()
@@ -50,9 +68,37 @@ mod tests {
 
     #[test]
     fn excluding_nothing_asks_for_everything() {
-        for kind in [TokenKind::User, TokenKind::Bot] {
+        for kind in TokenKind::OAUTH {
             assert_eq!(requested(kind, &[]), required(kind));
         }
+    }
+
+    /// Slack grants a scope set as a whole, so one app-level scope mixed into
+    /// an installation request fails the entire authorization. The app axis
+    /// exists to make that impossible to write by accident.
+    #[test]
+    fn the_socket_mode_scope_never_reaches_an_installation_request() {
+        for kind in TokenKind::OAUTH {
+            assert!(
+                !required(kind).contains(&APP_SCOPE),
+                "{kind} would request it"
+            );
+            assert!(!requested(kind, &[]).contains(&APP_SCOPE));
+        }
+        assert_eq!(required(TokenKind::App), vec![APP_SCOPE]);
+    }
+
+    /// `exclude_scopes` trims an authorization request, so excluding a scope
+    /// no authorization carries must be refused rather than quietly ignored.
+    #[test]
+    fn the_socket_mode_scope_is_not_excludable() {
+        assert!(!is_known(APP_SCOPE));
+    }
+
+    #[test]
+    #[should_panic(expected = "app-level scopes are not part of an OAuth request")]
+    fn asking_what_an_oauth_request_grants_the_app_axis_is_a_bug() {
+        let _ = requested(TokenKind::App, &[]);
     }
 
     /// `exclude_scopes` is validated against this, so a scope no method needs
@@ -67,7 +113,7 @@ mod tests {
 
     #[test]
     fn scopes_are_sorted_and_deduplicated() {
-        for kind in [TokenKind::User, TokenKind::Bot] {
+        for kind in TokenKind::ALL {
             let scopes = required(kind);
             let mut expected = scopes.clone();
             expected.sort_unstable();
@@ -102,7 +148,7 @@ mod tests {
 
     #[test]
     fn the_legacy_search_scope_is_never_requested() {
-        for kind in [TokenKind::User, TokenKind::Bot] {
+        for kind in TokenKind::ALL {
             assert!(!required(kind).contains(&"search:read"));
         }
     }

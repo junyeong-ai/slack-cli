@@ -30,11 +30,13 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
-tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync", "fs", "net", "io-util"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync", "fs", "net", "io-util", "process", "signal"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
 reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
+tokio-tungstenite = { version = "0.30", features = ["connect", "handshake", "rustls-tls-webpki-roots"], default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rusqlite = { version = "0.40", features = ["bundled", "chrono", "serde_json"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.35"
@@ -59,6 +61,8 @@ url = "2"
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["full", "test-util"] }
+tokio-tungstenite = { version = "0.30", features = ["connect", "handshake", "rustls-tls-webpki-roots"], default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 rstest = "0.26"
 sha2 = "0.11"
 wiremock = "0.6"

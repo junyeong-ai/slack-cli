@@ -32,6 +32,14 @@ impl AppPaths {
     pub fn cache_dir(&self) -> PathBuf {
         self.root.join("cache")
     }
+
+    /// Where the event daemon keeps its state and, when configured to, its
+    /// event log. Deliberately not under `cache_dir`: the cache is dropped and
+    /// rebuilt whenever its schema version moves, and an event Slack will
+    /// never send again cannot be refetched.
+    pub fn events_dir(&self) -> PathBuf {
+        self.root.join("events")
+    }
 }
 
 /// Expands a leading `~` in a user-authored path against the home directory.
@@ -63,7 +71,17 @@ mod tests {
         let root = paths.config_file().parent().unwrap().to_path_buf();
         assert_eq!(paths.auth_store().parent().unwrap(), root);
         assert_eq!(paths.cache_dir().parent().unwrap(), root);
+        assert_eq!(paths.events_dir().parent().unwrap(), root);
         assert_eq!(root.file_name().unwrap(), APP_DIR);
+    }
+
+    /// The cache rebuilds itself on any schema change, so an event log sharing
+    /// its directory would be one migration away from being deleted.
+    #[test]
+    fn the_event_store_is_not_inside_the_cache() {
+        let paths = AppPaths::resolve().unwrap();
+        assert!(!paths.events_dir().starts_with(paths.cache_dir()));
+        assert_ne!(paths.events_dir(), paths.cache_dir());
     }
 
     #[test]
