@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-30
+
+### Removed
+
+- **`auth login --method client-secret`, `--client-secret`, `SLACK_CLI_CLIENT_SECRET` and `config.toml [auth].client_secret`.** Slack refuses a loopback redirect that omits PKCE — *Must use PKCE to redirect to a non-web URI* — and refuses bot scopes on one outright — *Bot scopes are not allowed when redirecting to a non-web URI*. Every address a CLI can receive a callback on is such a URI, so the confidential flow could never reach a consent screen and the bot token it advertised was never obtainable through a browser. Both messages come from Slack's own authorization endpoint. A bot token is registered by pasting it into `--method static`, which is where its scope list now lives. A `client_secret` left in `config.toml` is refused rather than ignored
+
+### Fixed
+
+- **Every browser login failed at the consent screen.** The requested user scopes included `metadata.message:read`, which Slack supports on bot and legacy tokens only. A scope set is granted as a whole, so the one unsupported entry failed the whole authorization with `Invalid permissions requested` — for every PKCE login since the flow was introduced in 0.8.0. The scope is now requested for bot tokens alone
+- **A rejected `config.toml` printed its own contents.** `toml` reports a parse failure by quoting the offending line, and a config the CLI refuses is often one still holding a credential a newer schema no longer accepts — a `user_token` dropped before 0.5.0, a `client_secret` dropped in this release. The refusal repeats on every invocation, so the value reached the terminal and anything capturing it each time. The error now reports the file, line and column instead
+- `config edit` no longer creates `config.toml` with mode `0600`; 0.10.0 added that for the client secret the file no longer holds
+
 ## [0.10.0] - 2026-08-30
 
 ### Added
