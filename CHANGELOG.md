@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-31
+
+### Added
+
+- **A Socket Mode daemon: `watch`, `daemon run|status|stop`, `events pull|ack|stats|prune|path`.** Slack caps `conversations.history` and `conversations.replies` at one request a minute and 15 messages for a non-Marketplace app, so polling cannot follow a workspace — a channel every minute is the whole budget. Events are pushed on a separate axis (30,000 per workspace per hour), and RTM, the other way of receiving them, accepts no new apps and ends in November 2026. `watch` streams matching events to stdout and stores nothing; `daemon run` is the long-lived form, meant to run under launchd or systemd
+- **`config.toml [events]`.** `mode` decides how long an event is kept — `stream` keeps nothing, `spool` keeps it until a consumer acknowledges it, `archive` keeps it for `retention_days` — and `store_body` decides how much of it, so an installation that may not keep other people's message text can still record which threads moved. Cursors, thread subscriptions and deduplication keys live in a separate always-durable database that holds no message content, which is what lets `stream` recover from a disconnect while keeping nothing
+- **Declarative rules.** `mentions_me`, `keywords`, `from_users`, a `channels` allowlist, and `subscribe_emoji` — reacting to a message subscribes its thread and every later reply matches, so an emoji becomes a subscribe button. Rules are validated when the config loads, including the combinations that would silently never fire: a blank keyword that matches everything, a text predicate on a rule that only sees reactions, a subscribing rule that never sees the removal that would unsubscribe it
+- **`TokenKind::App` and `auth login --app-token` / `SLACK_APP_TOKEN`.** The `xapp-` token that opens a Socket Mode connection is issued by no OAuth grant, never rotates, and authorizes nothing in a workspace, so it is a third axis rather than a third flavour of installation credential. `TokenPolicy` keeps it disjoint from the user and bot axes in both directions, which is what stops `connections:write` reaching an authorization request — Slack refuses a grant that mixes the two. On its own the flag attaches to an existing profile rather than creating one, because there is no `auth.test` an app-level token can answer
+- `events.backfill_max_age_hours` clamps where a recovery read *starts* rather than deciding whether a channel is recovered at all. A daemon down over a weekend has cursors older than the window; excluding those channels would have lost everything inside the window too, in silence. A clamped read that completes leaves the cursor at the horizon, so a quiet channel is not re-read on every reconnect — the cost is one `conversations.history` request per recoverable channel on the first reconnect after a long absence, paced in the background and never on the live path
+- Gap recovery. Socket Mode replays nothing across a disconnect, so a reconnect reads back what it missed — `conversations.history` for channels and `conversations.replies` for subscribed threads, each from a stored cursor, bounded by a channel count, an age and a page limit. Recovered events are replayed oldest-first and are never the ones an overflow discards, because Slack will not send them again
+
+### Fixed
+
+- `scripts/uninstall.sh` offered to remove the configuration directory without saying that it now also holds the event store. The cache is refetchable and a login replaces the auth store, but Socket Mode does not replay: an event collected and not yet read with `events pull` is there and nowhere else, so the prompt names it
+- `.env.example` documented `DATA_PATH`, which nothing has ever read. The cache and event-store locations are `[cache] data_path` and `[events] data_path` in `config.toml`
+
 ## [0.12.0] - 2026-08-30
 
 ### Added
