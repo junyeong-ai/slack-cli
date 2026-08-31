@@ -2,7 +2,7 @@
 name: slack-workspace
 # version is not part of the official skill frontmatter; scripts/install.sh
 # uses it for upgrade comparison — bump with the crate
-version: 0.13.0
+version: 0.13.1
 description: Drive a Slack workspace from the terminal via slack-cli. Use when the user wants to send/edit/delete messages (plain text, Markdown, or Block Kit), search Slack history, look up users or channels by name, read threads or paginated channel history, add reactions, pin or bookmark messages, fetch a message permalink, attach message metadata for idempotent notifications, or read the events a Socket Mode daemon has collected (mentions, replies in watched threads) with `events pull`.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---

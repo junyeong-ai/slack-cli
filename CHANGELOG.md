@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-08-31
+
+### Fixed
+
+- `daemon status` reported a daemon that had stopped or crashed as still running for up to 90 seconds. `daemon stop` decides liveness from the daemon lock, for the reason it documents — a daemon killed a moment ago leaves a fresh heartbeat behind — but `status` decided from the heartbeat's age alone, so it answered the same question a different way, and answered it wrong in exactly the window a user looks in right after stopping one. Both now ask the lock. The heartbeat keeps the job it can do: a daemon that still holds the lock but has stopped heartbeating is wedged rather than gone, and says so instead of reading as healthy
+
+### Changed
+
+- `taiki-e/install-action` and `softprops/action-gh-release` pinned forward in the CI and release workflows; the latter no longer turns a malformed GitHub API error into a secondary failure while publishing assets
+
 ## [0.13.0] - 2026-08-31
 
 ### Added
