@@ -341,15 +341,86 @@ version_key() {
     printf '%09d.%09d.%09d\n' "$major" "$minor" "$patch"
 }
 
-backup_skill() {
-    local timestamp
-    local backup_dir
-    timestamp=$(date +%Y%m%d_%H%M%S)
-    backup_dir="$USER_SKILL_DIR.backup_$timestamp"
+# Where a locally edited skill is set aside.
+#
+# Never beside $USER_SKILL_DIR: everything under ~/.claude/skills is discovered
+# as a skill, so a copy kept there comes back as a second entry competing with
+# the real one rather than an inert archive. The CLI's own configuration
+# directory is where slack-cli already keeps what it owns, and `config path` is
+# the only thing that knows where that is on this platform.
+preserved_dir() {
+    local config_path=""
 
-    echo "📦 Creating backup: $backup_dir" >&2
-    cp -r "$USER_SKILL_DIR" "$backup_dir"
-    echo "   ✅ Backup created" >&2
+    if [ -x "$INSTALL_DIR/$BINARY_NAME" ]; then
+        config_path=$("$INSTALL_DIR/$BINARY_NAME" config path 2>/dev/null) || config_path=""
+    fi
+    [ -n "$config_path" ] || return 1
+
+    echo "$(dirname "$config_path")/skill-backups"
+}
+
+# Whether the installed skill still matches the copy its own version shipped.
+#
+# dpkg's rule for a conffile, and for the same reason: what we shipped is
+# reproducible — every release tag carries this file, and SLACK_CLI_VERSION
+# reinstalls it — so replacing an untouched copy destroys nothing that cannot
+# be fetched back. An edited one exists nowhere else, and is the only copy
+# worth keeping.
+#
+# Answers "modified" when it cannot tell (offline, or a version that was never
+# published): the cost of keeping a copy needlessly is one inert directory,
+# and the cost of guessing wrong the other way is the user's edits.
+skill_is_modified() {
+    local installed_version="$1"
+    local shipped
+    local expected
+    local actual
+
+    [ -f "$USER_SKILL_DIR/SKILL.md" ] || return 1
+    case "$installed_version" in
+        ""|unknown) return 0 ;;
+    esac
+
+    shipped=$(mktemp "${TMPDIR:-/tmp}/slack-cli-shipped.XXXXXX") || return 0
+    if ! curl -fsSL \
+        "https://raw.githubusercontent.com/$REPO/v$installed_version/.claude/skills/$SKILL_NAME/SKILL.md" \
+        -o "$shipped" 2>/dev/null; then
+        rm -f "$shipped"
+        return 0
+    fi
+
+    expected=$(compute_sha256 "$shipped") || { rm -f "$shipped"; return 0; }
+    actual=$(compute_sha256 "$USER_SKILL_DIR/SKILL.md") || { rm -f "$shipped"; return 0; }
+    rm -f "$shipped"
+
+    [ "$expected" != "$actual" ]
+}
+
+# Replaces the installed skill, the way a package manager replaces a file it
+# shipped. Only a copy the user has edited is set aside first — and if there is
+# nowhere safe to put it, the skill is left alone rather than overwritten.
+replace_skill() {
+    local installed_version="$1"
+    local keep
+    local kept
+
+    if skill_is_modified "$installed_version"; then
+        if keep=$(preserved_dir); then
+            kept="$keep/$SKILL_NAME.v$installed_version.$(date +%Y%m%d_%H%M%S)"
+            mkdir -p "$keep"
+            cp -r "$USER_SKILL_DIR" "$kept"
+            echo "📝 Your copy differs from the one v$installed_version shipped." >&2
+            echo "   Kept at: $(display_path "$kept")" >&2
+        else
+            echo "⚠️  Your copy differs from the one v$installed_version shipped, and there is" >&2
+            echo "   nowhere outside the skills directory to set it aside. Leaving it as it is." >&2
+            return 1
+        fi
+    fi
+
+    rm -rf "$USER_SKILL_DIR"
+    install_skill
+    return 0
 }
 
 install_skill() {
@@ -428,25 +499,42 @@ prompt_skill_installation() {
                 echo "✅ Latest version installed" >&2
                 echo "" >&2
                 choice=$(prompt_choice "Reinstall? [y/N]: " "")
-                [[ "$choice" =~ ^[yY]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; } || echo "   ⏭️  Skipped" >&2
+                if [[ "$choice" =~ ^[yY]$ ]]; then
+                    replace_skill "$existing_version" || true
+                else
+                    echo "   ⏭️  Skipped" >&2
+                fi
                 ;;
             older)
                 echo "🔄 New version available: v$project_version" >&2
                 echo "" >&2
                 choice=$(prompt_choice "Update? [Y/n]: " "")
-                [[ ! "$choice" =~ ^[nN]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; echo "   ✅ Updated to v$project_version" >&2; } || echo "   ⏭️  Keeping current version" >&2
+                if [[ "$choice" =~ ^[nN]$ ]]; then
+                    echo "   ⏭️  Keeping current version" >&2
+                elif replace_skill "$existing_version"; then
+                    echo "   ✅ Updated to v$project_version" >&2
+                    echo "   To go back: SLACK_CLI_VERSION=$existing_version install.sh" >&2
+                fi
                 ;;
             newer)
                 echo "⚠️  Installed version (v$existing_version) > project version (v$project_version)" >&2
                 echo "" >&2
                 choice=$(prompt_choice "Downgrade? [y/N]: " "")
-                [[ "$choice" =~ ^[yY]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; } || echo "   ⏭️  Keeping current version" >&2
+                if [[ "$choice" =~ ^[yY]$ ]]; then
+                    replace_skill "$existing_version" || true
+                else
+                    echo "   ⏭️  Keeping current version" >&2
+                fi
                 ;;
             *)
                 echo "⚠️  Version comparison failed" >&2
                 echo "" >&2
                 choice=$(prompt_choice "Reinstall? [y/N]: " "")
-                [[ "$choice" =~ ^[yY]$ ]] && { backup_skill; rm -rf "$USER_SKILL_DIR"; install_skill; } || echo "   ⏭️  Skipped" >&2
+                if [[ "$choice" =~ ^[yY]$ ]]; then
+                    replace_skill "$existing_version" || true
+                else
+                    echo "   ⏭️  Skipped" >&2
+                fi
                 ;;
         esac
     else

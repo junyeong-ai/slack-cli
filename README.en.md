@@ -127,7 +127,7 @@ slack-cli config show                             # Show config
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required.
+`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. Updating the skill overwrites what was shipped, because any earlier version can be fetched back with `SLACK_CLI_VERSION=<version> install.sh`. A copy you edited yourself is the exception: it is set aside outside `~/.claude/skills` and its path is printed, because anything left inside that directory is discovered as a second skill.
 
 ```bash
 # Install a specific release

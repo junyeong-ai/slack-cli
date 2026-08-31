@@ -127,7 +127,7 @@ slack-cli config show                           # 설정 표시
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh`는 GitHub Release의 사전 빌드 바이너리를 내려받아 SHA-256 체크섬을 검증하고, `cosign`이 설치돼 있으면 sigstore 서명까지 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. Linux에서는 glibc/musl을 자동 감지합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다.
+`install.sh`는 GitHub Release의 사전 빌드 바이너리를 내려받아 SHA-256 체크섬을 검증하고, `cosign`이 설치돼 있으면 sigstore 서명까지 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. Linux에서는 glibc/musl을 자동 감지합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다. 스킬을 갱신할 때는 배포본을 그대로 덮어씁니다 — 이전 버전은 `SLACK_CLI_VERSION=<버전> install.sh`로 다시 받을 수 있기 때문입니다. 다만 설치본을 직접 수정했다면 그 복사본만은 `~/.claude/skills` 바깥에 보관하고 경로를 알려줍니다. 스킬 디렉터리 안에 두면 Claude Code가 그것도 별개 스킬로 인식합니다.
 
 ```bash
 # 특정 릴리스 설치
