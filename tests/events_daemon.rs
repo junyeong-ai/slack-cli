@@ -14,7 +14,7 @@ use secrecy::SecretString;
 use serde_json::{Value, json};
 use slack_cli::auth::{AuthLoadOptions, Authenticator, EnvOverrides};
 use slack_cli::config::{Config, EventRetention, EventsConfig, RuleConfig, SinkKind, default_sink};
-use slack_cli::events::{self, EventRuntime, StdoutFormat};
+use slack_cli::events::{self, DaemonLock, EventPaths, EventRuntime, StdoutFormat};
 use slack_cli::slack::SlackClient;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -487,7 +487,16 @@ async fn a_second_daemon_for_one_profile_is_refused() {
         })
     };
 
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Wait for the first to actually hold the lock rather than guessing at a
+    // duration: on a slow runner a fixed sleep is a race the test loses by
+    // starting the second daemon before the first has claimed anything.
+    let held = EventPaths::new(dir.path(), "test").lock_file();
+    for _ in 0..200 {
+        if held.exists() && DaemonLock::acquire(&held).is_err() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let runtime = EventRuntime::open(dir.path(), "test", &config).unwrap();
     let second = events::run(
@@ -659,7 +668,7 @@ async fn a_live_event_does_not_wait_for_a_slow_recovery() {
         .and(path("/conversations.history"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_delay(Duration::from_secs(4))
+                .set_delay(Duration::from_secs(20))
                 .set_body_json(json!({ "ok": true, "messages": [], "has_more": false })),
         )
         .mount(&server)
@@ -705,8 +714,8 @@ async fn a_live_event_does_not_wait_for_a_slow_recovery() {
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].source, slack_cli::events::EventSource::Socket);
     assert!(
-        elapsed < Duration::from_secs(3),
-        "the live event waited {elapsed:?} for recovery to finish"
+        elapsed < Duration::from_secs(10),
+        "the live event waited {elapsed:?} for a recovery that takes 20s"
     );
 }
 
@@ -1187,8 +1196,21 @@ async fn recovery_never_re_reads_a_thread_it_has_already_followed() {
         })
     };
 
-    // Long enough for a recovery pass to have run and stored anything it found.
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    // Wait for the recovery request itself, so "nothing was stored" cannot
+    // pass merely because the pass had not run yet.
+    for _ in 0..200 {
+        let asked = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|r| r.url.path() == "/conversations.replies");
+        if asked {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
     daemon.abort();
 
     let stored = runtime.store.pull("test", None, 50).unwrap();
@@ -1537,11 +1559,28 @@ async fn a_clamped_recovery_leaves_the_cursor_at_the_horizon() {
     };
 
     // The channel is quiet, so nothing is stored — wait on the cursor instead.
-    let horizon = now - 24 * 3600;
+    //
+    // Asserted as a window rather than an exact value: the daemon computes its
+    // own horizon when recovery runs, which is necessarily a moment after the
+    // one this test captured, so demanding the same second makes the test a
+    // race the slower runner loses. What matters is that the cursor left
+    // Friday and landed at roughly the horizon.
+    let epoch = |cursor: &str| -> i64 {
+        cursor
+            .split('.')
+            .next()
+            .and_then(|whole| whole.parse().ok())
+            .unwrap_or(0)
+    };
+    let arrived = |cursor: &str| {
+        let at = epoch(cursor);
+        at > now - 25 * 3600 && at < now - 23 * 3600
+    };
+
     let mut followed = String::new();
     for _ in 0..100 {
         followed = runtime.state.gaps(10).unwrap()[0].last_ts.clone();
-        if followed.starts_with(&horizon.to_string()) {
+        if arrived(&followed) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1549,7 +1588,10 @@ async fn a_clamped_recovery_leaves_the_cursor_at_the_horizon() {
     daemon.abort();
 
     assert!(
-        followed.starts_with(&horizon.to_string()),
-        "a finished clamped read should leave the cursor at the horizon, got {followed}"
+        arrived(&followed),
+        "a finished clamped read should leave the cursor at the horizon \
+         (about {} , 24h back), got {followed} ({}h back)",
+        now - 24 * 3600,
+        (now - epoch(&followed)) / 3600
     );
 }
