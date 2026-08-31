@@ -399,7 +399,7 @@ A `.env` file in the working directory supplies any of the above.
 | `bookmarks <ch>` | List bookmarks |
 | `watch` | Stream matching events to stdout (stores nothing, ignores configured sinks) |
 | `daemon run` | Run the Socket Mode daemon in the foreground |
-| `daemon status` | The daemon's last heartbeat and counters |
+| `daemon status` | Whether a daemon is running (decided by its lock), its last heartbeat and counters |
 | `daemon stop` | Signal the running daemon to stop (Unix only; use the service manager on Windows) |
 | `events pull [--consumer --ack --follow]` | Read events a consumer has not acknowledged |
 | `events ack --through <seq>` | Move a consumer's position forward |

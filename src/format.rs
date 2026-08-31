@@ -876,9 +876,16 @@ pub fn print_event_stats(
     }
 }
 
+/// `running` answers whether a daemon process is actually alive; only the
+/// daemon lock can say so. The heartbeat cannot: a daemon killed a moment ago
+/// leaves a fresh one behind, so reading liveness from its age reports a dead
+/// daemon as running until the record goes stale. `stale_after` is what
+/// separates a live daemon from one that still holds the lock but has stopped
+/// heartbeating — wedged rather than gone.
 pub fn print_daemon_status(
     status: Option<&DaemonStatus>,
     profile: &str,
+    running: bool,
     stale_after: i64,
     as_json: bool,
 ) {
@@ -898,19 +905,17 @@ pub fn print_daemon_status(
         return;
     };
 
-    // A heartbeat that stopped is how a killed daemon shows up: the record it
-    // left behind is still there, and only its age says it is gone.
     let age = chrono::Utc::now().timestamp() - status.heartbeat_at;
-    let live = age <= stale_after;
+    let beating = age <= stale_after;
 
     if as_json {
         println!(
             "{}",
             json!({
-                "running": live,
+                "running": running,
                 "profile": profile,
                 "pid": status.pid,
-                "connected": status.connected && live,
+                "connected": status.connected && running && beating,
                 "started_at": status.started_at,
                 "heartbeat_at": status.heartbeat_at,
                 "heartbeat_age_seconds": age,
@@ -930,7 +935,14 @@ pub fn print_daemon_status(
     }
 
     println!("profile  : {profile}");
-    if live {
+    if !running {
+        println!(
+            "stopped  : pid {} ran from {} until its last heartbeat {}s ago",
+            status.pid,
+            format_epoch(status.started_at),
+            age
+        );
+    } else if beating {
         println!(
             "running  : pid {} ({}), {}",
             status.pid,
@@ -943,9 +955,10 @@ pub fn print_daemon_status(
         );
     } else {
         println!(
-            "stopped  : last heartbeat {}s ago (pid {} was running since {})",
-            age,
+            "wedged   : pid {} still holds the lock but has not heartbeat for {}s (running \
+             since {}). Stop it: slack-cli daemon stop",
             status.pid,
+            age,
             format_epoch(status.started_at)
         );
     }

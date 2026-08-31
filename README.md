@@ -386,7 +386,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `bookmarks <ch>` | 북마크 목록 |
 | `watch` | 매칭 이벤트를 stdout으로 스트리밍 (저장 없음, 설정된 싱크도 무시) |
 | `daemon run` | Socket Mode 데몬을 포그라운드로 실행 |
-| `daemon status` | 데몬의 마지막 하트비트와 카운터 |
+| `daemon status` | 데몬이 실행 중인지(락으로 판단), 마지막 하트비트와 카운터 |
 | `daemon stop` | 실행 중인 데몬에 종료 신호 (Unix 전용; Windows에서는 서비스 관리자로) |
 | `events pull [--consumer --ack --follow]` | 아직 ack하지 않은 이벤트 읽기 |
 | `events ack --through <seq>` | 소비자 위치 전진 |

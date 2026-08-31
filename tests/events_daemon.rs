@@ -14,7 +14,9 @@ use secrecy::SecretString;
 use serde_json::{Value, json};
 use slack_cli::auth::{AuthLoadOptions, Authenticator, EnvOverrides};
 use slack_cli::config::{Config, EventRetention, EventsConfig, RuleConfig, SinkKind, default_sink};
-use slack_cli::events::{self, DaemonLock, EventPaths, EventRuntime, StdoutFormat};
+use slack_cli::events::{
+    self, Counters, DaemonLock, EventPaths, EventRuntime, EventState, StdoutFormat,
+};
 use slack_cli::slack::SlackClient;
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
@@ -1593,5 +1595,83 @@ async fn a_clamped_recovery_leaves_the_cursor_at_the_horizon() {
          (about {} , 24h back), got {followed} ({}h back)",
         now - 24 * 3600,
         (now - epoch(&followed)) / 3600
+    );
+}
+
+/// `daemon status` and `daemon stop` answer the same question — is a daemon
+/// running? — and must answer it the same way. Only the lock can: a daemon
+/// killed a moment ago leaves a fresh heartbeat behind, so deciding from the
+/// heartbeat reports a dead daemon as running for as long as that record stays
+/// fresh. That window is exactly when a user looks, right after stopping one.
+#[test]
+fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
+    const BIN: &str = env!("CARGO_BIN_EXE_slack-cli");
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("events");
+    let paths = EventPaths::new(&store, "env");
+    std::fs::create_dir_all(paths.root()).unwrap();
+
+    // A daemon that ran, was connected, and is gone: the record it left behind
+    // carries this second's heartbeat, and nothing holds the lock.
+    let state = EventState::open(&paths.state_db()).unwrap();
+    state.claim_daemon(4242).unwrap();
+    state.heartbeat(true, Counters::default()).unwrap();
+    drop(state);
+
+    let config = dir.path().join("config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[events]\ndata_path = {}\n",
+            serde_json::to_string(&store.display().to_string()).unwrap()
+        ),
+    )
+    .unwrap();
+
+    // An environment token puts the run on the "env" profile without an auth
+    // store, which is the profile the record above was written under.
+    let status = |json: bool| {
+        let mut command = std::process::Command::new(BIN);
+        command
+            .args(["--config", config.to_str().unwrap()])
+            .env("SLACK_USER_TOKEN", "xoxp-test")
+            .env_remove("SLACK_PROFILE");
+        if json {
+            command.arg("--json");
+        }
+        let out = command
+            .args(["daemon", "status"])
+            .output()
+            .expect("binary runs");
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    let reported: Value = serde_json::from_str(status(true).trim()).unwrap();
+    assert_eq!(
+        reported["running"],
+        json!(false),
+        "a fresh heartbeat with nobody holding the lock is a daemon that is gone: {reported}"
+    );
+    assert_eq!(
+        reported["connected"],
+        json!(false),
+        "a daemon that is not running is not connected either: {reported}"
+    );
+    assert!(
+        status(false).contains("stopped"),
+        "the human output must say so too, got: {}",
+        status(false)
+    );
+
+    // Holding the lock is what makes it running — and the same record now
+    // reads the other way.
+    let _held = DaemonLock::acquire(&paths.lock_file()).unwrap();
+    let reported: Value = serde_json::from_str(status(true).trim()).unwrap();
+    assert_eq!(
+        reported["running"],
+        json!(true),
+        "a held lock is a running daemon: {reported}"
     );
 }

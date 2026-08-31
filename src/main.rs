@@ -618,9 +618,14 @@ async fn handle_events_command(
             DaemonAction::Status => {
                 let runtime = events::EventRuntime::open(&dir, profile, &config)?;
                 let status = runtime.state.daemon_status()?;
+                // Same question `stop` asks, answered the same way: taking the
+                // lock means nobody holds it, so no daemon is running. The
+                // heartbeat cannot answer it — see `stop_daemon`.
+                let running = events::DaemonLock::acquire(&runtime.paths.lock_file()).is_err();
                 format::print_daemon_status(
                     status.as_ref(),
                     profile,
+                    running,
                     DAEMON_STALE_AFTER_SECONDS,
                     as_json,
                 );
