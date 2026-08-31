@@ -11,6 +11,7 @@ ASSUME_YES=false
 REMOVE_SKILL=""
 BACKUP_SKILL=""
 REMOVE_CONFIG=""
+SKILL_BACKUP_DIR=""
 
 usage() {
     cat <<EOF
@@ -122,11 +123,16 @@ if [ -d "$USER_SKILL_DIR" ]; then
     echo
 
     if prompt_yes_no "Remove Claude Code skill? [y/N]: " "n" "$REMOVE_SKILL"; then
+        # Not beside $USER_SKILL_DIR: everything under ~/.claude/skills is
+        # discovered as a skill, so a copy left there comes back as a second
+        # entry competing with the real one — and it would keep this script
+        # from removing the now-empty skills directory.
         if prompt_yes_no "Create backup before removing? [Y/n]: " "y" "$BACKUP_SKILL"; then
             timestamp=$(date +%Y%m%d_%H%M%S)
-            backup_dir="$USER_SKILL_DIR.backup_$timestamp"
-            cp -R "$USER_SKILL_DIR" "$backup_dir"
-            echo "📦 Backup created: $backup_dir"
+            SKILL_BACKUP_DIR="$CONFIG_DIR/skill-backups/$SKILL_NAME.$timestamp"
+            mkdir -p "$(dirname "$SKILL_BACKUP_DIR")"
+            cp -R "$USER_SKILL_DIR" "$SKILL_BACKUP_DIR"
+            echo "📦 Backup created: $SKILL_BACKUP_DIR"
         fi
 
         rm -rf "$USER_SKILL_DIR"
@@ -167,6 +173,15 @@ if [ -d "$CONFIG_DIR" ]; then
     echo "ℹ️  If config.toml sets [events] data_path, the store lives outside this"
     echo "   directory and is NOT removed — check \`slack-cli events path\` first."
     echo
+
+    # The skill backup this run just wrote lives here too, so the same answer
+    # takes it. Consistent with "remove everything", but only if it is said.
+    if [ -n "$SKILL_BACKUP_DIR" ]; then
+        echo "⚠️  This also removes the skill backup written a moment ago:"
+        echo "     $SKILL_BACKUP_DIR"
+        echo "   Move it elsewhere first if you want to keep it."
+        echo
+    fi
 
     if prompt_yes_no "Remove configuration and cache? [y/N]: " "n" "$REMOVE_CONFIG"; then
         rm -rf "$CONFIG_DIR"
