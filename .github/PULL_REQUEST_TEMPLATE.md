@@ -18,4 +18,4 @@
 - [ ] Tests cover the new behavior.
 - [ ] Public CLI surface, configuration, or cache schema changes are documented.
 - [ ] No new direct dependency added without justification (license, size, maintenance).
-- [ ] Breaking changes follow the [Conventional Commits](https://www.conventionalcommits.org/) `!` marker so release-plz produces the correct semver bump.
+- [ ] Breaking changes follow the [Conventional Commits](https://www.conventionalcommits.org/) `!` marker.
