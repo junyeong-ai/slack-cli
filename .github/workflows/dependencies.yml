@@ -41,9 +41,11 @@ jobs:
       - name: Update transitive dependencies
         run: cargo update
 
+      # A pull request opened with GITHUB_TOKEN starts no workflow runs, so the
+      # lockfile would arrive with no CI at all. This needs a token of its own.
       - name: Open or refresh the lockfile pull request
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
           BRANCH: chore/cargo-update
         run: |
           set -euo pipefail
