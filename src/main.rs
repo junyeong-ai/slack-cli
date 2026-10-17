@@ -253,10 +253,9 @@ async fn run(cli: Cli) -> Result<()> {
             exclude_bots,
             expand,
         } => {
-            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-
             let oldest_ts = oldest.map(|o| parse_timestamp(&o)).transpose()?;
             let latest_ts = latest.map(|l| parse_timestamp(&l)).transpose()?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
 
             let (mut messages, next_cursor) = slack
                 .messages
@@ -330,13 +329,12 @@ async fn run(cli: Cli) -> Result<()> {
             }
 
             let query = query.context("a search query is required")?;
+            let before = before.as_deref().map(parse_unix_seconds).transpose()?;
+            let after = after.as_deref().map(parse_unix_seconds).transpose()?;
             let context_channel_id = match channel {
                 Some(input) => Some(resolve_channel(&input, &slack, &cache, cli.json).await?),
                 None => None,
             };
-
-            let before = before.as_deref().map(parse_unix_seconds).transpose()?;
-            let after = after.as_deref().map(parse_unix_seconds).transpose()?;
 
             let options = slack::SearchOptions {
                 limit,
@@ -702,7 +700,18 @@ async fn ensure_channels_cache(
 }
 
 fn parse_unix_seconds(input: &str) -> Result<i64> {
+    let invalid_timestamp = || {
+        anyhow::anyhow!(
+            "Invalid Unix timestamp: {input} (expected finite seconds within the signed 64-bit range)"
+        )
+    };
+    if let Ok(secs) = input.parse::<i128>() {
+        return i64::try_from(secs).map_err(|_| invalid_timestamp());
+    }
     if let Ok(secs) = input.parse::<f64>() {
+        if !secs.is_finite() || secs < i64::MIN as f64 || secs >= -(i64::MIN as f64) {
+            return Err(invalid_timestamp());
+        }
         return Ok(secs as i64);
     }
 
@@ -723,10 +732,11 @@ fn parse_unix_seconds(input: &str) -> Result<i64> {
 }
 
 fn parse_timestamp(input: &str) -> Result<String> {
+    let seconds = parse_unix_seconds(input)?;
     if input.parse::<f64>().is_ok() {
         return Ok(input.to_string());
     }
-    parse_unix_seconds(input).map(|s| s.to_string())
+    Ok(seconds.to_string())
 }
 
 fn build_payload(content: MessageContent) -> Result<MessagePayload> {
@@ -876,6 +886,44 @@ async fn refresh_cache(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn date_filters_reject_non_finite_and_out_of_range_timestamps() {
+        for input in [
+            "NaN",
+            "inf",
+            "-inf",
+            "1e100",
+            "9223372036854775808",
+            "-9223372036854775809",
+        ] {
+            assert!(parse_unix_seconds(input).is_err(), "{input}");
+            assert!(parse_timestamp(input).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn date_filters_preserve_message_precision_and_convert_search_seconds() {
+        assert_eq!(
+            parse_timestamp("1792200000.000001").unwrap(),
+            "1792200000.000001"
+        );
+        assert_eq!(parse_unix_seconds("1792200000.999999").unwrap(), 1792200000);
+        assert_eq!(parse_unix_seconds("0").unwrap(), 0);
+        assert_eq!(parse_unix_seconds("-1.5").unwrap(), -1);
+        for bound in [i64::MIN, i64::MAX] {
+            assert_eq!(parse_unix_seconds(&bound.to_string()).unwrap(), bound);
+            assert_eq!(
+                parse_timestamp(&bound.to_string()).unwrap(),
+                bound.to_string()
+            );
+        }
+        assert_eq!(
+            parse_timestamp("2026-10-17").unwrap(),
+            parse_unix_seconds("2026-10-17").unwrap().to_string()
+        );
+        assert!(parse_timestamp("2026-02-30").is_err());
+    }
 
     #[test]
     fn classify_error_keeps_slack_code_for_generic_api_errors() {

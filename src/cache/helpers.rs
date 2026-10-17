@@ -87,8 +87,8 @@ impl SqliteCache {
             .duration_since(UNIX_EPOCH)
             .map_err(CacheError::SystemTimeError)?
             .as_secs() as i64;
-        let age_hours = (now - last_sync) as f64 / 3600.0;
-        let threshold_hours = (ttl_hours * threshold_percent / 100) as f64;
+        let age_hours = (i128::from(now) - i128::from(last_sync)) as f64 / 3600.0;
+        let threshold_hours = ttl_hours as f64 * threshold_percent as f64 / 100.0;
 
         if age_hours >= threshold_hours {
             Ok(CacheStatus::NeedsRefresh)
@@ -182,6 +182,52 @@ mod tests {
 
     mod cache_status_tests {
         use super::*;
+
+        #[tokio::test]
+        async fn fractional_hour_thresholds_do_not_expire_fresh_snapshots() {
+            let cache = create_test_cache();
+            cache.save_users(vec![]).await.unwrap();
+            cache.save_channels(vec![]).await.unwrap();
+            assert_eq!(
+                cache.get_cache_status(1, 1, 10).unwrap(),
+                CacheStatus::Fresh
+            );
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            cache
+                .pool
+                .get()
+                .unwrap()
+                .execute("UPDATE metadata SET value = ?1 WHERE key IN ('last_user_sync', 'last_channel_sync')", [now - 5 * 60])
+                .unwrap();
+            assert_eq!(
+                cache.get_cache_status(1, 1, 10).unwrap(),
+                CacheStatus::Fresh
+            );
+            cache
+                .pool
+                .get()
+                .unwrap()
+                .execute("UPDATE metadata SET value = ?1 WHERE key IN ('last_user_sync', 'last_channel_sync')", [now - 7 * 60])
+                .unwrap();
+            assert_eq!(
+                cache.get_cache_status(1, 1, 10).unwrap(),
+                CacheStatus::NeedsRefresh
+            );
+        }
+
+        #[tokio::test]
+        async fn large_ttls_do_not_overflow_the_refresh_threshold() {
+            let cache = create_test_cache();
+            cache.save_users(vec![]).await.unwrap();
+            cache.save_channels(vec![]).await.unwrap();
+            assert_eq!(
+                cache.get_cache_status(u64::MAX, u64::MAX, 100).unwrap(),
+                CacheStatus::Fresh
+            );
+        }
 
         #[test]
         fn empty_cache_reports_empty() {

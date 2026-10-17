@@ -28,6 +28,44 @@ fn command(dir: &std::path::Path, server: &MockServer) -> tokio::process::Comman
 }
 
 #[tokio::test]
+async fn invalid_date_filters_fail_before_any_slack_request() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["messages", "C00000001", "--oldest", "NaN"],
+        vec!["messages", "C00000001", "--latest", "1e100"],
+        vec!["search", "query", "--before", "inf"],
+        vec!["search", "query", "--after", "9223372036854775808"],
+        vec!["messages", "#uncached", "--oldest", "NaN"],
+        vec![
+            "search",
+            "query",
+            "--channel",
+            "#uncached",
+            "--before",
+            "NaN",
+        ],
+    ] {
+        let output = command(dir.path(), &server)
+            .env("SLACK_USER_TOKEN", "xoxp-test")
+            .args(&args)
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Invalid Unix timestamp"),
+            "{error}"
+        );
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn channel_operations_require_a_unique_exact_name() {
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().unwrap();

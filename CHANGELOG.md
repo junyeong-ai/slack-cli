@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.2] - 2026-10-17
+
+### Fixed
+
+- Reject non-finite and out-of-range numeric date filters instead of silently changing search bounds or sending invalid message-history timestamps. Preserve message timestamp precision.
+- Calculate cache refresh thresholds without truncating fractional hours or overflowing large TTL values, preventing premature stale-cache notices.
+
 ## [0.19.1] - 2026-10-17
 
 ### Documentation
