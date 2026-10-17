@@ -22,7 +22,7 @@ pub enum CacheError {
     #[error("System time error: {0}")]
     SystemTimeError(#[from] std::time::SystemTimeError),
 
-    /// Invalid input data (e.g., empty vectors)
+    /// Invalid input data
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 

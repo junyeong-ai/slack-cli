@@ -28,7 +28,7 @@ Any user-supplied query MUST pass through `helpers::process_fts_query` before re
 
 ## Atomic refresh
 
-A refresh fetches Slack data before opening a write transaction. `BEGIN IMMEDIATE` serializes the snapshot replacement and its sync timestamp across processes. Readers retain the previous committed snapshot until the replacement commits. An error or a process exit rolls the transaction back; there are no application-managed lock leases. Concurrent refreshes may fetch the same data.
+A refresh fetches Slack data before opening a write transaction. `BEGIN IMMEDIATE` serializes the snapshot replacement and its sync timestamp across processes. Readers retain the previous committed snapshot until the replacement commits. An error or a process exit rolls the transaction back; there are no application-managed lock leases. Concurrent refreshes may fetch the same data. Empty successful snapshots replace old rows and update the sync timestamp. Initialization is determined by that timestamp, independently of row count; a completed empty snapshot must not trigger a fetch on every lookup.
 
 ## Adding a cached field
 

@@ -51,15 +51,6 @@ impl SqliteCache {
         channels_ttl_hours: u64,
         threshold_percent: u64,
     ) -> CacheResult<CacheStatus> {
-        let (users, channels) = self.get_counts()?;
-        if users == 0 && channels == 0 {
-            return Ok(CacheStatus::Empty);
-        }
-
-        if users == 0 || channels == 0 {
-            return Ok(CacheStatus::NeedsRefresh);
-        }
-
         let users_status =
             self.get_cache_entry_status("last_user_sync", users_ttl_hours, threshold_percent)?;
         let channels_status = self.get_cache_entry_status(
@@ -68,12 +59,19 @@ impl SqliteCache {
             threshold_percent,
         )?;
 
-        if users_status == CacheStatus::NeedsRefresh || channels_status == CacheStatus::NeedsRefresh
-        {
-            Ok(CacheStatus::NeedsRefresh)
-        } else {
-            Ok(CacheStatus::Fresh)
-        }
+        Ok(match (users_status, channels_status) {
+            (CacheStatus::Empty, CacheStatus::Empty) => CacheStatus::Empty,
+            (CacheStatus::Fresh, CacheStatus::Fresh) => CacheStatus::Fresh,
+            _ => CacheStatus::NeedsRefresh,
+        })
+    }
+
+    pub fn has_users_snapshot(&self) -> CacheResult<bool> {
+        Ok(self.sync_timestamp("last_user_sync")?.is_some())
+    }
+
+    pub fn has_channels_snapshot(&self) -> CacheResult<bool> {
+        Ok(self.sync_timestamp("last_channel_sync")?.is_some())
     }
 
     fn get_cache_entry_status(
@@ -82,7 +80,14 @@ impl SqliteCache {
         ttl_hours: u64,
         threshold_percent: u64,
     ) -> CacheResult<CacheStatus> {
-        let age_hours = self.get_cache_age_hours(metadata_key)?;
+        let Some(last_sync) = self.sync_timestamp(metadata_key)? else {
+            return Ok(CacheStatus::Empty);
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(CacheError::SystemTimeError)?
+            .as_secs() as i64;
+        let age_hours = (now - last_sync) as f64 / 3600.0;
         let threshold_hours = (ttl_hours * threshold_percent / 100) as f64;
 
         if age_hours >= threshold_hours {
@@ -92,27 +97,15 @@ impl SqliteCache {
         }
     }
 
-    fn get_cache_age_hours(&self, metadata_key: &str) -> CacheResult<f64> {
+    fn sync_timestamp(&self, metadata_key: &str) -> CacheResult<Option<i64>> {
         let conn = self.pool.get()?;
-
-        let last_sync: Option<i64> = conn
+        Ok(conn
             .query_row(
-                "SELECT value FROM metadata WHERE key = ?",
+                "SELECT value FROM metadata WHERE key = ?1",
                 [metadata_key],
                 |row| row.get(0),
             )
-            .optional()?;
-
-        match last_sync {
-            Some(ts) => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(CacheError::SystemTimeError)?
-                    .as_secs() as i64;
-                Ok((now - ts) as f64 / 3600.0)
-            }
-            None => Ok(f64::MAX),
-        }
+            .optional()?)
     }
 }
 
@@ -236,6 +229,26 @@ mod tests {
             assert_eq!(
                 cache.get_cache_status(168, 168, 10).unwrap(),
                 CacheStatus::NeedsRefresh
+            );
+        }
+
+        #[tokio::test]
+        async fn empty_snapshots_are_initialized_and_fresh() {
+            let cache = create_test_cache();
+            assert!(!cache.has_users_snapshot().unwrap());
+            assert!(!cache.has_channels_snapshot().unwrap());
+            cache.save_users(vec![]).await.unwrap();
+            assert_eq!(
+                cache.get_cache_status(168, 168, 10).unwrap(),
+                CacheStatus::NeedsRefresh
+            );
+            cache.save_channels(vec![]).await.unwrap();
+            assert_eq!(cache.get_counts().unwrap(), (0, 0));
+            assert!(cache.has_users_snapshot().unwrap());
+            assert!(cache.has_channels_snapshot().unwrap());
+            assert_eq!(
+                cache.get_cache_status(168, 168, 10).unwrap(),
+                CacheStatus::Fresh
             );
         }
 

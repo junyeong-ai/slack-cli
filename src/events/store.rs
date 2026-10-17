@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use anyhow::{Context, Result};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
 use serde::Serialize;
 
 use super::db;
@@ -251,33 +251,35 @@ impl EventStore for SqliteStore {
     }
 
     fn pull(&self, consumer: &str, from: Option<i64>, limit: usize) -> Result<Vec<Event>> {
-        let conn = self.pool.get()?;
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT INTO consumer (name, acked_seq, updated_at) VALUES (?1, 0, unixepoch())
+             ON CONFLICT(name) DO NOTHING",
+            params![consumer],
+        )?;
         let after = match from {
             Some(seq) => seq,
-            None => conn
-                .query_row(
-                    "SELECT acked_seq FROM consumer WHERE name = ?1",
-                    params![consumer],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .unwrap_or(0),
+            None => tx.query_row(
+                "SELECT acked_seq FROM consumer WHERE name = ?1",
+                params![consumer],
+                |row| row.get(0),
+            )?,
         };
-
-        let mut stmt =
-            conn.prepare("SELECT seq, payload FROM event WHERE seq > ?1 ORDER BY seq LIMIT ?2")?;
-        let events = stmt
-            .query_map(params![after, limit as i64], |row| {
+        let rows = {
+            let mut stmt =
+                tx.prepare("SELECT seq, payload FROM event WHERE seq > ?1 ORDER BY seq LIMIT ?2")?;
+            stmt.query_map(params![after, limit as i64], |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        tx.commit()?;
+        let events = rows
             .into_iter()
             .map(|(seq, payload)| {
                 serde_json::from_str::<Event>(&payload)
                     .map(|mut event| {
-                        // The row's position is authoritative: it is what an
-                        // acknowledgement names, and a payload written before
-                        // a crash may carry a stale one.
                         event.seq = seq;
                         event
                     })
@@ -618,6 +620,30 @@ mod tests {
         store.prune().unwrap();
         assert_eq!(store.stats().unwrap().events, 3);
         assert_eq!(store.pull("slow", None, 10).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn first_pull_registers_a_consumer_before_acknowledgement_pruning() {
+        let (store, dir) = store(EventRetention::Spool);
+        assert!(store.pull("waiting", None, 10).unwrap().is_empty());
+        store.append(&event("1")).unwrap();
+        store.append(&event("2")).unwrap();
+        assert_eq!(store.pull("slow", None, 1).unwrap()[0].seq, 1);
+        store.ack("fast", 2).unwrap();
+        assert_eq!(store.prune().unwrap().acknowledged, 0);
+        drop(store);
+        let store = SqliteStore::open(
+            &dir.path().join("events.db"),
+            &config(EventRetention::Spool),
+        )
+        .unwrap();
+        assert_eq!(store.pull("slow", None, 10).unwrap().len(), 2);
+        store.ack("slow", 2).unwrap();
+        assert_eq!(store.prune().unwrap().acknowledged, 0);
+        store.ack("waiting", 1).unwrap();
+        assert_eq!(store.prune().unwrap().acknowledged, 1);
+        store.ack("waiting", 2).unwrap();
+        assert_eq!(store.prune().unwrap().acknowledged, 1);
     }
 
     #[test]

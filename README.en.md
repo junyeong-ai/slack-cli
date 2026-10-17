@@ -129,7 +129,7 @@ curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/
 
 The installer requires Bash and Perl with core `Fcntl`. Prebuilt downloads also need curl, tar and a SHA-256 tool (`sha256sum` or `shasum`). Concurrent installer runs for the same user are serialized by a kernel lock.
 
-`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. The skill comes from the installed binary's release tag, or the matching checkout when building from source. If no matching skill is available, the existing installation is kept. Before replacement, the entire previous skill directory is preserved outside `~/.claude/skills`, including user-added files, and its path is printed. A failed backup leaves the installation unchanged.
+`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. The skill comes from the installed binary's release tag, or the matching checkout when building from source. If no matching skill is available, the existing installation is kept. Before replacement, the entire previous skill directory is preserved outside `~/.claude/skills`, including user-added files, and its path is printed. A failed backup leaves the existing skill unchanged. Existing paths are preserved even when `SKILL.md` is missing or the path is a file or broken symlink.
 
 ```bash
 # Install a specific release
@@ -244,7 +244,7 @@ slack-cli auth logout --all              # Remove every profile
 
 Static login validates every supplied user/bot token and requires the same workspace. Logout targets the authorizations selected at invocation; a concurrent new login is preserved.
 
-Caches are isolated by profile authorization; logging in again starts a fresh cache, while token rotation keeps it. Environment credentials use separate caches. `--data-dir` selects the root containing these caches; `cache path` prints the selected database. Older shared caches are not imported.
+Caches are isolated by profile authorization; logging in again starts a fresh cache, while token rotation keeps it. Environment credentials use separate caches. `--data-dir` selects the root containing these caches; `cache path` prints the selected database. Older shared caches are not imported. A successful empty response clears the previous snapshot and is cached normally.
 
 ---
 
@@ -527,6 +527,8 @@ slack-cli daemon status
 With `store_body = false` the log becomes an index of references — channel, ts, author, which rule matched. Fetch the body with `slack-cli thread` when it is actually needed, and Slack stays the only copy.
 
 In `stream` mode `events pull` fails with the reason rather than returning an empty result that looks like a quiet workspace.
+
+The first `events pull` registers its consumer, even on an empty log. Reuse a stable name: spool pruning waits for every registered consumer to acknowledge, while age and size limits still apply.
 
 ### Upgrading event storage from v0.15 and earlier
 

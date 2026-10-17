@@ -470,3 +470,49 @@ async fn logout_preserves_replacement_authorizations_and_uses_current_rotated_to
     assert_eq!(auth.remove_authorizations(&replacement).await.unwrap(), 1);
     assert!(store.read()["profiles"]["acme"].is_null());
 }
+
+#[tokio::test]
+async fn automatic_profile_names_are_reserved_against_the_latest_store_state() {
+    let store = Store::with(json!({"version":2,"profiles":{}}));
+    let first = store.authenticator("http://127.0.0.1:1".into()).await;
+    let second = store.authenticator("http://127.0.0.1:1".into()).await;
+    let mut a = profile(expiring_in(240), json!({"id":"123.456"}))["profiles"]["acme"].clone();
+    a["workspace"]["team_id"] = json!("TA");
+    let mut b = a.clone();
+    b["workspace"]["team_id"] = json!("TB");
+    let (saved_a, saved_b) = tokio::join!(
+        first.save_profile(
+            "acme",
+            serde_json::from_value(a.clone()).unwrap(),
+            true,
+            false
+        ),
+        second.save_profile(
+            "acme",
+            serde_json::from_value(b.clone()).unwrap(),
+            true,
+            false
+        ),
+    );
+    assert_ne!(saved_a.is_ok(), saved_b.is_ok());
+    let conflict = if saved_a.is_err() { saved_a } else { saved_b };
+    assert!(matches!(
+        conflict,
+        Err(slack_cli::auth::AuthError::ProfileNameConflict { .. })
+    ));
+    let saved = store.read();
+    assert_eq!(saved["profiles"].as_object().unwrap().len(), 1);
+    let winner = saved["profiles"]["acme"].clone();
+    second
+        .save_profile("acme", serde_json::from_value(winner).unwrap(), true, false)
+        .await
+        .unwrap();
+    second
+        .save_profile("acme", serde_json::from_value(b).unwrap(), true, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.read()["profiles"]["acme"]["workspace"]["team_id"],
+        "TB"
+    );
+}

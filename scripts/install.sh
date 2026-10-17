@@ -316,7 +316,7 @@ get_skill_version() {
 }
 
 check_skill_exists() {
-    [ -d "$USER_SKILL_DIR" ] && [ -f "$USER_SKILL_DIR/SKILL.md" ]
+    [ -e "$USER_SKILL_DIR" ] || [ -L "$USER_SKILL_DIR" ]
 }
 
 compare_versions() {
@@ -377,21 +377,28 @@ preserved_dir() {
     echo "$(dirname "$config_path")/skill-backups"
 }
 
-replace_skill() {
-    local installed_version="$1"
+preserve_skill() {
+    local installed_version
+    installed_version=$(get_skill_version "$USER_SKILL_DIR/SKILL.md")
+    is_valid_release_version "$installed_version" || installed_version=unknown
     local keep
     local kept
 
     keep=$(preserved_dir) || return 1
     mkdir -p "$keep" || return 1
     kept=$(mktemp -d "$keep/$SKILL_NAME.v$installed_version.XXXXXX") || return 1
-    if ! cp -R "$USER_SKILL_DIR/." "$kept/"; then
+    if [ -d "$USER_SKILL_DIR" ]; then
+        if ! cp -R "$USER_SKILL_DIR/." "$kept/"; then
+            rm -rf "$kept"
+            echo "❌ Could not preserve the installed skill; leaving it unchanged" >&2
+            return 1
+        fi
+    elif ! cp -P "$USER_SKILL_DIR" "$kept/original"; then
         rm -rf "$kept"
-        echo "❌ Could not preserve the installed skill; leaving it unchanged" >&2
+        echo "❌ Could not preserve the installed skill path; leaving it unchanged" >&2
         return 1
     fi
     echo "📦 Previous skill preserved at: $(display_path "$kept")" >&2
-    install_skill
 }
 
 install_skill() {
@@ -404,7 +411,11 @@ install_skill() {
         rm -rf "$staging"
         return 1
     fi
-    if [ -e "$USER_SKILL_DIR" ] || [ -L "$USER_SKILL_DIR" ]; then
+    if check_skill_exists; then
+        if ! preserve_skill; then
+            rm -rf "$staging"
+            return 1
+        fi
         if ! mv "$USER_SKILL_DIR" "$staging/previous"; then
             rm -rf "$staging"
             return 1
@@ -488,7 +499,7 @@ prompt_skill_installation() {
                 echo "" >&2
                 choice=$(prompt_choice "Reinstall? [y/N]: " "")
                 if [[ "$choice" =~ ^[yY]$ ]]; then
-                    replace_skill "$existing_version" || true
+                    install_skill || true
                 else
                     echo "   ⏭️  Skipped" >&2
                 fi
@@ -499,7 +510,7 @@ prompt_skill_installation() {
                 choice=$(prompt_choice "Update? [Y/n]: " "")
                 if [[ "$choice" =~ ^[nN]$ ]]; then
                     echo "   ⏭️  Keeping current version" >&2
-                elif replace_skill "$existing_version"; then
+                elif install_skill; then
                     echo "   ✅ Updated to v$project_version" >&2
                     echo "   To go back: SLACK_CLI_VERSION=$existing_version install.sh" >&2
                 fi
@@ -509,7 +520,7 @@ prompt_skill_installation() {
                 echo "" >&2
                 choice=$(prompt_choice "Downgrade? [y/N]: " "")
                 if [[ "$choice" =~ ^[yY]$ ]]; then
-                    replace_skill "$existing_version" || true
+                    install_skill || true
                 else
                     echo "   ⏭️  Keeping current version" >&2
                 fi
@@ -519,7 +530,7 @@ prompt_skill_installation() {
                 echo "" >&2
                 choice=$(prompt_choice "Reinstall? [y/N]: " "")
                 if [[ "$choice" =~ ^[yY]$ ]]; then
-                    replace_skill "$existing_version" || true
+                    install_skill || true
                 else
                     echo "   ⏭️  Skipped" >&2
                 fi
@@ -542,7 +553,7 @@ prompt_skill_installation() {
                 ;;
             1|"")
                 echo "" >&2
-                install_skill
+                install_skill || return 1
                 echo "" >&2
                 echo "🎉 Skill installed successfully!" >&2
                 echo "" >&2

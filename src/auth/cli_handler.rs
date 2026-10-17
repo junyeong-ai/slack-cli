@@ -146,24 +146,8 @@ async fn login(
         .profile
         .unwrap_or_else(|| slugify(&profile.workspace.team_name));
 
-    if auto_named {
-        let snapshot = authenticator.snapshot().await;
-        if let Some(existing) = snapshot.profiles.get(&profile_name)
-            && existing.workspace.team_id != profile.workspace.team_id
-        {
-            anyhow::bail!(
-                "profile '{profile_name}' already maps to team '{}' ({}); \
-                 re-run with --profile NAME to save '{}' ({}) under a distinct name",
-                existing.workspace.team_name,
-                existing.workspace.team_id,
-                profile.workspace.team_name,
-                profile.workspace.team_id,
-            );
-        }
-    }
-
     authenticator
-        .upsert_profile(&profile_name, profile.clone(), true)
+        .save_profile(&profile_name, profile.clone(), true, !auto_named)
         .await?;
 
     print_login_result(&profile_name, &profile, json);

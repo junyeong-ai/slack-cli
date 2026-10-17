@@ -165,3 +165,72 @@ async fn static_login_validates_secondary_tokens_before_changing_the_store() {
         .unwrap();
     assert!(output.status.success(), "{output:?}");
 }
+
+#[tokio::test]
+async fn empty_snapshots_replace_stale_rows_and_are_reused_without_refetching() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    for (endpoint, key, rows) in [
+        (
+            "/conversations.list",
+            "channels",
+            json!([{"id":"C00000001","name":"removed","is_channel":true}]),
+        ),
+        (
+            "/users.list",
+            "members",
+            json!([{"id":"U00000001","name":"removed","is_bot":false}]),
+        ),
+    ] {
+        Mock::given(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok":true,key:rows,"response_metadata":{"next_cursor":""}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let initial = command(dir.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .args(["cache", "refresh"])
+        .output()
+        .await
+        .unwrap();
+    assert!(initial.status.success(), "{initial:?}");
+    server.verify().await;
+    server.reset().await;
+    for (endpoint, key) in [
+        ("/conversations.list", "channels"),
+        ("/users.list", "members"),
+    ] {
+        Mock::given(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok":true,key:[],"response_metadata":{"next_cursor":""}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let refreshed = command(dir.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .args(["cache", "refresh"])
+        .output()
+        .await
+        .unwrap();
+    assert!(refreshed.status.success(), "{refreshed:?}");
+    for domain in ["users", "channels"] {
+        for _ in 0..2 {
+            let read = command(dir.path(), &server)
+                .env("SLACK_USER_TOKEN", "xoxp-test")
+                .args([domain, "removed"])
+                .output()
+                .await
+                .unwrap();
+            assert!(read.status.success(), "{read:?}");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&read.stdout).unwrap(),
+                json!([])
+            );
+        }
+    }
+}

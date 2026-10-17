@@ -17,6 +17,15 @@ pub enum AuthError {
     )]
     AuthorizationChanged(String),
 
+    #[error(
+        "profile '{profile}' already maps to team '{existing_team}'; re-run with --profile NAME to save team '{team}' under a distinct name"
+    )]
+    ProfileNameConflict {
+        profile: String,
+        existing_team: String,
+        team: String,
+    },
+
     #[error("no token available for policy {policy} in profile '{profile}'")]
     NoTokenForPolicy {
         profile: String,

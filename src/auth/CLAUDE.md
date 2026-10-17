@@ -68,7 +68,7 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 9. **`oauth.v2.access` bypasses `SlackCore::api_call`.** It has no `Authorization: Bearer` header and a different response envelope. See `src/slack/CLAUDE.md` for the documented exception.
 10. **Removing the active profile clears active.** No auto-promotion. The user picks the next active via `slack-cli auth use NAME`.
 11. **`connections:write` never reaches an authorization request.** `TokenPolicy::AppRequired` accepts only `TokenKind::App`, and no installation policy accepts it, so `scopes::required(User|Bot)` cannot union it. `scopes::requested` asserts on the app kind rather than answering, because an exclusion applies to a request the app axis is not part of.
-12. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly.
+12. **Login with an auto-derived profile name rejects collisions.** If the team-slug name already maps to a different `team_id`, the user must pass `--profile NAME` explicitly. Check against the latest state inside the same store transaction that saves the login.
 
 ## The browser flow is always PKCE
 

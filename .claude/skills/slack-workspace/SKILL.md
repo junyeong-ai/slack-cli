@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.16.0"
+  version: "0.17.0"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -242,6 +242,10 @@ slack-cli events pull --consumer assistant --limit 20 --ack --json
 # Look without consuming (the same batch comes back next time).
 slack-cli events pull --consumer assistant --limit 20 --json
 ```
+
+The first pull registers its consumer even when no events exist. Reuse the same
+consumer name; an unacknowledged position holds spool pruning until ack, subject
+to the configured age and size limits.
 
 `events pull --json` emits **one JSON object per line** (NDJSON), not an array —
 read it with `jq -c .` or a `while read` loop, never `jq '.[]'`.

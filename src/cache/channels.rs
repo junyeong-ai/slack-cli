@@ -1,4 +1,4 @@
-use super::error::{CacheError, CacheResult};
+use super::error::CacheResult;
 use super::sqlite_cache::SqliteCache;
 use crate::slack::types::SlackChannel;
 use chrono::Utc;
@@ -8,10 +8,6 @@ use rusqlite::OptionalExtension;
 
 impl SqliteCache {
     pub async fn save_channels(&self, channels: Vec<SlackChannel>) -> CacheResult<()> {
-        if channels.is_empty() {
-            return Err(CacheError::InvalidInput("No channels to save".to_string()));
-        }
-
         let cache = self.clone();
         self.writer
             .execute(move || cache.save_channels_internal(channels))
@@ -19,10 +15,6 @@ impl SqliteCache {
     }
 
     pub(super) fn save_channels_internal(&self, channels: Vec<SlackChannel>) -> CacheResult<()> {
-        if channels.is_empty() {
-            return Err(CacheError::InvalidInput("No channels to save".to_string()));
-        }
-
         let mut conn = self.pool.get()?;
 
         conn.execute(
@@ -282,15 +274,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_channels_empty_vec() {
+    async fn empty_channels_snapshot_clears_rows_and_search_indexes() {
         let cache = setup_cache().await;
-        let result = cache.save_channels(vec![]).await;
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid input: No channels to save"
-        );
+        cache
+            .save_channels(vec![create_test_channel(
+                "C123", "general", false, false, false, false,
+            )])
+            .await
+            .unwrap();
+        cache.save_channels(vec![]).await.unwrap();
+        assert!(cache.has_channels_snapshot().unwrap());
+        assert_eq!(cache.get_counts().unwrap().1, 0);
+        assert!(cache.search_channels("general", 10).unwrap().is_empty());
     }
 
     #[tokio::test]

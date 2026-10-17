@@ -58,6 +58,8 @@ refetchable — and exactly wrong here, since Socket Mode never replays.
 `db::migrate` applies steps forward and **refuses a database written by a newer
 build** rather than rebuilding it.
 
+A consumer is registered at its first pull, even when the log is empty. Registration and batch selection share a transaction; spool pruning includes its unacknowledged position immediately. Age and size limits still apply.
+
 ## Retention is a capability, not a branch
 
 `EventStore` has two implementations and everything upstream is written against

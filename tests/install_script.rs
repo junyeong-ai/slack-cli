@@ -152,12 +152,15 @@ printf shipped > "$USER_SKILL_DIR/SKILL.md"
 printf custom > "$USER_SKILL_DIR/reference.md"
 printf next > "$SKILL_SOURCE_DIR/SKILL.md"
 preserved_dir() { echo "$TEST_ROOT/backups"; }
-replace_skill 1.0.0
+install_skill
 [ "$(cat "$USER_SKILL_DIR/SKILL.md")" = next ]
 [ "$(cat "$TEST_ROOT"/backups/*/reference.md)" = custom ]
 printf edited > "$USER_SKILL_DIR/SKILL.md"
-cp() { return 1; }
-if replace_skill 1.0.1; then exit 1; fi
+cp() {
+    [ "$2" != "$USER_SKILL_DIR/." ] || return 1
+    command cp "$@"
+}
+if install_skill; then exit 1; fi
 [ "$(cat "$USER_SKILL_DIR/SKILL.md")" = edited ]
 "#);
 }
@@ -174,6 +177,7 @@ if install_skill; then exit 1; fi
 SKILL_SOURCE_DIR="$TEST_ROOT/source"
 mkdir -p "$SKILL_SOURCE_DIR"
 printf next > "$SKILL_SOURCE_DIR/SKILL.md"
+preserved_dir() { echo "$TEST_ROOT/backups"; }
 mv() {
     case "$1" in */replacement) return 1 ;; esac
     command mv "$@"
@@ -206,5 +210,30 @@ acquire_install_lock() { return 1; }
 detect_platform() { touch "$TEST_ROOT/unlocked-install"; }
 if (main); then exit 1; fi
 [ ! -e "$TEST_ROOT/unlocked-install" ]
+"#);
+}
+
+#[test]
+fn incomplete_skill_directories_and_non_directory_paths_are_preserved() {
+    run(r#"
+SKILL_SOURCE_DIR="$TEST_ROOT/source"
+mkdir -p "$USER_SKILL_DIR" "$SKILL_SOURCE_DIR"
+printf custom > "$USER_SKILL_DIR/user-reference.md"
+printf next > "$SKILL_SOURCE_DIR/SKILL.md"
+preserved_dir() { echo "$TEST_ROOT/backups"; }
+prepare_skill_source() { return 0; }
+prompt_choice() { echo y; }
+prompt_skill_installation v1.0.0
+[ "$(cat "$TEST_ROOT"/backups/*/user-reference.md)" = custom ]
+[ "$(cat "$USER_SKILL_DIR/SKILL.md")" = next ]
+command mv "$USER_SKILL_DIR" "$TEST_ROOT/first"
+printf personal > "$USER_SKILL_DIR"
+install_skill
+[ "$(cat "$TEST_ROOT"/backups/*/original)" = personal ]
+command mv "$USER_SKILL_DIR" "$TEST_ROOT/second"
+ln -s missing-target "$USER_SKILL_DIR"
+install_skill
+[ -d "$USER_SKILL_DIR" ]
+[ "$(find "$TEST_ROOT/backups" -name original -type l -exec readlink {} \;)" = missing-target ]
 "#);
 }

@@ -1,4 +1,4 @@
-use super::error::{CacheError, CacheResult};
+use super::error::CacheResult;
 use super::sqlite_cache::SqliteCache;
 use crate::slack::types::SlackUser;
 use chrono::Utc;
@@ -9,10 +9,6 @@ use rusqlite::OptionalExtension;
 
 impl SqliteCache {
     pub async fn save_users(&self, users: Vec<SlackUser>) -> CacheResult<()> {
-        if users.is_empty() {
-            return Err(CacheError::InvalidInput("No users to save".to_string()));
-        }
-
         let cache = self.clone();
         self.writer
             .execute(move || cache.save_users_internal(users))
@@ -20,10 +16,6 @@ impl SqliteCache {
     }
 
     pub(super) fn save_users_internal(&self, users: Vec<SlackUser>) -> CacheResult<()> {
-        if users.is_empty() {
-            return Err(CacheError::InvalidInput("No users to save".to_string()));
-        }
-
         let mut conn = self.pool.get()?;
 
         conn.execute(
@@ -278,15 +270,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_users_empty_vec() {
+    async fn empty_users_snapshot_clears_rows_and_search_indexes() {
         let cache = setup_cache().await;
-        let result = cache.save_users(vec![]).await;
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Invalid input: No users to save"
-        );
+        cache
+            .save_users(vec![create_test_user("U123", "alice", None, false)])
+            .await
+            .unwrap();
+        cache.save_users(vec![]).await.unwrap();
+        assert!(cache.has_users_snapshot().unwrap());
+        assert_eq!(cache.get_counts().unwrap().0, 0);
+        assert!(cache.search_users("alice", 10, false).unwrap().is_empty());
     }
 
     #[tokio::test]

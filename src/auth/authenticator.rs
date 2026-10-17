@@ -412,7 +412,27 @@ impl Authenticator {
         profile: Profile,
         make_active: bool,
     ) -> Result<(), AuthError> {
+        self.save_profile(name, profile, make_active, true).await
+    }
+
+    pub async fn save_profile(
+        &self,
+        name: &str,
+        profile: Profile,
+        make_active: bool,
+        allow_team_change: bool,
+    ) -> Result<(), AuthError> {
         self.transact(|state| {
+            if !allow_team_change
+                && let Some(existing) = state.profiles.get(name)
+                && existing.workspace.team_id != profile.workspace.team_id
+            {
+                return Err(AuthError::ProfileNameConflict {
+                    profile: name.to_owned(),
+                    existing_team: existing.workspace.team_id.clone(),
+                    team: profile.workspace.team_id.clone(),
+                });
+            }
             state.upsert(name, profile, make_active);
             Ok(())
         })

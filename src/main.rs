@@ -536,6 +536,12 @@ fn classify_error(err: &anyhow::Error) -> (String, u8) {
         };
     }
 
+    if matches!(
+        err.downcast_ref::<AuthError>(),
+        Some(AuthError::ProfileNameConflict { .. })
+    ) {
+        return ("error".to_string(), 1);
+    }
     if err.downcast_ref::<AuthError>().is_some() {
         return ("auth_error".to_string(), 3);
     }
@@ -693,8 +699,7 @@ async fn ensure_users_cache(
     cache: &cache::SqliteCache,
     json: bool,
 ) -> Result<()> {
-    let (users, _) = cache.execute(|cache| cache.get_counts()).await?;
-    if users == 0 {
+    if !cache.execute(|cache| cache.has_users_snapshot()).await? {
         if !json {
             eprint!("Fetching users... ");
         }
@@ -712,8 +717,7 @@ async fn ensure_channels_cache(
     cache: &cache::SqliteCache,
     json: bool,
 ) -> Result<()> {
-    let (_, channels) = cache.execute(|cache| cache.get_counts()).await?;
-    if channels == 0 {
+    if !cache.execute(|cache| cache.has_channels_snapshot()).await? {
         if !json {
             eprint!("Fetching channels... ");
         }
