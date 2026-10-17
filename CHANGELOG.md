@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.5] - 2026-10-17
+
+### Fixed
+
+- Stage self-updates in exclusively created temporary files and copy through their open handles. Preserve pre-existing staging files and link targets instead of overwriting or deleting them.
+- Use the temporary-file lifecycle for cleanup and publication, retaining Windows replacement and rollback behavior.
+
 ## [0.19.4] - 2026-10-17
 
 ### Fixed

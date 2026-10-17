@@ -35,8 +35,10 @@ only the archives, since `self update` always resolves a concrete release.
    same workflow run.
 2. **Nothing is written outside a rename.** The download is staged beside the
    destination and renamed into place, so the destination is either the old
-   binary or the new one. `Staged` removes the staging file on every path that
-   does not complete the swap.
+   binary or the new one. Create the staging file exclusively with `NamedTempFile`
+   and copy through its open handle; never reopen a predictable path. Close the
+   handle before the platform-specific swap, then publish with `TempPath::persist`.
+   Its cleanup owns only the newly created entry, leaving pre-existing paths untouched.
 3. **The target is a compile-time fact.** `target::current()` is resolved from
    `cfg`, not probed: a musl build must replace itself with a musl build, and
    only the compiler knows which this is.

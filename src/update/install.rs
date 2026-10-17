@@ -1,4 +1,5 @@
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
@@ -122,33 +123,45 @@ pub fn replace(new_binary: &Path, destination: &Path) -> Result<()> {
         .and_then(|n| n.to_str())
         .unwrap_or("slack-cli");
 
-    let staged = Staged::new(parent.join(format!(".{file_name}.update.{}", std::process::id())));
-    std::fs::copy(new_binary, staged.path()).with_context(|| {
+    let mut staged = tempfile::Builder::new()
+        .prefix(&format!(".{file_name}.update."))
+        .tempfile_in(parent)
+        .with_context(|| format!("could not create an update file in {}", parent.display()))?;
+    let mut source = File::open(new_binary)
+        .with_context(|| format!("could not open {}", new_binary.display()))?;
+    std::io::copy(&mut source, staged.as_file_mut()).with_context(|| {
         format!(
             "could not stage the new binary at {}",
             staged.path().display()
         )
     })?;
-    make_executable(staged.path())?;
-    swap(staged.path(), destination)?;
-    staged.keep();
+    make_executable(staged.as_file())?;
+    staged
+        .as_file()
+        .sync_all()
+        .context("could not sync the staged binary")?;
+    let staged = staged.into_temp_path();
+    swap(staged, destination)?;
     Ok(())
 }
 
 #[cfg(unix)]
-fn swap(staged: &Path, destination: &Path) -> Result<()> {
+fn swap(staged: tempfile::TempPath, destination: &Path) -> Result<()> {
     // A running process holds its executable by inode, so renaming over it is
     // safe: this process keeps running from the old file until it exits.
-    std::fs::rename(staged, destination).with_context(|| {
-        format!(
-            "could not replace {} (is it writable?)",
-            destination.display()
-        )
-    })
+    staged
+        .persist(destination)
+        .map_err(|error| error.error)
+        .with_context(|| {
+            format!(
+                "could not replace {} (is it writable?)",
+                destination.display()
+            )
+        })
 }
 
 #[cfg(windows)]
-fn swap(staged: &Path, destination: &Path) -> Result<()> {
+fn swap(staged: tempfile::TempPath, destination: &Path) -> Result<()> {
     // Windows will not replace a running executable, so the running one moves
     // aside first. It stays until a later update clears it: this process still
     // has it open.
@@ -157,7 +170,7 @@ fn swap(staged: &Path, destination: &Path) -> Result<()> {
     std::fs::rename(destination, &displaced)
         .with_context(|| format!("could not move {} aside", destination.display()))?;
 
-    let Err(error) = std::fs::rename(staged, destination) else {
+    let Err(error) = staged.persist(destination).map_err(|error| error.error) else {
         return Ok(());
     };
     match std::fs::rename(&displaced, destination) {
@@ -175,49 +188,21 @@ fn swap(staged: &Path, destination: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn make_executable(path: &Path) -> Result<()> {
+fn make_executable(file: &File) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-        .with_context(|| format!("could not mark {} executable", path.display()))
+    file.set_permissions(std::fs::Permissions::from_mode(0o755))
+        .context("could not mark the staged binary executable")
 }
 
 #[cfg(not(unix))]
-fn make_executable(_: &Path) -> Result<()> {
+fn make_executable(_: &File) -> Result<()> {
     Ok(())
-}
-
-/// Removes the staged file unless the swap took ownership of it, so a failed
-/// download or rename leaves no dotfile beside the binary.
-struct Staged {
-    path: PathBuf,
-    armed: bool,
-}
-
-impl Staged {
-    fn new(path: PathBuf) -> Self {
-        Self { path, armed: true }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn keep(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for Staged {
-    fn drop(&mut self) {
-        if self.armed {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn write(dir: &Path, name: &str, contents: &str) -> PathBuf {
         let path = dir.join(name);
@@ -308,6 +293,73 @@ mod tests {
             leftovers.is_empty(),
             "staging file left behind: {leftovers:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_preserves_existing_staging_links_and_their_targets() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        for symbolic in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let destination = write(dir.path(), "slack-cli", "old");
+            let fresh = write(dir.path(), "downloaded", "new");
+            let unrelated = write(dir.path(), "unrelated", "private data");
+            std::fs::set_permissions(&unrelated, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let existing = dir
+                .path()
+                .join(format!(".slack-cli.update.{}", std::process::id()));
+            if symbolic {
+                symlink(&unrelated, &existing).unwrap();
+            } else {
+                std::fs::hard_link(&unrelated, &existing).unwrap();
+            }
+            replace(&fresh, &destination).unwrap();
+            assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "private data");
+            assert_eq!(
+                std::fs::metadata(&unrelated).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(std::fs::read_to_string(&existing).unwrap(), "private data");
+            assert_eq!(std::fs::read_to_string(&destination).unwrap(), "new");
+            assert!(
+                !std::fs::symlink_metadata(&destination)
+                    .unwrap()
+                    .is_symlink()
+            );
+        }
+    }
+
+    #[test]
+    fn failed_replacement_preserves_preexisting_staging_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = write(dir.path(), "slack-cli", "old");
+        let existing = write(
+            dir.path(),
+            &format!(".slack-cli.update.{}", std::process::id()),
+            "keep",
+        );
+        assert!(replace(&dir.path().join("missing"), &destination).is_err());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&existing).unwrap(), "keep");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_swap_removes_only_its_own_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("slack-cli");
+        std::fs::create_dir(&destination).unwrap();
+        let retained = write(&destination, "keep", "unrelated");
+        let fresh = write(dir.path(), "downloaded", "new");
+        assert!(replace(&fresh, &destination).is_err());
+        assert_eq!(std::fs::read_to_string(retained).unwrap(), "unrelated");
+        assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with('.')
+        }));
     }
 
     #[cfg(unix)]
