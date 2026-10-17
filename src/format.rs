@@ -10,6 +10,14 @@ use chrono::DateTime;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
+pub fn print_path(path: &std::path::Path, as_json: bool) {
+    if as_json {
+        println!("{}", json!({ "path": path.display().to_string() }));
+    } else {
+        println!("{}", path.display());
+    }
+}
+
 pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
     if users.is_empty() {
         if as_json {

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.1] - 2026-10-17
+
+### Fixed
+
+- Bound stdout delivery to one process-owned writer so an unread pipe cannot accumulate workers or prevent daemon shutdown. Retire stdout after a timeout, cancellation or write failure to preserve line boundaries.
+- Serialize uninstall with installation using the same persistent kernel lock, preventing mixed binary and skill state.
+- Honor `--json` for config and cache paths with the same `{"path": "..."}` output as event paths, including config repair commands.
+
 ## [0.17.0] - 2026-10-17
 
 ### Fixed

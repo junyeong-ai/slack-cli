@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::process::Stdio;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -149,36 +149,64 @@ impl Sink {
     }
 }
 
-/// Writes one line, on a blocking thread.
-///
-/// stdout is usually a pipe, and a pipe whose reader is slow blocks the
-/// writer. Doing that on a runtime worker would stall whatever else that
-/// thread was carrying — including, on a busy runtime, the socket task whose
-/// only job is to keep acknowledging. Awaiting the blocking task keeps the
-/// lines in order while leaving the worker free.
+struct StdoutRequest {
+    line: String,
+    completed: tokio::sync::oneshot::Sender<std::io::Result<()>>,
+}
+
+struct StdoutWriter {
+    sender: tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<StdoutRequest>>>,
+}
+
+impl StdoutWriter {
+    fn start(mut output: impl Write + Send + 'static) -> std::io::Result<Self> {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<StdoutRequest>(1);
+        std::thread::Builder::new()
+            .name("slack-stdout".into())
+            .spawn(move || {
+                while let Some(request) = receiver.blocking_recv() {
+                    let result = output
+                        .write_all(request.line.as_bytes())
+                        .and_then(|()| output.flush());
+                    let failed = result.is_err();
+                    let _ = request.completed.send(result);
+                    if failed {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            sender: tokio::sync::Mutex::new(Some(sender)),
+        })
+    }
+
+    async fn write(&self, line: String, timeout: Duration) -> Result<()> {
+        tokio::time::timeout(timeout, async {
+            let mut slot = self.sender.lock().await;
+            let sender = slot.take().context("stdout is disabled after an incomplete write; restart the process to resume output")?;
+            let (completed, response) = tokio::sync::oneshot::channel();
+            sender.send(StdoutRequest { line, completed }).await
+                .map_err(|_| anyhow::anyhow!("the stdout writer has stopped"))?;
+            response.await.context("the stdout writer stopped before completing output")?
+                .context("could not write to stdout")?;
+            *slot = Some(sender);
+            Ok(())
+        }).await.context("stdout delivery timed out; its reader has stopped reading")?
+    }
+}
+
 async fn write_stdout(event: &Event, format: StdoutFormat, timeout: Duration) -> Result<()> {
-    let line = match format {
+    static WRITER: OnceLock<std::io::Result<StdoutWriter>> = OnceLock::new();
+    let writer = WRITER
+        .get_or_init(|| StdoutWriter::start(std::io::stdout()))
+        .as_ref()
+        .map_err(|err| anyhow::anyhow!("could not start the stdout writer: {err}"))?;
+    let mut line = match format {
         StdoutFormat::Ndjson => event.to_ndjson()?,
         StdoutFormat::Line => summarize(event),
     };
-
-    let write = tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut out = std::io::stdout().lock();
-        writeln!(out, "{line}").context("could not write to stdout")?;
-        out.flush().context("could not flush stdout")
-    });
-
-    match tokio::time::timeout(timeout, write).await {
-        Ok(joined) => joined.context("the stdout writer panicked")?,
-        // A blocking write into a full pipe cannot be interrupted, so the
-        // thread is left to finish while the pipeline moves on. That is the
-        // point: without this the one sink with no timeout of its own would
-        // hold every later event, and the shutdown drain with them.
-        Err(_) => anyhow::bail!(
-            "stdout did not accept the event within {}s; its reader has stopped reading",
-            timeout.as_secs()
-        ),
-    }
+    line.push('\n');
+    writer.write(line, timeout).await
 }
 
 /// One line a person can scan: when, where, who, which rule, and enough of
@@ -364,6 +392,140 @@ mod tests {
             matched: vec!["mention".into()],
             raw: None,
         }
+    }
+
+    #[test]
+    fn blocked_stdout_does_not_hold_runtime_shutdown() {
+        const CHILD: &str = "SLACK_TEST_BLOCKED_STDOUT";
+        if std::env::var_os(CHILD).is_some() {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let writer = StdoutWriter::start(std::io::stdout()).unwrap();
+                assert!(
+                    writer
+                        .write("x".repeat(4 * 1024 * 1024), Duration::from_millis(50))
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    writer
+                        .write("later\n".into(), Duration::from_millis(50))
+                        .await
+                        .is_err()
+                );
+            });
+            drop(runtime);
+            std::process::exit(0);
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "events::sink::tests::blocked_stdout_does_not_hold_runtime_shutdown",
+            ])
+            .env(CHILD, "1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(
+            status.is_some_and(|status| status.success()),
+            "blocked stdout prevented process exit: {status:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_stdout_is_retired_before_another_line_can_start() {
+        struct GatedWriter {
+            started: Option<tokio::sync::oneshot::Sender<()>>,
+            release: std::sync::mpsc::Receiver<()>,
+        }
+        impl Write for GatedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if let Some(started) = self.started.take() {
+                    let _ = started.send(());
+                    self.release.recv().unwrap();
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, wait) = std::sync::mpsc::channel();
+        let writer = Arc::new(
+            StdoutWriter::start(GatedWriter {
+                started: Some(started),
+                release: wait,
+            })
+            .unwrap(),
+        );
+        let task = tokio::spawn({
+            let writer = writer.clone();
+            async move {
+                writer
+                    .write("first\n".into(), Duration::from_secs(30))
+                    .await
+            }
+        });
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let error = writer
+            .write("second\n".into(), Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        release.send(()).unwrap();
+        assert!(error.to_string().contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn stdout_write_errors_disable_later_output() {
+        let writer = StdoutWriter::start(std::io::sink()).unwrap();
+        writer
+            .write("first\n".into(), Duration::from_secs(1))
+            .await
+            .unwrap();
+        writer
+            .write("second\n".into(), Duration::from_secs(1))
+            .await
+            .unwrap();
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let writer = StdoutWriter::start(Broken).unwrap();
+        assert!(
+            writer
+                .write("first\n".into(), Duration::from_secs(1))
+                .await
+                .is_err()
+        );
+        assert!(
+            writer
+                .write("second\n".into(), Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("disabled")
+        );
     }
 
     #[test]

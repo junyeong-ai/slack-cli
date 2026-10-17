@@ -77,6 +77,51 @@ fn config_path_answers_while_the_config_is_refused() {
 }
 
 #[test]
+fn json_config_path_answers_while_the_config_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = rejected(dir.path());
+    let output = run(
+        dir.path(),
+        &[
+            "--config",
+            path.to_str().unwrap(),
+            "--json",
+            "config",
+            "path",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value, serde_json::json!({ "path": path }));
+}
+
+#[test]
+fn cache_path_respects_output_mode_without_contacting_slack() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "").unwrap();
+    let run = |json: bool| {
+        let mut command = Command::new(BIN);
+        command
+            .args(["--config", path.to_str().unwrap(), "cache", "path"])
+            .env("HOME", dir.path())
+            .env("XDG_CONFIG_HOME", dir.path())
+            .env("SLACK_USER_TOKEN", "xoxp-test")
+            .env_remove("SLACK_BOT_TOKEN")
+            .env_remove("SLACK_PROFILE");
+        if json {
+            command.arg("--json");
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        output.stdout
+    };
+    let plain = String::from_utf8(run(false)).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&run(true)).unwrap();
+    assert_eq!(json, serde_json::json!({ "path": plain.trim() }));
+}
+
+#[test]
 fn config_edit_opens_while_the_config_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let path = rejected(dir.path());

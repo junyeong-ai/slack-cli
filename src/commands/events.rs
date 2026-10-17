@@ -216,17 +216,7 @@ async fn handle_events_action(
         }
 
         EventsAction::Path => {
-            // stdout is parseable data or nothing, which under `--json` means
-            // an object rather than a bare path: an agent piping this to `jq`
-            // gets a parse error otherwise.
-            if as_json {
-                println!(
-                    "{}",
-                    serde_json::json!({ "path": runtime.paths.root().display().to_string() })
-                );
-            } else {
-                println!("{}", runtime.paths.root().display());
-            }
+            format::print_path(runtime.paths.root(), as_json);
             Ok(())
         }
     }

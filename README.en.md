@@ -127,7 +127,7 @@ slack-cli config show                             # Show config
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-The installer requires Bash and Perl with core `Fcntl`. Prebuilt downloads also need curl, tar and a SHA-256 tool (`sha256sum` or `shasum`). Concurrent installer runs for the same user are serialized by a kernel lock.
+The installation and removal scripts require Bash and Perl with core `Fcntl`. Prebuilt downloads also need curl, tar and a SHA-256 tool (`sha256sum` or `shasum`). Installation and removal for the same user are serialized by the same kernel lock.
 
 `install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. The skill comes from the installed binary's release tag, or the matching checkout when building from source. If no matching skill is available, the existing installation is kept. Before replacement, the entire previous skill directory is preserved outside `~/.claude/skills`, including user-added files, and its path is printed. A failed backup leaves the existing skill unchanged. Existing paths are preserved even when `SKILL.md` is missing or the path is a file or broken symlink.
 
@@ -513,6 +513,10 @@ slack-cli watch --json | my-agent   # NDJSON stream
 slack-cli daemon run                # long-lived, under launchd or systemd
 slack-cli daemon status
 ```
+
+A stdout sink timeout or write failure disables stdout delivery for the process. An in-flight write may finish late; restart the process to resume stdout. Other sinks and the retained log continue processing. Read retained events with `events pull`.
+
+`config path`, `cache path` and `events path` return `{"path": "..."}` with `--json`.
 
 ### Retention modes
 

@@ -127,7 +127,7 @@ slack-cli config show                           # 설정 표시
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-설치 스크립트에는 Bash와 core `Fcntl`을 포함한 Perl이 필요합니다. 사전 빌드 다운로드에는 curl, tar, SHA-256 도구(`sha256sum` 또는 `shasum`)도 필요합니다. 같은 사용자의 동시 설치 실행은 커널 잠금으로 직렬화합니다.
+설치·제거 스크립트에는 Bash와 core `Fcntl`을 포함한 Perl이 필요합니다. 사전 빌드 다운로드에는 curl, tar, SHA-256 도구(`sha256sum` 또는 `shasum`)도 필요합니다. 같은 사용자의 설치·제거 실행은 같은 커널 잠금으로 직렬화합니다.
 
 `install.sh`는 GitHub Release의 사전 빌드 바이너리를 내려받아 SHA-256 체크섬을 검증하고, `cosign`이 설치돼 있으면 sigstore 서명까지 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. Linux에서는 glibc/musl을 자동 감지합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다. 스킬은 설치한 바이너리와 같은 버전의 태그에서 가져오며, 소스 빌드에서는 같은 버전의 로컬 스킬을 사용합니다. 일치하는 스킬이 없으면 기존 설치본을 유지합니다. 교체 전에는 사용자 추가 파일을 포함한 기존 스킬 폴더 전체를 `~/.claude/skills` 바깥에 보관하고 경로를 알려줍니다. 백업에 실패하면 기존 스킬을 유지합니다. `SKILL.md`가 없거나 기존 경로가 파일·깨진 심볼릭 링크여도 교체 전에 보존합니다.
 
@@ -500,6 +500,10 @@ slack-cli watch --json | my-agent   # NDJSON 스트림
 slack-cli daemon run                # launchd/systemd 아래에서 상주
 slack-cli daemon status
 ```
+
+stdout 싱크가 시간 초과되거나 쓰기에 실패하면 해당 프로세스의 stdout 전달을 중단합니다. 이미 시작된 쓰기는 늦게 끝날 수 있으며, 재개하려면 프로세스를 다시 시작하세요. 다른 싱크와 보존 로그는 계속 처리합니다. 보존된 이벤트는 `events pull`로 읽을 수 있습니다.
+
+`config path`, `cache path`, `events path`는 `--json`에서 `{"path": "..."}`를 출력합니다.
 
 ### 보존 모드
 

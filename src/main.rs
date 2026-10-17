@@ -68,7 +68,8 @@ async fn run(cli: Cli) -> Result<()> {
     // `config path` and `config edit` are how a rejected config gets repaired,
     // so neither may depend on it loading.
     if let Command::Config { action } = &cli.command
-        && let Some(outcome) = handle_unloadable_config(action, cli.config.clone(), &paths)
+        && let Some(outcome) =
+            handle_unloadable_config(action, cli.config.clone(), &paths, cli.json)
     {
         return outcome;
     }
@@ -482,7 +483,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
 
             CacheAction::Path => {
-                println!("{}", db_path.display());
+                format::print_path(&db_path, cli.json);
             }
         },
 
@@ -579,11 +580,12 @@ fn handle_unloadable_config(
     action: &ConfigAction,
     config_path: Option<std::path::PathBuf>,
     paths: &AppPaths,
+    as_json: bool,
 ) -> Option<Result<()>> {
     match action {
         ConfigAction::Path => {
             let path = config_path.unwrap_or_else(|| paths.config_file());
-            println!("{}", path.display());
+            format::print_path(&path, as_json);
             Some(Ok(()))
         }
         ConfigAction::Edit => Some(config::Config::edit(paths, config_path)),

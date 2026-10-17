@@ -237,3 +237,39 @@ install_skill
 [ "$(find "$TEST_ROOT/backups" -name original -type l -exec readlink {} \;)" = missing-target ]
 "#);
 }
+
+#[test]
+fn uninstall_waits_for_the_installer_lock_before_removing_files() {
+    run(r#"
+acquire_install_lock
+mkdir -p "$INSTALL_DIR" "$TEST_ROOT/shim" "$USER_SKILL_DIR"
+printf binary > "$INSTALL_DIR/slack-cli"
+printf skill > "$USER_SKILL_DIR/SKILL.md"
+export REAL_PERL
+REAL_PERL=$(command -v perl)
+cat > "$TEST_ROOT/shim/perl" <<'SH'
+#!/bin/bash
+touch "$TEST_ROOT/uninstall-lock-attempt"
+exec "$REAL_PERL" "$@"
+SH
+chmod +x "$TEST_ROOT/shim/perl"
+PATH="$TEST_ROOT/shim:$PATH" bash "$(dirname "$INSTALL_SCRIPT")/uninstall.sh" -y > "$TEST_ROOT/uninstall.log" 2>&1 &
+uninstaller=$!
+trap 'kill "$uninstaller" 2>/dev/null || true' EXIT
+for ((attempt=0; attempt<200; attempt++)); do
+    [ ! -e "$TEST_ROOT/uninstall-lock-attempt" ] || break
+    sleep 0.01
+done
+[ -e "$TEST_ROOT/uninstall-lock-attempt" ]
+kill -0 "$uninstaller"
+[ -f "$INSTALL_DIR/slack-cli" ]
+[ -f "$USER_SKILL_DIR/SKILL.md" ]
+exec 9>&-
+wait "$uninstaller"
+trap - EXIT
+[ ! -e "$INSTALL_DIR/slack-cli" ]
+[ ! -e "$USER_SKILL_DIR" ]
+[ -f "$HOME/.claude/.slack-cli-install.lock" ]
+acquire_install_lock
+"#);
+}
