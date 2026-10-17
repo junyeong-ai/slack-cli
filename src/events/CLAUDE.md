@@ -35,9 +35,10 @@ The order *is* the design:
 3. **Rules run before the store.** Only matches are ever written down. An
    unmatched event moves the channel cursor and is discarded, which is what
    makes "keep nothing" the same code path as "keep everything".
-4. **Commit last.** `state.is_seen` is a read; `mark_seen` and
-   `advance_cursor` happen only after the event has been stored and delivered.
-   A crash in between therefore leaves the event recoverable rather than lost.
+4. **Commit last.** `state.is_seen` is a read; `state.commit_event` records the
+   dedupe key and channel/thread positions in one SQLite transaction only after
+   the event has been stored and delivered. A failed write leaves all three
+   unchanged, so a retry cannot skip an event whose positions were not recorded.
    One task writes this state, so check-then-commit cannot race.
 
 ## Two databases, and why

@@ -4,8 +4,8 @@ use std::sync::atomic::Ordering;
 use anyhow::Result;
 
 use super::{
-    Event, EventKind, EventQueue, EventState, EventStore, HANDLE_ATTEMPTS, HANDLE_BACKOFF,
-    PipelineItem, RuleEngine, SinkSet, Tally,
+    Event, EventQueue, EventState, EventStore, HANDLE_ATTEMPTS, HANDLE_BACKOFF, PipelineItem,
+    RuleEngine, SinkSet, Tally,
 };
 
 /// The one consumer of the queue, and the only writer of state.
@@ -136,7 +136,7 @@ async fn commit_with_retry(event: &Event, state: &EventState, interesting: bool)
     for attempt in 1..=HANDLE_ATTEMPTS {
         let pending = event.clone();
         match state
-            .execute(move |state| commit(&pending, state, interesting))
+            .execute(move |state| state.commit_event(&pending, interesting))
             .await
         {
             Ok(()) => return Ok(()),
@@ -162,26 +162,6 @@ async fn commit_with_retry(event: &Event, state: &EventState, interesting: bool)
     unreachable!("the final commit attempt returns")
 }
 
-/// Records that an event has been handled and how far its conversation has
-/// been followed. The last thing to happen, and the only part of the pass that
-/// is safe to repeat once the sinks have seen the event.
-fn commit(event: &Event, state: &EventState, interesting: bool) -> Result<()> {
-    state.mark_seen(event)?;
-
-    if event.kind == EventKind::Message
-        && let (Some(channel), Some(ts)) = (event.channel.as_deref(), event.ts.as_deref())
-    {
-        state.advance_cursor(channel, ts, interesting)?;
-        // A subscribed thread keeps its own position, so recovery reads the
-        // part of it nobody has seen rather than the whole conversation.
-        if let Some(root) = event.thread_ts.as_deref() {
-            state.advance_thread_cursor(channel, root, ts)?;
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +170,60 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::path;
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn failed_commit_leaves_all_delivery_state_retryable_after_restart() {
+        for trigger in [
+            "BEFORE INSERT ON channel_cursor",
+            "BEFORE UPDATE ON watched_thread",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("state.db");
+            let state = EventState::open(&path).unwrap();
+            let root = "1700000000.000100";
+            state
+                .watch_thread("C01", root, "rule", "eyes", Some("U_ME"), Some(root))
+                .unwrap();
+            let event = super::super::envelope::from_event_callback(
+                &json!({"event_id":"Ev-commit", "event":{
+                    "type":"message", "channel":"C01", "user":"U_OTHER",
+                    "ts":"1700000000.000200", "thread_ts":root, "text":"reply"
+                }}),
+                false,
+            )
+            .unwrap();
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            connection.execute_batch(&format!("CREATE TRIGGER fail_commit {trigger} BEGIN SELECT RAISE(ABORT, 'injected write failure'); END;")).unwrap();
+            assert!(state.commit_event(&event, true).is_err());
+            drop(state);
+            let state = EventState::open(&path).unwrap();
+            assert!(!state.is_seen(&event).unwrap(), "{trigger}");
+            assert!(state.gaps(10).unwrap().is_empty(), "{trigger}");
+            assert_eq!(
+                state.watched_threads(10).unwrap()[0].cursor_ts,
+                root,
+                "{trigger}"
+            );
+            connection
+                .execute_batch("DROP TRIGGER fail_commit")
+                .unwrap();
+            state.commit_event(&event, true).unwrap();
+            assert!(state.is_seen(&event).unwrap());
+            assert_eq!(
+                state.gaps(10).unwrap()[0].last_ts,
+                event.ts.as_deref().unwrap()
+            );
+            assert_eq!(
+                state.watched_threads(10).unwrap()[0].cursor_ts,
+                event.ts.as_deref().unwrap()
+            );
+            state.commit_event(&event, false).unwrap();
+            assert_eq!(
+                state.gaps(10).unwrap()[0].last_ts,
+                event.ts.as_deref().unwrap()
+            );
+        }
+    }
 
     #[tokio::test]
     async fn replay_uses_the_retained_identity_without_replacing_current_event_content() {
@@ -257,7 +291,7 @@ mod tests {
         assert_eq!(delivered.text.as_deref(), Some("current body"));
         assert_eq!(delivered.matched, vec!["channel"]);
         assert_eq!(store.stats().unwrap().events, 1);
-        commit(&recovered, &state, handled.interesting).unwrap();
+        state.commit_event(&recovered, handled.interesting).unwrap();
         assert!(state.is_seen(&recovered).unwrap());
         assert!(
             handle(&mut recovered, &state, &store, &engine, &sinks)

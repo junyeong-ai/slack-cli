@@ -3,10 +3,10 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::db;
-use super::envelope::Event;
+use super::envelope::{Event, EventKind};
 
 const SCHEMA_VERSION: i64 = 5;
 
@@ -199,6 +199,15 @@ impl EventState {
     /// that made it interesting is still there.
     pub fn advance_cursor(&self, channel: &str, ts: &str, recoverable: bool) -> Result<()> {
         let conn = self.pool.get()?;
+        Self::advance_cursor_in(&conn, channel, ts, recoverable)
+    }
+
+    fn advance_cursor_in(
+        conn: &Connection,
+        channel: &str,
+        ts: &str,
+        recoverable: bool,
+    ) -> Result<()> {
         conn.execute(
             "INSERT INTO channel_cursor (channel, last_ts, recoverable, updated_at)
              VALUES (?1, ?2, ?3, unixepoch())
@@ -294,6 +303,15 @@ impl EventState {
     /// recovery skip what it has not seen.
     pub fn advance_thread_cursor(&self, channel: &str, thread_ts: &str, ts: &str) -> Result<()> {
         let conn = self.pool.get()?;
+        Self::advance_thread_cursor_in(&conn, channel, thread_ts, ts)
+    }
+
+    fn advance_thread_cursor_in(
+        conn: &Connection,
+        channel: &str,
+        thread_ts: &str,
+        ts: &str,
+    ) -> Result<()> {
         conn.execute(
             "UPDATE watched_thread
                 SET cursor_ts = ?3
@@ -399,6 +417,23 @@ impl EventState {
         Ok(found.is_some())
     }
 
+    /// Atomically records a completed delivery and its channel and thread positions.
+    pub fn commit_event(&self, event: &Event, interesting: bool) -> Result<()> {
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        Self::mark_seen_in(&tx, event)?;
+        if event.kind == EventKind::Message
+            && let (Some(channel), Some(ts)) = (event.channel.as_deref(), event.ts.as_deref())
+        {
+            Self::advance_cursor_in(&tx, channel, ts, interesting)?;
+            if let Some(root) = event.thread_ts.as_deref() {
+                Self::advance_thread_cursor_in(&tx, channel, root, ts)?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Records a delivery key, answering whether it was new.
     ///
     /// This is the filter that works in every retention mode, including the
@@ -406,6 +441,10 @@ impl EventState {
     /// cheap first pass, and the log's own unique key is the authority.
     pub fn mark_seen(&self, event: &Event) -> Result<bool> {
         let conn = self.pool.get()?;
+        Self::mark_seen_in(&conn, event)
+    }
+
+    fn mark_seen_in(conn: &Connection, event: &Event) -> Result<bool> {
         let inserted = conn.execute(
             "INSERT OR IGNORE INTO seen (key, seen_at) VALUES (?1, unixepoch())",
             params![event.dedupe_key()],
