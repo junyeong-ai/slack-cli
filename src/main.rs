@@ -116,8 +116,15 @@ async fn run(cli: Cli) -> Result<()> {
         cli.command,
         Command::Watch | Command::Daemon { .. } | Command::Events { .. }
     ) {
-        let profile = commands::events::profile(&authenticator, cli.profile.as_deref()).await;
-        return commands::events::handle(cli, config, &paths, &profile, slack).await;
+        let owner = slack_cli::events::owner::EventOwner::resolve(
+            &authenticator,
+            &slack,
+            &config.events_dir(&paths),
+            &config.connection.api_base_url,
+            cli.profile.as_deref(),
+        )
+        .await?;
+        return commands::events::handle(cli, config, &paths, owner, slack).await;
     }
 
     let namespace = authenticator.cache_namespace().await?;
@@ -651,28 +658,17 @@ async fn resolve_channel(
         })
         .collect();
 
-    if channels.len() > 1 && name_matches.is_empty() {
-        let suggestions = channels
-            .iter()
-            .map(|c| match c.name.as_deref() {
-                Some(name) => format!("#{name} ({})", c.id),
-                None => c.id.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        anyhow::bail!(
-            "Channel name is ambiguous: {}. Matches: {}",
-            input,
-            suggestions
-        );
+    match name_matches.as_slice() {
+        [channel] => Ok(channel.id.clone()),
+        [] => anyhow::bail!(
+            "Channel not found: {}. Use an exact channel name or an ID from `slack-cli channels`.",
+            input
+        ),
+        _ => anyhow::bail!(
+            "Channel name is ambiguous: {}. Use a channel ID from `slack-cli channels`.",
+            input
+        ),
     }
-
-    name_matches
-        .first()
-        .copied()
-        .or_else(|| channels.first())
-        .map(|c| c.id.clone())
-        .context(format!("Channel not found: {}", input))
 }
 
 fn is_slack_conversation_id(input: &str) -> bool {

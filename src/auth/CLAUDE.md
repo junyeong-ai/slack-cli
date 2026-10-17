@@ -92,3 +92,11 @@ Add a schema by bumping `state::SCHEMA_VERSION`, adding the version arm in `stor
 A browser-based variant has to clear the loopback constraints above before it is worth building.
 
 `Profile`, `Credential`, `TokenSet` are uniform across methods — only the acquisition path differs.
+
+## Authorization boundaries
+
+Static login validates each supplied user and bot token before persisting a
+profile and rejects mixed workspaces. Logout resolves and renews credentials
+only within the captured authorization, then conditionally removes that same
+authorization under the store lock. Concurrent logins survive logout;
+credential rotation within an authorization does not prevent its removal.

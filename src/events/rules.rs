@@ -242,7 +242,12 @@ impl RuleEngine {
         let in_watched_thread = rule.config.subscribe_emoji.is_some()
             && event.kind == EventKind::Message
             && match event.thread_root() {
-                Some(root) => state.is_watched(channel, root, &rule.config.name)?,
+                Some(root) => state.watches_event(
+                    channel,
+                    root,
+                    &rule.config.name,
+                    event.ts.as_deref().unwrap_or_default(),
+                )?,
                 None => false,
             };
 
@@ -330,6 +335,75 @@ mod tests {
 
     fn engine(rules: Vec<RuleConfig>) -> RuleEngine {
         RuleEngine::new(rules, vec!["stdout".into()], Some(ME.to_string()))
+    }
+
+    #[test]
+    fn each_subscription_has_an_immutable_delivery_boundary() {
+        let (state, _dir) = state();
+        let rules = ["old", "new"]
+            .into_iter()
+            .map(|name| RuleConfig {
+                subscribe_emoji: Some("eyes".into()),
+                ..rule(name)
+            })
+            .collect();
+        let engine = engine(rules);
+        state
+            .watch_thread(
+                "C0000001",
+                "100.000000",
+                "old",
+                "eyes",
+                None,
+                Some("110.000000"),
+            )
+            .unwrap();
+        state
+            .watch_thread(
+                "C0000001",
+                "100.000000",
+                "new",
+                "eyes",
+                None,
+                Some("200.000000"),
+            )
+            .unwrap();
+        state.begin_recovery().unwrap();
+        state
+            .advance_thread_cursor("C0000001", "100.000000", "300.000000")
+            .unwrap();
+        let mut event = message("reply");
+        event.thread_ts = Some("100.000000".into());
+        event.ts = Some("150.000000".into());
+        for source in [EventSource::Socket, EventSource::Backfill] {
+            event.source = source;
+            assert_eq!(engine.evaluate(&event, &state).unwrap().rules, vec!["old"]);
+        }
+        state
+            .watch_thread(
+                "C0000001",
+                "100.000000",
+                "old",
+                "eyes",
+                None,
+                Some("250.000000"),
+            )
+            .unwrap();
+        assert_eq!(engine.evaluate(&event, &state).unwrap().rules, vec!["old"]);
+        state
+            .unwatch_thread("C0000001", "100.000000", "old")
+            .unwrap();
+        state
+            .watch_thread(
+                "C0000001",
+                "100.000000",
+                "old",
+                "eyes",
+                None,
+                Some("250.000000"),
+            )
+            .unwrap();
+        assert!(!engine.evaluate(&event, &state).unwrap().matched());
     }
 
     #[test]

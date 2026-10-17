@@ -72,7 +72,7 @@ what was said.
 
 ## What is guaranteed, and to whom
 
-The log is the guarantee. An event that matched is appended before it is
+Persisted rows are replayable within the retention and size limits. An event that matched is appended before it is
 delivered and the commit happens after both, so a crash re-delivers rather than
 drops — and on the re-run `append` returns `None` for a row that is already
 there, which is answered by delivering *again*, because at-least-once makes a
@@ -158,18 +158,24 @@ on — but only one of them should be wired up at a time.
    — so a thread read from the top on each reconnect would eventually be
    delivered in full, again and again. The cursor starts where the subscription
    was made, which is also what keeps recovery from delivering a conversation
-   that happened before anyone asked to follow it.
+   that happened before anyone asked to follow it. Each rule keeps an immutable
+   `subscribed_from_ts` separately from its advancing cursor. Recovery reads
+   from the earliest rule position, while matching checks the individual
+   boundary. Schema 5 preserves a legacy row's recovery/cursor boundary; the
+   original subscription timestamp cannot be reconstructed. Both channel and
+   thread recovery apply the configured age limit and report truncated gaps.
 6. **Delivery is serial, across sinks and across events.** One task owns the
    pipeline. That is what lets the deduplication gate be a plain read followed
    by a commit with no lock, and what keeps a consumer seeing events in the
    order they arrived. A slow sink slows the pipeline by design; the bounded
    queue in front absorbs it so the acknowledgement path never does.
-7. **A profile name maps to exactly one directory.** Reducing it to
-   filesystem-safe characters is not injective, so a digest of the original is
-   appended. Two workspaces sharing a directory would merge their cursors,
-   their event logs and their lock. Environment tokens get a namespace of their
-   own: they bypass the store, so the active profile names an installation the
-   run is not talking to.
+7. **Event stores have a verified owner.** `owner.rs` binds the API endpoint,
+   profile name, team ID and user ID to a durable namespace. Re-login and token
+   rotation for the same owner retain the store. Environment credentials are
+   validated once per credential set and keep a private, nonsecret identity
+   binding for offline reads. Never infer ownership of a legacy directory from
+   its name or contents. Preserve it without importing it. The daemon checks
+   its live identity against the selected owner before processing events.
 8. **What arrives is checked against who this is.** The app-level token and the
    user token are registered separately and Slack never checks they belong
    together, so one mistaken paste would file another workspace's messages

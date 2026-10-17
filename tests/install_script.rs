@@ -187,3 +187,24 @@ if install_skill; then exit 1; fi
 [ "$(cat "$USER_SKILL_DIR/SKILL.md")" = original ]
 "#);
 }
+
+#[test]
+fn the_installer_kernel_lock_survives_the_helper_and_releases_on_exit() {
+    run(r#"
+acquire_install_lock
+export LOCK_PATH="$HOME/.claude/.slack-cli-install.lock"
+if perl -MFcntl=:flock -e 'open(my $f, ">>", $ENV{LOCK_PATH}) or die $!; flock($f, LOCK_EX | LOCK_NB) or exit 7'; then exit 1; fi
+exec 9>&-
+perl -MFcntl=:flock -e 'open(my $f, ">>", $ENV{LOCK_PATH}) or die $!; flock($f, LOCK_EX | LOCK_NB) or exit 7'
+"#);
+}
+
+#[test]
+fn a_lock_failure_aborts_even_when_main_is_called_in_a_conditional() {
+    run(r#"
+acquire_install_lock() { return 1; }
+detect_platform() { touch "$TEST_ROOT/unlocked-install"; }
+if (main); then exit 1; fi
+[ ! -e "$TEST_ROOT/unlocked-install" ]
+"#);
+}

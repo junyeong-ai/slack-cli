@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-17
+
+### Fixed
+
+- Require unique exact channel names for operations instead of selecting partial search matches.
+- Validate all static user/bot credentials and reject mixed workspaces. Preserve concurrent logins during logout and revoke only the selected authorization.
+- Isolate event stores by endpoint, profile, workspace and user. Re-login and credential rotation for the same owner preserve the store; verified environment bindings support offline reads.
+- Apply immutable per-rule subscription boundaries to live and recovered replies. Apply the configured recovery age limit to threads as well as channels.
+- Serialize installer runs with a kernel lock across binary and skill installation.
+- Correct skill discovery examples, retention guarantees and update documentation.
+
+### Changed
+
+- Event storage uses owner-bound directories. Stop older daemons and finish or export pending events with the old binary before upgrading. Older directories are preserved without importing unverified ownership; consumers and subscriptions start fresh.
+- The shell installer requires Perl with core Fcntl on macOS and Linux.
+
 ## [0.15.0] - 2026-10-17
 
 ### Fixed

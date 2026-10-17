@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.15.0"
+  version: "0.16.0"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -13,12 +13,11 @@ allowed-tools: Bash(slack-cli *), Bash(jq *)
 Default output is human-formatted. Add `--json` whenever you need to parse or chain commands.
 
 ```bash
-# User ID from a name
-slack-cli users "john" --json | jq -r '.[0].id'
+# Discover candidates; select the intended user ID explicitly
+slack-cli users "john" --json | jq '.[] | {id, name, real_name, email}'
 
-# Channel ID, then send
-ch=$(slack-cli channels "general" --json | jq -r '.[0].id')
-slack-cli send "$ch" -t "Hello"
+# Send to an exact channel name
+slack-cli send "#general" -t "Hello"
 
 # Send a parent message, then reply in the thread
 ts=$(slack-cli send "#general" -t "Parent" --json | jq -r '.ts')
@@ -141,7 +140,7 @@ Shape is validated **before** any HTTP call:
 # Block Kit from file with fallback text for notifications
 slack-cli send "#alerts" -t "Deploy v1.2.3 done" -b @blocks.json
 
-# Idempotent marker (event_type/event_payload) — survives `messages --json`
+# Correlation marker (event_type/event_payload) — survives `messages --json`
 slack-cli send "#alerts" \
   -t "Deploy v1.2.3 done" \
   -m '{"event_type":"deploy_done","event_payload":{"version":"1.2.3"}}'
@@ -154,12 +153,12 @@ generate-blocks.sh | slack-cli send "#alerts" -t "fallback" -b -
 
 | Form | Resolves to |
 |---|---|
-| `#name`, `name` | Channel matched by cache lookup |
+| `#name`, `name` | Unique exact name in the local cache (case-insensitive) |
 | `C…`, `G…` | Channel ID (public / private channel, MPIM) — passthrough |
 | `D…` | DM channel ID — passthrough |
 | `U…`, `W…` | User ID — auto-resolves to that user's DM channel via cache (`channel_types` must include `im` and cache must be refreshed) |
 
-Names resolve via the local cache. If a lookup says the name is unknown, run `slack-cli cache refresh` and retry.
+Names resolve via the local cache; partial matches never select a target. If the name is unknown, run `slack-cli cache refresh` and retry. When a name is ambiguous, inspect `slack-cli channels <name> --json` and select the intended ID.
 
 ## JSON response shapes
 
@@ -254,8 +253,9 @@ or `backfill` (read back after a disconnect). `text` is absent when the
 installation stores references only — fetch the body with
 `slack-cli thread <channel> <thread_ts>` when you need it.
 
-The daemon delivers **at-least-once**: the same `id` can arrive twice after a
-restart, so deduplicate on `id`. `--ack` is the one place that flips: it marks
+Persisted events can be delivered again after a restart, so deduplicate on
+`id`. Replay lasts only while rows remain within `retention_days` and
+`max_bytes`; the bounded input queue and disconnect recovery can lose events. `--ack` is the one place that flips: it marks
 the batch as it is printed, so a crash between printing and acting loses it.
 When replying, carry the id so a repeat is visible:
 
@@ -285,5 +285,12 @@ is nothing to pull — report that rather than retrying.
 > exactly that; show a draft in the current conversation when sending has not been requested.
 
 ## Multi-workspace
+
+Event stores belong to an API endpoint, profile, workspace and user. Keep the
+same profile and installation credentials for the daemon and its consumers.
+Environment credentials are verified on first use; their identity binding then
+allows local reads without Slack. A replacement token for the same owner keeps
+the store, while a different workspace or user starts a separate one.
+
 
 `slack-cli --profile <name> <command>` runs a single command against a specific stored workspace. The flag is global, position-independent.

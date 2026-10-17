@@ -1,6 +1,7 @@
 pub mod backfill;
 mod db;
 pub mod envelope;
+pub mod owner;
 mod pipeline;
 pub mod queue;
 pub mod rules;
@@ -127,11 +128,7 @@ fn profile_dir(profile: &str) -> String {
     };
 
     let digest = Sha256::digest(profile.as_bytes());
-    let suffix: String = digest
-        .iter()
-        .take(4)
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let suffix: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
 
     format!("{stem}-{suffix}")
 }
@@ -146,9 +143,15 @@ pub struct EventRuntime {
     pub state: EventState,
     pub store: Arc<dyn EventStore>,
     pub paths: EventPaths,
+    owner: Option<owner::EventOwner>,
 }
 
 impl EventRuntime {
+    pub fn with_owner(mut self, owner: owner::EventOwner) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
     pub async fn open_async(
         dir: &Path,
         profile: &str,
@@ -200,6 +203,7 @@ impl EventRuntime {
             state,
             store,
             paths,
+            owner: None,
         })
     }
 }
@@ -323,7 +327,12 @@ pub async fn run(
         identity = resolve_identity(&slack) => identity?,
         result = &mut shutdown => return result,
     };
-
+    if let Some(owner) = &runtime.owner {
+        anyhow::ensure!(
+            owner.accepts(&identity),
+            "Slack identity does not match the event store owner; log in again"
+        );
+    }
     let configured = config.events.effective_sinks();
     let sinks = Arc::new(if options.stdout_only {
         SinkSet::build(&[crate::config::default_sink("stdout")], options.stdout)?

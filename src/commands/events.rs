@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use slack_cli::{
-    auth::Authenticator,
     cli::{Cli, Command, DaemonAction, EventsAction},
     config, events, format,
     paths::AppPaths,
@@ -18,36 +17,17 @@ const DAEMON_STALE_AFTER_SECONDS: i64 = 90;
 /// events arrive; this only decides how quickly a follower notices.
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Which profile's events these are.
-///
-/// `--profile` has to be honoured here and not only by the authenticator:
-/// events are stored per profile, so resolving the active one instead would
-/// read another workspace's log while holding this workspace's tokens.
-pub(crate) async fn profile(authenticator: &Authenticator, explicit: Option<&str>) -> String {
-    // Environment tokens bypass the store entirely, so the active profile
-    // names an installation this run is not talking to. Filing the events
-    // under it would write one workspace's messages into another's databases.
-    if authenticator.uses_env_tokens() {
-        return "env".to_string();
-    }
-
-    authenticator
-        .snapshot()
-        .await
-        .resolve(explicit)
-        .unwrap_or("default")
-        .to_string()
-}
-
 pub(crate) async fn handle(
     cli: Cli,
     config: config::Config,
     paths: &AppPaths,
-    profile: &str,
+    owner: events::owner::EventOwner,
     slack: Arc<slack::SlackClient>,
 ) -> Result<()> {
     let dir = config.events_dir(paths);
     let as_json = cli.json;
+    let namespace = owner.namespace()?;
+    let profile = owner.profile.as_str();
 
     match cli.command {
         // `watch` is the streaming mode made explicit: whatever the config
@@ -55,7 +35,7 @@ pub(crate) async fn handle(
         Command::Watch => {
             let runtime = events::EventRuntime::open_async(
                 &dir,
-                profile,
+                &namespace,
                 &config,
                 config::EventRetention::Stream,
             )
@@ -63,7 +43,7 @@ pub(crate) async fn handle(
             events::run(
                 slack,
                 config,
-                runtime,
+                runtime.with_owner(owner.clone()),
                 events::DaemonOptions {
                     stdout: if as_json {
                         events::StdoutFormat::Ndjson
@@ -84,12 +64,12 @@ pub(crate) async fn handle(
         Command::Daemon { action } => match action {
             DaemonAction::Run => {
                 let runtime =
-                    events::EventRuntime::open_async(&dir, profile, &config, config.events.mode)
+                    events::EventRuntime::open_async(&dir, &namespace, &config, config.events.mode)
                         .await?;
                 events::run(
                     slack,
                     config,
-                    runtime,
+                    runtime.with_owner(owner.clone()),
                     events::DaemonOptions {
                         stdout: if as_json {
                             events::StdoutFormat::Ndjson
@@ -105,7 +85,7 @@ pub(crate) async fn handle(
 
             DaemonAction::Status => {
                 let runtime =
-                    events::EventRuntime::open_async(&dir, profile, &config, config.events.mode)
+                    events::EventRuntime::open_async(&dir, &namespace, &config, config.events.mode)
                         .await?;
                 let status = runtime
                     .execute(|runtime| runtime.state.daemon_status())
@@ -127,7 +107,7 @@ pub(crate) async fn handle(
 
             DaemonAction::Stop => {
                 let runtime =
-                    events::EventRuntime::open_async(&dir, profile, &config, config.events.mode)
+                    events::EventRuntime::open_async(&dir, &namespace, &config, config.events.mode)
                         .await?;
                 runtime
                     .execute(move |runtime| stop_daemon(runtime, as_json))
@@ -137,7 +117,7 @@ pub(crate) async fn handle(
 
         Command::Events { action } => {
             let runtime =
-                events::EventRuntime::open_async(&dir, profile, &config, config.events.mode)
+                events::EventRuntime::open_async(&dir, &namespace, &config, config.events.mode)
                     .await?;
             handle_events_action(action, &config, &runtime, profile, as_json).await
         }

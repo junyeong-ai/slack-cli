@@ -154,24 +154,29 @@ impl Authenticator {
         name: &str,
         kind: TokenKind,
     ) -> Result<Secret, AuthError> {
-        let (token, readiness) = {
+        let (token, readiness, authorization) = {
             let state = self.state.read().await;
-            let credential = state
+            let profile = state
                 .profiles
                 .get(name)
-                .ok_or_else(|| AuthError::UnknownProfile(name.to_string()))?
+                .ok_or_else(|| AuthError::UnknownProfile(name.to_string()))?;
+            let credential = profile
                 .tokens
                 .get(kind)
                 .ok_or_else(|| AuthError::NoSuchToken {
                     profile: name.to_string(),
                     kind,
                 })?;
-            (credential.token.clone(), credential.readiness(Utc::now()))
+            (
+                credential.token.clone(),
+                credential.readiness(Utc::now()),
+                profile.clone(),
+            )
         };
 
         match readiness {
             Readiness::Ready => Ok(token),
-            Readiness::NeedsRenewal => self.renew(name, kind).await,
+            Readiness::NeedsRenewal => self.renew(name, kind, &authorization).await,
             Readiness::Expired => Err(AuthError::NotRenewable {
                 profile: name.to_string(),
                 kind,
@@ -185,21 +190,18 @@ impl Authenticator {
     /// under the store lock and re-reads from disk first: a sibling process
     /// that renewed a moment ago has already written the successor, and this
     /// call adopts it instead of spending a token that is no longer current.
-    async fn renew(&self, name: &str, kind: TokenKind) -> Result<Secret, AuthError> {
-        let authorized_at = self
-            .state
-            .read()
-            .await
-            .profiles
-            .get(name)
-            .ok_or_else(|| AuthError::UnknownProfile(name.to_owned()))?
-            .authorized_at;
+    async fn renew(
+        &self,
+        name: &str,
+        kind: TokenKind,
+        expected: &Profile,
+    ) -> Result<Secret, AuthError> {
         let guard = self.store.lock().await?;
         let mut state = self.store.read()?.state;
         if state
             .profiles
             .get(name)
-            .is_some_and(|profile| profile.authorized_at != authorized_at)
+            .is_none_or(|profile| !profile.same_authorization(expected))
         {
             return Err(AuthError::AuthorizationChanged(name.to_owned()));
         }
@@ -413,6 +415,57 @@ impl Authenticator {
         self.transact(|state| {
             state.upsert(name, profile, make_active);
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn token_for_authorization(
+        &self,
+        name: &str,
+        kind: TokenKind,
+        expected: &Profile,
+    ) -> Result<Secret, AuthError> {
+        let profile = {
+            let _guard = self.store.lock().await?;
+            let state = self.store.read()?.state;
+            state
+                .profiles
+                .get(name)
+                .filter(|profile| profile.same_authorization(expected))
+                .cloned()
+                .ok_or_else(|| AuthError::AuthorizationChanged(name.to_owned()))?
+        };
+        let credential = profile
+            .tokens
+            .get(kind)
+            .ok_or_else(|| AuthError::NoSuchToken {
+                profile: name.to_owned(),
+                kind,
+            })?;
+        match credential.readiness(Utc::now()) {
+            Readiness::Ready => Ok(credential.token.clone()),
+            Readiness::NeedsRenewal => self.renew(name, kind, expected).await,
+            Readiness::Expired => Err(AuthError::NotRenewable {
+                profile: name.to_owned(),
+                kind,
+            }),
+        }
+    }
+
+    pub async fn remove_authorizations(&self, expected: &AuthState) -> Result<usize, AuthError> {
+        self.transact(|state| {
+            let mut removed = 0;
+            for (name, authorization) in &expected.profiles {
+                if state
+                    .profiles
+                    .get(name)
+                    .is_some_and(|profile| profile.same_authorization(authorization))
+                {
+                    state.remove(name);
+                    removed += 1;
+                }
+            }
+            Ok(removed)
         })
         .await
     }

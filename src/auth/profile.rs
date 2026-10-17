@@ -30,6 +30,15 @@ pub struct WorkspaceInfo {
 }
 
 impl Profile {
+    pub fn same_authorization(&self, other: &Self) -> bool {
+        self.authorized_at == other.authorized_at
+            && self.method == other.method
+            && self.workspace.team_id == other.workspace.team_id
+            && self.workspace.user_id == other.workspace.user_id
+            && self.client.as_ref().map(|client| &client.id)
+                == other.client.as_ref().map(|client| &client.id)
+    }
+
     pub fn label(&self) -> String {
         format!("{} ({})", self.workspace.team_name, self.workspace.team_id)
     }

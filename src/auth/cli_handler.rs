@@ -418,11 +418,11 @@ async fn logout(
     let outcome = if all {
         if let Some(client) = slack {
             for (name, profile) in &snapshot.profiles {
-                revoke_quietly(client, authenticator, name, &profile.tokens).await;
+                revoke_quietly(client, authenticator, name, profile).await;
             }
         }
-        authenticator.clear_all().await?;
-        LogoutOutcome::All
+        let removed = authenticator.remove_authorizations(&snapshot).await?;
+        LogoutOutcome::All { removed }
     } else {
         let target = snapshot
             .resolve(profile.as_deref())
@@ -432,10 +432,12 @@ async fn logout(
         if let Some(client) = slack
             && let Some(p) = snapshot.profiles.get(&target)
         {
-            revoke_quietly(client, authenticator, &target, &p.tokens).await;
+            revoke_quietly(client, authenticator, &target, p).await;
         }
 
-        let found = authenticator.remove_profile(&target).await?.is_some();
+        let mut selected = snapshot.clone();
+        selected.profiles.retain(|name, _| name == &target);
+        let found = authenticator.remove_authorizations(&selected).await? > 0;
         let was_active = snapshot.active_profile.as_deref() == Some(target.as_str());
         let new_active = authenticator.snapshot().await.active_profile;
 
@@ -452,7 +454,9 @@ async fn logout(
 }
 
 enum LogoutOutcome {
-    All,
+    All {
+        removed: usize,
+    },
     Single {
         name: String,
         found: bool,
@@ -464,7 +468,7 @@ enum LogoutOutcome {
 fn emit_logout_result(json: bool, outcome: LogoutOutcome) {
     if json {
         let payload = match &outcome {
-            LogoutOutcome::All => json!({"scope": "all"}),
+            LogoutOutcome::All { removed } => json!({"scope": "all", "removed": removed}),
             LogoutOutcome::Single {
                 name,
                 found,
@@ -483,7 +487,9 @@ fn emit_logout_result(json: bool, outcome: LogoutOutcome) {
     }
 
     match outcome {
-        LogoutOutcome::All => println!("✓ Removed all profiles"),
+        LogoutOutcome::All { removed } => {
+            println!("✓ Removed {removed} profiles selected at logout")
+        }
         LogoutOutcome::Single {
             name,
             found,
@@ -493,7 +499,9 @@ fn emit_logout_result(json: bool, outcome: LogoutOutcome) {
             if found {
                 println!("✓ Removed profile {name}");
             } else {
-                println!("Profile {name} was not found");
+                println!(
+                    "Profile {name} was absent or replaced by a newer login; no authorization removed"
+                );
             }
             if was_active && new_active.is_none() {
                 println!("  No active profile. Run: slack-cli auth use <NAME>");
@@ -511,16 +519,19 @@ async fn revoke_quietly(
     slack: &SlackClient,
     authenticator: &Authenticator,
     profile: &str,
-    tokens: &TokenSet,
+    expected: &Profile,
 ) {
-    for (kind, _) in tokens.iter() {
+    for (kind, _) in expected.tokens.iter() {
         // An app-level token is not an installation grant: `auth.revoke`
         // refuses it, and there is nothing at Slack to leave behind by
         // dropping it locally. Only the app's own configuration can retire it.
         if kind == TokenKind::App {
             continue;
         }
-        match authenticator.token_for_profile(profile, kind).await {
+        match authenticator
+            .token_for_authorization(profile, kind, expected)
+            .await
+        {
             Ok(token) => {
                 if let Err(err) = slack.auth.revoke(token.expose_secret()).await {
                     tracing::warn!("auth.revoke failed for the {kind} token: {err}");

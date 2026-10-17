@@ -439,3 +439,34 @@ async fn cache_namespaces_follow_authorization_not_token_rotation() {
         other_endpoint.cache_namespace().await.unwrap()
     );
 }
+
+#[tokio::test]
+async fn logout_preserves_replacement_authorizations_and_uses_current_rotated_tokens() {
+    let server = MockServer::start().await;
+    let store = Store::with(profile(expiring_in(240), json!({"id":"123.456"})));
+    let auth = store.authenticator(server.uri()).await;
+    let original = auth.snapshot().await;
+    let expected = original.profiles.get("acme").unwrap();
+    let mut rotated = expected.clone();
+    rotated.tokens.user.as_mut().unwrap().token = secrecy::SecretString::from("xoxp-rotated");
+    auth.upsert_profile("acme", rotated.clone(), true)
+        .await
+        .unwrap();
+    let token = auth
+        .token_for_authorization("acme", TokenKind::User, expected)
+        .await
+        .unwrap();
+    assert_eq!(token.expose_secret(), "xoxp-rotated");
+    rotated.authorized_at += Duration::seconds(1);
+    auth.upsert_profile("acme", rotated, true).await.unwrap();
+    assert!(matches!(
+        auth.token_for_authorization("acme", TokenKind::User, expected)
+            .await,
+        Err(slack_cli::auth::AuthError::AuthorizationChanged(_))
+    ));
+    assert_eq!(auth.remove_authorizations(&original).await.unwrap(), 0);
+    assert!(store.read()["profiles"]["acme"].is_object());
+    let replacement = auth.snapshot().await;
+    assert_eq!(auth.remove_authorizations(&replacement).await.unwrap(), 1);
+    assert!(store.read()["profiles"]["acme"].is_null());
+}

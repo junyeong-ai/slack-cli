@@ -45,7 +45,14 @@ RUST_LOG=debug cargo run -- users "john"
 - **Scopes are derived, never listed by hand.** Each entry in `slack/api_config.rs::API_METHODS` declares the scopes its method needs; `slack::scopes::required(kind)` unions them, and `tests/documented_scopes.rs` fails the build when the README publishes anything else. An installation may subtract from that set with `config.toml [auth].exclude_scopes` — validated against it, so the registry stays the source of truth — and `scopes::requested(kind, excluded)` is what `auth login` asks for and `auth scopes` prints.
 - **The environment is loaded before anything reads it.** `main` calls `dotenvy::dotenv()` as its first statement, ahead of `Cli::parse()`. clap binds `--profile` and `--client-id` to env vars at parse time and the log filter reads `RUST_LOG`, so loading later would silently ignore a `.env` for all three.
 - **The app-level token is a third axis, not a third flavour of the same thing.** `TokenKind::App` is the `xapp-` token that opens a Socket Mode connection. No OAuth grant issues it, it never rotates, and it authorizes nothing in a workspace — so `TokenPolicy::accepts` keeps it disjoint from `User`/`Bot` in both directions. That disjointness is what stops `connections:write` reaching the authorization request, which Slack would refuse as a whole.
+- **Targets require exact identity.** Name discovery may return partial matches; commands that act on a channel require one exact cached name or a channel ID. Never select a discovery result by position.
 - **The event daemon reuses the library and owns nothing else.** `events/` depends on `slack/`, `auth/` and `config/`; nothing depends on `events/`. Its state lives outside `cache_dir` because the cache rebuilds itself on a schema change and Socket Mode never replays what it dropped.
 - **Filesystem locations come from `paths.rs`.** `AppPaths` resolves the config root once per invocation and hands out `config.toml`, `auth.json` and the cache directory. No module reads `HOME` or `XDG_CONFIG_HOME` itself.
 
 - **Database work leaves the async runtime.** Use `SqliteCache::execute`, `EventState::execute` or `EventRuntime::execute` for synchronous database operations from async code. Keep pool connections and transactions inside the blocking operation; never carry them across an await. Event preparation and commit remain separate from asynchronous sink delivery.
+
+The remaining CI checks are the MSRV check in `.github/workflows/test.yml`,
+`cargo deny --all-features --locked check`, `actionlint`,
+`bash -n scripts/install.sh scripts/uninstall.sh` and
+`shellcheck scripts/install.sh scripts/uninstall.sh`. The MSRV is declared in
+`Cargo.toml`; keep this check aligned with `.github/workflows/test.yml`.

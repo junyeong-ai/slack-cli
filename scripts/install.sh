@@ -561,7 +561,18 @@ prompt_skill_installation() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 }
 
+acquire_install_lock() {
+    command -v perl >/dev/null || {
+        echo "❌ Installation requires Perl with core Fcntl for filesystem locking" >&2
+        return 1
+    }
+    mkdir -p "$HOME/.claude" || return 1
+    exec 9>>"$HOME/.claude/.slack-cli-install.lock" || return 1
+    perl -MFcntl=:flock -e 'flock(STDIN, LOCK_EX) or die "Could not acquire installer lock: $!\n"' <&9 || return 1
+}
+
 main() {
+    acquire_install_lock || return 1
     echo "🚀 Installing Slack CLI..." >&2
     echo "" >&2
 
@@ -675,6 +686,7 @@ main() {
     echo "1. Authenticate:        $command_name auth login" >&2
     echo "2. Refresh cache:       $command_name cache refresh" >&2
     echo "3. Search users:        $command_name users <query>" >&2
+    exec 9>&-
     echo "" >&2
 }
 

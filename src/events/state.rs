@@ -8,7 +8,7 @@ use rusqlite::{OptionalExtension, params};
 use super::db;
 use super::envelope::Event;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const STEPS: &[(i64, &str)] = &[
     (
@@ -69,6 +69,11 @@ const STEPS: &[(i64, &str)] = &[
          ALTER TABLE channel_cursor ADD COLUMN recovery_generation TEXT;
          ALTER TABLE watched_thread ADD COLUMN recovery_ts TEXT;
          ALTER TABLE watched_thread ADD COLUMN recovery_generation TEXT;",
+    ),
+    (
+        5,
+        "ALTER TABLE watched_thread ADD COLUMN subscribed_from_ts TEXT;
+         UPDATE watched_thread SET subscribed_from_ts = COALESCE(recovery_ts, cursor_ts, thread_ts);",
     ),
 ];
 
@@ -269,8 +274,8 @@ impl EventState {
         let conn = self.pool.get()?;
         conn.execute(
             "INSERT INTO watched_thread
-                (channel, thread_ts, rule, emoji, watcher, cursor_ts, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, unixepoch())
+                (channel, thread_ts, rule, emoji, watcher, cursor_ts, subscribed_from_ts, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, unixepoch())
              ON CONFLICT(channel, thread_ts, rule) DO UPDATE SET emoji = excluded.emoji",
             params![
                 channel,
@@ -319,6 +324,23 @@ impl EventState {
             )
             .optional()?;
         Ok(found.is_some())
+    }
+
+    pub fn watches_event(
+        &self,
+        channel: &str,
+        thread_ts: &str,
+        rule: &str,
+        ts: &str,
+    ) -> Result<bool> {
+        let conn = self.pool.get()?;
+        Ok(conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM watched_thread
+             WHERE channel = ?1 AND thread_ts = ?2 AND rule = ?3
+               AND ?4 > COALESCE(subscribed_from_ts, thread_ts))",
+            params![channel, thread_ts, rule, ts],
+            |row| row.get(0),
+        )?)
     }
 
     /// Every thread a rule is currently subscribed to, newest first.
@@ -545,6 +567,40 @@ mod tests {
             super::super::DaemonLock::try_acquire(&path)
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn legacy_subscriptions_keep_the_pending_recovery_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let mut conn = rusqlite::Connection::open(&path).unwrap();
+        db::migrate(&mut conn, "event state", 4, &STEPS[..4]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO watched_thread
+            (channel, thread_ts, rule, emoji, created_at, cursor_ts, recovery_ts)
+            VALUES ('C1', '100.000000', 'rule', 'eyes', 0, '300.000000', '150.000000');",
+        )
+        .unwrap();
+        drop(conn);
+        let state = EventState::open(&path).unwrap();
+        assert!(
+            !state
+                .watches_event("C1", "100.000000", "rule", "140.000000")
+                .unwrap()
+        );
+        assert!(
+            state
+                .watches_event("C1", "100.000000", "rule", "160.000000")
+                .unwrap()
+        );
+        state
+            .advance_thread_cursor("C1", "100.000000", "400.000000")
+            .unwrap();
+        assert!(
+            state
+                .watches_event("C1", "100.000000", "rule", "160.000000")
+                .unwrap()
         );
     }
 

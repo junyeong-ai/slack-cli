@@ -95,20 +95,33 @@ pub(super) async fn recover_batch(
     // Bounded by the same budget as the channels, on the same rationed
     // endpoints.
     for thread in threads {
+        let oldest = thread.cursor_ts.as_str().max(horizon.as_str());
+        if oldest != thread.cursor_ts {
+            tracing::warn!(channel = %thread.channel, thread = %thread.thread_ts,
+                read_from = %oldest, "thread gap exceeds events.backfill_max_age_hours; older replies will not be read");
+        }
         match slack
             .messages
             .replies_with_completion(
                 &thread.channel,
                 &thread.thread_ts,
                 THREAD_LIMIT,
-                Some(&thread.cursor_ts),
+                Some(oldest),
             )
             .await
         {
             Ok((messages, complete)) => {
+                if complete && oldest != thread.cursor_ts {
+                    let channel = thread.channel.clone();
+                    let root = thread.thread_ts.clone();
+                    let cutoff = oldest.to_owned();
+                    state
+                        .execute(move |state| state.advance_thread_cursor(&channel, &root, &cutoff))
+                        .await?;
+                }
                 let through = messages
                     .iter()
-                    .filter(|message| message.ts > thread.cursor_ts)
+                    .filter(|message| message.ts.as_str() > oldest)
                     .map(|message| message.ts.clone())
                     .max();
                 if complete || through.is_some() {
@@ -124,7 +137,7 @@ pub(super) async fn recover_batch(
                     // here too. Without it every reconnect would re-deliver at
                     // least the message the thread hangs off, and once the
                     // deduplication layers lapsed, the whole thread with it.
-                    if message.ts.as_str() <= thread.cursor_ts.as_str() {
+                    if message.ts.as_str() <= oldest {
                         continue;
                     }
                     batch
@@ -326,20 +339,20 @@ mod tests {
         .unwrap();
         let slack = SlackClient::new(config.clone(), Arc::new(auth)).unwrap();
         let state = EventState::open(&dir.path().join("state.db")).unwrap();
+        let base = Utc::now().timestamp() - 1000;
+        let ts = |offset: i64| format!("{}.000000", base + offset);
         state
-            .watch_thread("C1", "90.000000", "rule", "eyes", None, Some("100.000000"))
+            .watch_thread("C1", &ts(90), "rule", "eyes", None, Some(&ts(100)))
             .unwrap();
         let generation = state.begin_recovery().unwrap();
         state
-            .advance_thread_cursor("C1", "90.000000", "300.000000")
+            .advance_thread_cursor("C1", &ts(90), &ts(300))
             .unwrap();
-        for (start, end, cursor, oldest) in [
-            (101, 150, "next", "100.000000"),
-            (151, 160, "", "150.000000"),
-        ] {
+        for (start, end, cursor, oldest) in [(101, 150, "next", &ts(100)), (151, 160, "", &ts(150))]
+        {
             server.reset().await;
             let messages: Vec<_> = (start..=end)
-                .map(|n| json!({"ts":format!("{n}.000000"),"text":"reply","thread_ts":"90.000000"}))
+                .map(|n| json!({"ts":ts(n),"text":"reply","thread_ts":ts(90)}))
                 .collect();
             Mock::given(method("GET")).and(path("/conversations.replies")).and(query_param("oldest", oldest))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"messages":messages,"response_metadata":{"next_cursor":cursor}})))
@@ -353,14 +366,54 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 state.watched_threads(1).unwrap()[0].cursor_ts,
-                if cursor.is_empty() {
-                    "300.000000"
-                } else {
-                    "150.000000"
-                }
+                if cursor.is_empty() { ts(300) } else { ts(150) }
             );
             server.verify().await;
         }
+        server.reset().await;
+        state.unwatch_thread("C1", &ts(90), "rule").unwrap();
+        let old = format!("{}.000000", Utc::now().timestamp() - 172800);
+        let recent = format!("{}.000000", Utc::now().timestamp() - 10);
+        state
+            .watch_thread("C1", &old, "rule", "eyes", None, Some(&old))
+            .unwrap();
+        let generation = state.begin_recovery().unwrap();
+        Mock::given(path("/conversations.replies"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok":true,"messages":[
+                    {"ts":old,"text":"outside horizon","thread_ts":old},
+                    {"ts":recent,"text":"inside horizon","thread_ts":old}
+                ],"response_metadata":{"next_cursor":""}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let batch = recover_batch(&slack, &state, &config.events, None)
+            .await
+            .unwrap();
+        assert_eq!(batch.events.len(), 1);
+        assert_eq!(batch.events[0].ts.as_deref(), Some(recent.as_str()));
+        assert_eq!(state.watched_threads(1).unwrap()[0].cursor_ts, old);
+        state
+            .finish_recovery(&generation, &batch.channels, &batch.threads)
+            .unwrap();
+        let cutoff = state.watched_threads(1).unwrap()[0]
+            .cursor_ts
+            .parse::<f64>()
+            .unwrap();
+        let expected =
+            (Utc::now() - Duration::hours(config.events.backfill_max_age_hours)).timestamp() as f64;
+        assert!((cutoff - expected).abs() < 5.0);
+        let request = server.received_requests().await.unwrap().pop().unwrap();
+        let requested = request
+            .url
+            .query_pairs()
+            .find(|(name, _)| name == "oldest")
+            .unwrap()
+            .1
+            .parse::<f64>()
+            .unwrap();
+        assert_eq!(requested, cutoff);
     }
 
     fn history_message(ts: &str) -> SlackMessage {

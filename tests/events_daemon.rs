@@ -1072,7 +1072,8 @@ async fn recovery_reaches_replies_in_a_subscribed_thread() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let root = "1700000000.000100";
+    let root = &format!("{}.000100", chrono::Utc::now().timestamp() - 100);
+    let reply = format!("{}.000100", chrono::Utc::now().timestamp() - 50);
     Mock::given(method("GET"))
         .and(path("/conversations.replies"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -1080,7 +1081,7 @@ async fn recovery_reaches_replies_in_a_subscribed_thread() {
             "messages": [
                 { "ts": root, "user": "U_OTHER", "text": "the question" },
                 {
-                    "ts": "1700000050.000100",
+                    "ts": reply,
                     "thread_ts": root,
                     "user": "U_OTHER",
                     "text": "the reply you missed",
@@ -1379,8 +1380,9 @@ async fn recovery_reads_the_tail_of_a_long_thread_not_its_head() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let root = "1700000000.000100";
-    let reply_ts = |index: usize| format!("17000001{index:02}.000100");
+    let base = chrono::Utc::now().timestamp() - 1000;
+    let root = &format!("{base}.000100");
+    let reply_ts = |index: usize| format!("{}.000100", base + 100 + index as i64);
     let followed_to = reply_ts(55);
 
     let replies = (0..60)
@@ -1612,13 +1614,43 @@ async fn a_clamped_recovery_leaves_the_cursor_at_the_horizon() {
 /// killed a moment ago leaves a fresh heartbeat behind, so deciding from the
 /// heartbeat reports a dead daemon as running for as long as that record stays
 /// fresh. That window is exactly when a user looks, right after stopping one.
-#[test]
-fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
+#[tokio::test]
+async fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
     const BIN: &str = env!("CARGO_BIN_EXE_slack-cli");
 
     let dir = tempfile::tempdir().unwrap();
     let store = dir.path().join("events");
-    let paths = EventPaths::new(&store, "env");
+    let server = MockServer::start().await;
+    let _auth = mount_common(&server, 1).await;
+    let auth = Authenticator::load(AuthLoadOptions {
+        store_path: dir.path().join("auth.json"),
+        api_base_url: server.uri(),
+        explicit_profile: None,
+        overrides: EnvOverrides {
+            user_token: Some(secret("xoxp-test")),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap();
+    let mut settings = Config::default();
+    settings.connection.api_base_url = server.uri();
+    let slack = SlackClient::new(settings, Arc::new(auth)).unwrap();
+    let auth = Authenticator::load(AuthLoadOptions {
+        store_path: dir.path().join("auth.json"),
+        api_base_url: server.uri(),
+        explicit_profile: None,
+        overrides: EnvOverrides {
+            user_token: Some(secret("xoxp-test")),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap();
+    let owner = events::owner::EventOwner::resolve(&auth, &slack, &store, &server.uri(), None)
+        .await
+        .unwrap();
+    let paths = EventPaths::new(&store, &owner.namespace().unwrap());
     std::fs::create_dir_all(paths.root()).unwrap();
 
     // A daemon that ran, was connected, and is gone: the record it left behind
@@ -1632,19 +1664,21 @@ fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
     std::fs::write(
         &config,
         format!(
-            "[events]\ndata_path = {}\n",
+            "[connection]\napi_base_url = {:?}\n[events]\ndata_path = {}\n",
+            server.uri(),
             serde_json::to_string(&store.display().to_string()).unwrap()
         ),
     )
     .unwrap();
 
-    // An environment token puts the run on the "env" profile without an auth
-    // store, which is the profile the record above was written under.
+    // The verified binding lets local status commands read the same owner offline.
     let status = |json: bool| {
         let mut command = std::process::Command::new(BIN);
         command
             .args(["--config", config.to_str().unwrap()])
             .env("SLACK_USER_TOKEN", "xoxp-test")
+            .env_remove("SLACK_BOT_TOKEN")
+            .env_remove("SLACK_APP_TOKEN")
             .env_remove("SLACK_PROFILE");
         if json {
             command.arg("--json");
@@ -1694,6 +1728,8 @@ fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
             "stop",
         ])
         .env("SLACK_USER_TOKEN", "xoxp-test")
+        .env_remove("SLACK_BOT_TOKEN")
+        .env_remove("SLACK_APP_TOKEN")
         .env_remove("SLACK_PROFILE")
         .output()
         .unwrap();
@@ -1821,4 +1857,62 @@ async fn a_cancelled_recovery_keeps_its_checkpoint_across_restart() {
     );
     assert_eq!(restarted.store.pull("test", None, 50).unwrap().len(), 1);
     socket.abort();
+}
+
+#[tokio::test]
+async fn a_stopped_daemon_can_restart_after_verifying_its_identity() {
+    let (port, _acks, _socket) = socket_server(vec![]).await;
+    let server = MockServer::start().await;
+    let _auth = mount_common(&server, port).await;
+    Mock::given(path("/auth.test"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(200))
+                .set_body_json(json!({
+                    "ok":true,"team":"Team","team_id":"T01","user":"test","user_id":ME
+                })),
+        )
+        .mount(&server)
+        .await;
+    let (slack, config, _auth_dir) = slack_for(&server).await;
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = EventRuntime::open(dir.path(), "test", &config).unwrap();
+    runtime.state.claim_daemon(1).unwrap();
+    runtime.state.request_stop().unwrap();
+    let daemon = tokio::spawn(events::run(
+        slack,
+        config,
+        runtime.clone(),
+        events::DaemonOptions {
+            stdout: StdoutFormat::Ndjson,
+            stdout_only: false,
+            announce: false,
+        },
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if runtime
+                .state
+                .daemon_status()
+                .unwrap()
+                .is_some_and(|status| status.pid == i64::from(std::process::id()))
+            {
+                break;
+            }
+            assert!(
+                !daemon.is_finished(),
+                "the old stop request terminated the new daemon"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!runtime.state.stop_requested().unwrap());
+    runtime.state.request_stop().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), daemon)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }
