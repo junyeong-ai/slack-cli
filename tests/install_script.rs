@@ -12,6 +12,7 @@ fn run(body: &str) {
             concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/install.sh"),
         )
         .env("INSTALL_DIR", dir.path().join("bin"))
+        .env("HOME", dir.path())
         .env("TEST_ROOT", dir.path())
         .env("PACKAGE_VERSION", env!("CARGO_PKG_VERSION"))
         .output()
@@ -138,5 +139,51 @@ prompt_choice() { echo 1; }
 download_binary() { touch "$TEST_ROOT/downloaded"; return 1; }
 if (main); then exit 1; fi
 [ ! -e "$TEST_ROOT/downloaded" ]
+"#);
+}
+
+#[test]
+fn skill_replacement_preserves_all_user_files_and_stops_on_preservation_failure() {
+    run(r#"
+USER_SKILL_DIR="$TEST_ROOT/installed"
+SKILL_SOURCE_DIR="$TEST_ROOT/source"
+mkdir -p "$USER_SKILL_DIR" "$SKILL_SOURCE_DIR"
+printf shipped > "$USER_SKILL_DIR/SKILL.md"
+printf custom > "$USER_SKILL_DIR/reference.md"
+printf next > "$SKILL_SOURCE_DIR/SKILL.md"
+preserved_dir() { echo "$TEST_ROOT/backups"; }
+replace_skill 1.0.0
+[ "$(cat "$USER_SKILL_DIR/SKILL.md")" = next ]
+[ "$(cat "$TEST_ROOT"/backups/*/reference.md)" = custom ]
+printf edited > "$USER_SKILL_DIR/SKILL.md"
+cp() { return 1; }
+if replace_skill 1.0.1; then exit 1; fi
+[ "$(cat "$USER_SKILL_DIR/SKILL.md")" = edited ]
+"#);
+}
+
+#[test]
+fn failed_skill_staging_and_swap_keep_the_previous_installation() {
+    run(r#"
+USER_SKILL_DIR="$TEST_ROOT/installed"
+SKILL_SOURCE_DIR="$TEST_ROOT/missing"
+mkdir -p "$USER_SKILL_DIR"
+printf original > "$USER_SKILL_DIR/SKILL.md"
+if install_skill; then exit 1; fi
+[ "$(cat "$USER_SKILL_DIR/SKILL.md")" = original ]
+SKILL_SOURCE_DIR="$TEST_ROOT/source"
+mkdir -p "$SKILL_SOURCE_DIR"
+printf next > "$SKILL_SOURCE_DIR/SKILL.md"
+mv() {
+    case "$1" in */replacement) return 1 ;; esac
+    command mv "$@"
+}
+if install_skill; then exit 1; fi
+[ "$(cat "$USER_SKILL_DIR/SKILL.md")" = original ]
+command mv "$USER_SKILL_DIR" "$TEST_ROOT/actual"
+ln -s actual "$USER_SKILL_DIR"
+if install_skill; then exit 1; fi
+[ -L "$USER_SKILL_DIR" ]
+[ "$(cat "$USER_SKILL_DIR/SKILL.md")" = original ]
 "#);
 }

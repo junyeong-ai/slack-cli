@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params, types
 
 use super::error::CacheResult;
 
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Every object the cache owns. `apply_schema` drops and recreates all of it
 /// when the stored version differs from `SCHEMA_VERSION` — cache contents are
@@ -75,11 +75,13 @@ const SCHEMA_DDL: &str = "
     END;
 
     CREATE TRIGGER IF NOT EXISTS users_ad AFTER DELETE ON users BEGIN
-        DELETE FROM users_fts WHERE rowid = old.rowid;
+        INSERT INTO users_fts(users_fts, rowid, id, name, display_name, real_name, email)
+        VALUES ('delete', old.rowid, old.id, old.name, old.display_name, old.real_name, old.email);
     END;
 
     CREATE TRIGGER IF NOT EXISTS users_au AFTER UPDATE ON users BEGIN
-        DELETE FROM users_fts WHERE rowid = old.rowid;
+        INSERT INTO users_fts(users_fts, rowid, id, name, display_name, real_name, email)
+        VALUES ('delete', old.rowid, old.id, old.name, old.display_name, old.real_name, old.email);
         INSERT INTO users_fts(rowid, id, name, display_name, real_name, email)
         VALUES (new.rowid, new.id, new.name, new.display_name, new.real_name, new.email);
     END;
@@ -90,11 +92,13 @@ const SCHEMA_DDL: &str = "
     END;
 
     CREATE TRIGGER IF NOT EXISTS channels_ad AFTER DELETE ON channels BEGIN
-        DELETE FROM channels_fts WHERE rowid = old.rowid;
+        INSERT INTO channels_fts(channels_fts, rowid, id, name, topic, purpose)
+        VALUES ('delete', old.rowid, old.id, old.name, old.topic, old.purpose);
     END;
 
     CREATE TRIGGER IF NOT EXISTS channels_au AFTER UPDATE ON channels BEGIN
-        DELETE FROM channels_fts WHERE rowid = old.rowid;
+        INSERT INTO channels_fts(channels_fts, rowid, id, name, topic, purpose)
+        VALUES ('delete', old.rowid, old.id, old.name, old.topic, old.purpose);
         INSERT INTO channels_fts(rowid, id, name, topic, purpose)
         VALUES (new.rowid, new.id, new.name, new.topic, new.purpose);
     END;
@@ -188,6 +192,53 @@ mod tests {
         apply_schema(&mut conn).unwrap();
 
         assert_eq!(stored_schema_version(&conn).unwrap(), Some(SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn fts_tracks_replacement_updates_and_deletions() {
+        let mut conn = open_connection();
+        apply_schema(&mut conn).unwrap();
+        for (table, index) in [("users", "users_fts"), ("channels", "channels_fts")] {
+            conn.execute(
+                &format!("INSERT INTO {table} (id, data) VALUES ('1', '{{\"name\":\"alice\"}}')"),
+                [],
+            )
+            .unwrap();
+            conn.execute(&format!("DELETE FROM {table}"), []).unwrap();
+            conn.execute(
+                &format!("INSERT INTO {table} (id, data) VALUES ('2', '{{\"name\":\"bob\"}}')"),
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                &format!("UPDATE {table} SET data = '{{\"name\":\"carol\"}}'"),
+                [],
+            )
+            .unwrap();
+            for term in ["alice", "bob"] {
+                let count: i64 = conn
+                    .query_row(
+                        &format!("SELECT count(*) FROM {index} WHERE {index} MATCH ?1"),
+                        [term],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(count, 0, "{table}: {term}");
+            }
+            let count: i64 = conn
+                .query_row(
+                    &format!("SELECT count(*) FROM {index} WHERE {index} MATCH 'carol'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1);
+            conn.execute(
+                &format!("INSERT INTO {index} ({index}, rank) VALUES ('integrity-check', 1)"),
+                [],
+            )
+            .unwrap();
+        }
     }
 
     #[test]

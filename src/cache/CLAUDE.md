@@ -37,3 +37,5 @@ A refresh fetches Slack data before opening a write transaction. `BEGIN IMMEDIAT
 3. **`cache/{users,channels}.rs`**: if the field affects search ranking, also add it to the FTS5 virtual table column list and re-index after migration.
 
 Async callers use `execute` for synchronous reads. Cache creation and snapshot writes already run on bounded blocking workers. The worker owns its transaction until completion, even when its async caller is cancelled.
+
+The CLI places each cache below an authorization-specific directory. Stored profile identity and authorization time remain stable through token rotation; a new login gets a new cache. Environment user/bot credentials and API endpoints are isolated. An unpartitioned legacy database is never reused. FTS external-content delete/update triggers must supply the old indexed values through the FTS5 `delete` command.

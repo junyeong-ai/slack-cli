@@ -864,13 +864,12 @@ impl Config {
             .unwrap_or_else(|| paths.events_dir())
     }
 
-    pub fn db_path(&self, paths: &AppPaths) -> PathBuf {
+    pub fn cache_dir(&self, paths: &AppPaths) -> PathBuf {
         self.cache
             .data_path
             .as_deref()
             .map(paths::expand_home)
             .unwrap_or_else(|| paths.cache_dir())
-            .join("slack.db")
     }
 
     pub fn show(&self, paths: &AppPaths, as_json: bool) -> Result<()> {
@@ -892,13 +891,7 @@ impl Config {
             "  refresh_threshold_percent: {}",
             self.cache.refresh_threshold_percent
         );
-        println!(
-            "  data_path: {}",
-            self.db_path(paths)
-                .parent()
-                .unwrap_or(&PathBuf::new())
-                .display()
-        );
+        println!("  data_path: {}", self.cache_dir(paths).display());
         let channel_types: Vec<&str> = self
             .cache
             .channel_types

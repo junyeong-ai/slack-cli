@@ -120,7 +120,15 @@ async fn run(cli: Cli) -> Result<()> {
         return commands::events::handle(cli, config, &paths, &profile, slack).await;
     }
 
-    let db_path = config.db_path(&paths);
+    let namespace = authenticator.cache_namespace().await?;
+    let cache_dir = config.cache_dir(&paths).join(namespace);
+    tokio::fs::create_dir_all(&cache_dir).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o700)).await?;
+    }
+    let db_path = cache_dir.join("slack.db");
     let cache = Arc::new(cache::SqliteCache::new(&db_path).await?);
     let cache_config = config.cache.clone();
     let cache_status = cache

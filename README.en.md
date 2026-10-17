@@ -127,7 +127,7 @@ slack-cli config show                             # Show config
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. The skill comes from the installed binary's release tag, or the matching checkout when building from source. If no matching skill is available, the existing installation is kept. Updating the skill overwrites what was shipped, because any earlier version can be fetched back with `SLACK_CLI_VERSION=<version> install.sh`. A copy you edited yourself is the exception: it is set aside outside `~/.claude/skills` and its path is printed, because anything left inside that directory is discovered as a second skill.
+`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. The skill comes from the installed binary's release tag, or the matching checkout when building from source. If no matching skill is available, the existing installation is kept. Before replacement, the entire previous skill directory is preserved outside `~/.claude/skills`, including user-added files, and its path is printed. A failed backup leaves the installation unchanged.
 
 ```bash
 # Install a specific release
@@ -239,6 +239,8 @@ slack-cli auth logout --all              # Remove every profile
 ```
 
 `--profile NAME` is a global flag — position-independent.
+
+Caches are isolated by profile authorization; logging in again starts a fresh cache, while token rotation keeps it. Environment credentials use separate caches. `--data-dir` selects the root containing these caches; `cache path` prints the selected database. Older shared caches are not imported.
 
 ---
 
@@ -568,7 +570,7 @@ Acknowledge each event only after successful processing. `--metadata` identifies
 - Socket Mode **does not replay** what a disconnect missed. Recovery reads `conversations.history` for channels and `conversations.replies` for subscribed threads, and only for channels a rule cares about, bounded by a count. The age bound clamps where a read *starts* rather than excluding a channel: an older cursor is read from the horizon, and the stretch before it is reported. Reaction events can be read back by neither, so subscription changes made during a disconnect are lost.
 - An **edit or deletion made during a disconnect is not recovered**. `conversations.history` returns an edited message under its original ts, which collapses onto the original the daemon already saw. That is the floor of a ts-keyed recovery model, not a bug in it.
 - A subscribed thread is re-read **from where it was last followed**. Without that cursor every reconnect would read the thread from its first message, and once the deduplication layers lapsed it would deliver the whole thread again.
-- A gap deeper than `backfill_max_channels` and the five-page bound leaves its oldest part unread, with a warning. The cursor advances to the newest recovered message, so that stretch stays unrecovered afterwards.
+- Recovery is bounded by `backfill_max_channels` and five history pages per channel. Interrupted or incomplete reads retain their checkpoint for the next recovery pass; subscribed threads advance only through processed replies. The age bound can still exclude older messages. Persistent storage failures stop the daemon so a restart can resume recovery.
 - Events are **isolated per profile**, and running on `SLACK_USER_TOKEN` uses an `env` namespace rather than a profile's. The daemon and `daemon status` / `events pull` must run **under the same environment** to see the same store — `daemon status` and `events stats` print which one they are reading on their `profile :` line.
 - Delivery is **serial**. One task owns the whole pipeline, which is what makes the deduplication gate race-free and what keeps a consumer seeing events in arrival order. A slow sink holds the pipeline, and the bounded queue in front of it absorbs — that is, discards — the pressure.
 - The app-level token and the user token are registered separately, and Slack never checks they belong to the same workspace. A payload not authorized for this installation is discarded and reported. The judgement reads `authorizations`, not the top-level `team_id` — in a Slack Connect channel that field names the partner org, so judging on it would drop everything they say.

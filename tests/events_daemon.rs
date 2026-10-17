@@ -1700,3 +1700,125 @@ fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
     assert!(stopped.status.success(), "{stopped:?}");
     assert!(state.stop_requested().unwrap());
 }
+
+struct DelayedHistory(HistorySince);
+impl Respond for DelayedHistory {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        self.0.respond(req).set_delay(Duration::from_secs(3))
+    }
+}
+
+#[tokio::test]
+async fn a_cancelled_recovery_keeps_its_checkpoint_across_restart() {
+    let now = chrono::Utc::now().timestamp();
+    let initial = format!("{}.000000", now - 120);
+    let missed = format!("{}.000000", now - 60);
+    let live = format!("{}.000000", now - 1);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (send_live, ready) = tokio::sync::oneshot::channel();
+    let live_frame = message_envelope("live", &live, "live <@U_TEST>");
+    let socket = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        ws.send(Message::text(json!({"type":"hello"}).to_string()))
+            .await
+            .unwrap();
+        ready.await.unwrap();
+        ws.send(Message::text(live_frame.to_string()))
+            .await
+            .unwrap();
+        while let Some(Ok(_)) = ws.next().await {}
+    });
+    let server = MockServer::start().await;
+    let _auth = mount_common(&server, port).await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.history"))
+        .respond_with(DelayedHistory(HistorySince {
+            messages: vec![json!({
+                "ts":missed,"user":"U_OTHER","text":"missed <@U_TEST>"
+            })],
+        }))
+        .mount(&server)
+        .await;
+    let (slack, mut config, _store_dir) = slack_for(&server).await;
+    config.events = spooling(vec![mention_rule()]);
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = EventRuntime::open(dir.path(), "test", &config).unwrap();
+    runtime
+        .state
+        .advance_cursor("C0000001", &initial, true)
+        .unwrap();
+    let daemon_runtime = EventRuntime::open(dir.path(), "test", &config).unwrap();
+    let daemon_config = config.clone();
+    let daemon_slack = slack.clone();
+    let daemon = tokio::spawn(async move {
+        events::run(
+            daemon_slack,
+            daemon_config,
+            daemon_runtime,
+            events::DaemonOptions {
+                stdout: StdoutFormat::Ndjson,
+                stdout_only: false,
+                announce: false,
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.url.path() == "/conversations.history")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    send_live.send(()).unwrap();
+    let stored = wait_for_events(&runtime, 1).await;
+    assert_eq!(stored.len(), 1);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let connection = rusqlite::Connection::open(runtime.paths.state_db()).unwrap();
+            let followed: String = connection
+                .query_row(
+                    "SELECT last_ts FROM channel_cursor WHERE channel = 'C0000001'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            if followed == live {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    runtime.state.request_stop().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), daemon)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let restarted = EventRuntime::open(dir.path(), "test", &config).unwrap();
+    let recovered =
+        events::backfill::recover(&slack, &restarted.state, &config.events, Some("T01"))
+            .await
+            .unwrap();
+    assert!(
+        recovered
+            .iter()
+            .any(|e| e.ts.as_deref() == Some(missed.as_str())),
+        "the unfinished recovery must retain its original oldest position"
+    );
+    assert_eq!(restarted.store.pull("test", None, 50).unwrap().len(), 1);
+    socket.abort();
+}

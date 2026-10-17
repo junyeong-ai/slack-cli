@@ -27,7 +27,7 @@ pub use store::{
 };
 
 use crate::auth::AuthError;
-use crate::config::{Config, EventRetention, EventsConfig};
+use crate::config::{Config, EventRetention};
 use crate::slack::{SlackApiError, SlackClient};
 use queue::EventQueue;
 use rules::RuleEngine;
@@ -240,6 +240,20 @@ impl DaemonLock {
     }
 }
 
+enum PipelineItem {
+    Event(Box<Event>),
+    RecoveryComplete {
+        generation: String,
+        batch: backfill::RecoveryBatch,
+    },
+}
+
+impl queue::Evictable for PipelineItem {
+    fn may_evict(&self) -> bool {
+        matches!(self, Self::Event(event) if event.source == EventSource::Socket)
+    }
+}
+
 #[derive(Default)]
 struct Tally {
     received: AtomicU64,
@@ -389,16 +403,20 @@ pub async fn run(
         tally.clone(),
     ));
 
-    let housekeeping = tasks.spawn(housekeep(
-        state.clone(),
-        store.clone(),
-        queue.clone(),
-        tally.clone(),
-        connected.clone(),
-    ));
+    let housekeeping = {
+        let state = state.clone();
+        let store = store.clone();
+        let queue = queue.clone();
+        let tally = tally.clone();
+        let connected = connected.clone();
+        tasks.spawn(async move {
+            housekeep(state, store, queue, tally, connected).await;
+            Ok(())
+        })
+    };
 
     let mut recovery = tokio::task::JoinSet::new();
-    let outcome = tokio::select! {
+    let mut outcome = tokio::select! {
         result = connect_loop(
             slack.clone(),
             config.clone(),
@@ -415,6 +433,7 @@ pub async fn run(
         result = &mut shutdown => result,
         result = tasks.join_next() => match result {
             Some(Err(err)) => Err(err).context("a daemon task failed"),
+            Some(Ok(Err(err))) => Err(err).context("a daemon task failed"),
             _ => Err(anyhow::anyhow!("a daemon task stopped unexpectedly")),
         },
     };
@@ -430,10 +449,16 @@ pub async fn run(
     housekeeping.abort();
     let drained = tokio::time::timeout(SHUTDOWN_DRAIN, async {
         while let Some(result) = tasks.join_next().await {
-            if let Err(err) = result
-                && !err.is_cancelled()
-            {
-                tracing::error!("a daemon task stopped unexpectedly: {err}");
+            let failure = match result {
+                Ok(Err(err)) => Some(err),
+                Err(err) if !err.is_cancelled() => Some(anyhow::Error::from(err)),
+                _ => None,
+            };
+            if let Some(err) = failure {
+                tracing::error!("a daemon task stopped unexpectedly: {err:#}");
+                if outcome.is_ok() {
+                    outcome = Err(err);
+                }
             }
         }
     })
@@ -613,6 +638,7 @@ fn is_fatal(err: &anyhow::Error) -> bool {
                 AuthError::NoAppToken
                     | AuthError::NotConfigured
                     | AuthError::UnknownProfile(_)
+                    | AuthError::AuthorizationChanged(_)
                     | AuthError::NoSuchToken { .. }
                     | AuthError::NoTokenForPolicy { .. }
                     | AuthError::NotRenewable { .. }
@@ -641,7 +667,7 @@ fn is_fatal(err: &anyhow::Error) -> bool {
 async fn connect_loop(
     slack: Arc<SlackClient>,
     config: Config,
-    queue: Arc<EventQueue<Event>>,
+    queue: Arc<EventQueue<PipelineItem>>,
     state: Arc<EventState>,
     tally: Arc<Tally>,
     connected: Arc<AtomicBool>,
@@ -694,13 +720,20 @@ async fn connect_loop(
 async fn connect_once(
     slack: &Arc<SlackClient>,
     config: &Config,
-    queue: &Arc<EventQueue<Event>>,
+    queue: &Arc<EventQueue<PipelineItem>>,
     state: &Arc<EventState>,
     tally: &Arc<Tally>,
     connected: &AtomicBool,
     installation: &Installation,
     recovery: &mut tokio::task::JoinSet<()>,
 ) -> Result<()> {
+    recovery.abort_all();
+    while recovery.join_next().await.is_some() {}
+    let generation = if config.events.backfill {
+        Some(state.execute(|state| state.begin_recovery()).await?)
+    } else {
+        None
+    };
     let url = slack.apps.connection().await?;
     let mut socket = SocketStream::connect(&url).await?;
     connected.store(true, Ordering::Relaxed);
@@ -725,6 +758,7 @@ async fn connect_once(
         tally,
         &installation.team_id,
         recovery,
+        generation,
     );
 
     let keep_raw = config.events.store_raw;
@@ -749,7 +783,7 @@ async fn connect_once(
             continue;
         };
         tally.received.fetch_add(1, Ordering::Relaxed);
-        queue.push(event);
+        queue.push(PipelineItem::Event(Box::new(event)));
     }
 
     socket.close().await;
@@ -768,47 +802,39 @@ async fn connect_once(
 ///
 /// At most one runs at a time: a flapping connection must not stack recovery
 /// passes on top of each other, each spending the same rationed requests.
+#[allow(clippy::too_many_arguments)]
 fn start_recovery(
     slack: &Arc<SlackClient>,
     config: &Config,
-    queue: &Arc<EventQueue<Event>>,
+    queue: &Arc<EventQueue<PipelineItem>>,
     state: &Arc<EventState>,
     tally: &Arc<Tally>,
     team_id: &str,
     recovery: &mut tokio::task::JoinSet<()>,
+    generation: Option<String>,
 ) {
-    while let Some(result) = recovery.try_join_next() {
-        if let Err(err) = result {
-            tracing::warn!("recovery task failed: {err}");
-        }
-    }
-    if !config.events.backfill || !recovery.is_empty() {
+    let Some(generation) = generation else {
         return;
-    }
-
+    };
     let slack = slack.clone();
     let queue = queue.clone();
     let state = state.clone();
     let tally = tally.clone();
-    let events: EventsConfig = config.events.clone();
+    let events = config.events.clone();
     let team_id = team_id.to_string();
-
     recovery.spawn(async move {
-        match backfill::recover(&slack, &state, &events, Some(&team_id)).await {
-            Ok(recovered) => {
-                let room = (queue.capacity() / 2).max(1);
-                for event in recovered {
-                    // Recovery may wait, and here it must: a deep catch-up can
-                    // outrun the pipeline, and under the default policy the
-                    // events dropped to make room are the oldest — the very
-                    // ones the cursor has not passed yet. Overflowing here
-                    // would turn a gap this pass just closed into a permanent
-                    // hole.
-                    queue.wait_for_room(room).await;
+        match backfill::recover_batch(&slack, &state, &events, Some(&team_id)).await {
+            Ok(mut batch) => {
+                for event in std::mem::take(&mut batch.events) {
+                    if !queue.push_wait(PipelineItem::Event(Box::new(event))).await {
+                        return;
+                    }
                     tally.backfilled.fetch_add(1, Ordering::Relaxed);
                     tally.received.fetch_add(1, Ordering::Relaxed);
-                    queue.push(event);
                 }
+                queue
+                    .push_wait(PipelineItem::RecoveryComplete { generation, batch })
+                    .await;
             }
             Err(err) => tracing::warn!("recovery failed: {err:#}"),
         }
@@ -818,7 +844,7 @@ fn start_recovery(
 async fn housekeep(
     state: Arc<EventState>,
     store: Arc<dyn EventStore>,
-    queue: Arc<EventQueue<Event>>,
+    queue: Arc<EventQueue<PipelineItem>>,
     tally: Arc<Tally>,
     connected: Arc<AtomicBool>,
 ) {

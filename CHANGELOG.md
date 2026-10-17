@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-17
+
+### Fixed
+
+- Remove stale FTS tokens when users and channels are replaced, renamed or deleted. Cache schema 4 rebuilds existing indexes.
+- Isolate caches by authorization and API endpoint, including environment credentials. Stored token rotation keeps its cache; a new login starts a fresh one. Legacy shared caches are not imported.
+- Retain durable channel and thread recovery checkpoints until their queued events have been processed. Interrupted and partial recovery survives live traffic and restarts; stale reconnect completions cannot clear newer checkpoints.
+- Preserve the complete previous skill directory before replacement, stop on preservation errors, and restore the prior installation when a swap fails.
+
+### Changed
+
+- Replace the library configuration helper `Config::db_path` with `Config::cache_dir`; the CLI selects an authorization-specific database below that directory.
+- Stop the daemon after persistent storage or commit failures so unfinished recovery checkpoints remain available on restart.
+
 ## [0.14.1] - 2026-10-17
 
 ### Fixed

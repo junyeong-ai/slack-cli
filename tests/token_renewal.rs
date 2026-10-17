@@ -414,3 +414,28 @@ async fn environment_tokens_bypass_the_store_entirely() {
     let (token, _) = auth.token_for(TokenPolicy::UserRequired).await.unwrap();
     assert_eq!(token.expose_secret(), "xoxp-from-env");
 }
+
+#[tokio::test]
+async fn cache_namespaces_follow_authorization_not_token_rotation() {
+    let store = Store::with(profile(expiring_in(30), Value::Null));
+    let first = store.authenticator("http://localhost/api".into()).await;
+    let original = first.cache_namespace().await.unwrap();
+    let mut contents = store.read();
+    contents["profiles"]["acme"]["tokens"]["user"]["token"] = json!("xoxe-rotated");
+    std::fs::write(&store.path, serde_json::to_vec(&contents).unwrap()).unwrap();
+    let rotated = store.authenticator("http://localhost/api".into()).await;
+    assert_eq!(original, rotated.cache_namespace().await.unwrap());
+    contents["profiles"]["acme"]["authorized_at"] = json!("2026-10-17T00:00:00Z");
+    std::fs::write(&store.path, serde_json::to_vec(&contents).unwrap()).unwrap();
+    let relogged = store.authenticator("http://localhost/api".into()).await;
+    assert_ne!(original, relogged.cache_namespace().await.unwrap());
+    assert!(matches!(
+        first.token_for(TokenPolicy::UserRequired).await,
+        Err(slack_cli::auth::AuthError::AuthorizationChanged(_))
+    ));
+    let other_endpoint = store.authenticator("http://other/api".into()).await;
+    assert_ne!(
+        relogged.cache_namespace().await.unwrap(),
+        other_endpoint.cache_namespace().await.unwrap()
+    );
+}

@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::Utc;
+use secrecy::ExposeSecret;
+use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
 use super::credential::{Credential, Readiness, TokenKind};
@@ -55,11 +57,14 @@ impl Authenticator {
             .build()
             .map_err(|e| AuthError::Internal(format!("failed to create OAuth client: {e}")))?;
 
+        let explicit_profile = opts
+            .explicit_profile
+            .or_else(|| loaded.state.active_profile.clone());
         Ok(Self {
             store,
             state: RwLock::new(loaded.state),
             overrides: opts.overrides,
-            explicit_profile: opts.explicit_profile,
+            explicit_profile,
             exchange: TokenExchange {
                 api_base_url: opts.api_base_url,
                 http,
@@ -181,8 +186,23 @@ impl Authenticator {
     /// that renewed a moment ago has already written the successor, and this
     /// call adopts it instead of spending a token that is no longer current.
     async fn renew(&self, name: &str, kind: TokenKind) -> Result<Secret, AuthError> {
+        let authorized_at = self
+            .state
+            .read()
+            .await
+            .profiles
+            .get(name)
+            .ok_or_else(|| AuthError::UnknownProfile(name.to_owned()))?
+            .authorized_at;
         let guard = self.store.lock().await?;
         let mut state = self.store.read()?.state;
+        if state
+            .profiles
+            .get(name)
+            .is_some_and(|profile| profile.authorized_at != authorized_at)
+        {
+            return Err(AuthError::AuthorizationChanged(name.to_owned()));
+        }
         let now = Utc::now();
 
         let (current, still_live, refresh_token, client) = {
@@ -332,6 +352,37 @@ impl Authenticator {
     /// under another's name.
     pub fn uses_env_tokens(&self) -> bool {
         self.overrides.has_inline_tokens()
+    }
+
+    pub async fn cache_namespace(&self) -> Result<String, AuthError> {
+        let identity = if self.uses_env_tokens() {
+            serde_json::json!([
+                "env",
+                self.overrides
+                    .user_token
+                    .as_ref()
+                    .map(|token| token.expose_secret()),
+                self.overrides
+                    .bot_token
+                    .as_ref()
+                    .map(|token| token.expose_secret()),
+            ])
+        } else {
+            let state = self.state.read().await;
+            let name = state
+                .resolve(self.explicit_profile.as_deref())
+                .ok_or(AuthError::NotConfigured)?;
+            let profile = state
+                .profiles
+                .get(name)
+                .ok_or_else(|| AuthError::UnknownProfile(name.to_owned()))?;
+            serde_json::json!(["profile", name, profile.workspace, profile.authorized_at])
+        };
+        let digest = Sha256::digest(
+            serde_json::to_vec(&(self.exchange.api_base_url.trim_end_matches('/'), identity))
+                .map_err(|err| AuthError::Internal(err.to_string()))?,
+        );
+        Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
     }
 
     pub async fn snapshot(&self) -> AuthState {

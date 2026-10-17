@@ -84,16 +84,13 @@ handler must not stop the daemon. A consumer that needs the guarantee reads the
 log with `events pull`.
 
 A storage failure is different from a sink failure and is retried with backoff
-before the event is given up on, because Slack has already been told the event
+before the daemon stops, because Slack has already been told the event
 was received and will not send it again — and an edit or a reaction cannot be
 reconstructed from history at all.
 
-*Which* storage failure decides where the retry lives. Everything up to and
-including delivery is retried by `process`, because none of it has reached a
-sink yet. The commit that follows is retried inside `handle`, and never by
-starting the pass over: a busy `state.db` at that point would otherwise repeat
-a webhook or an exec handler four times in a few milliseconds, which is a far
-worse trade than the event being seen once more later.
+Preparation failures are retried before sink delivery. Commit failures are retried separately and never replay a sink. Persistent storage failures stop the pipeline; recovery completion cannot pass a failed event.
+
+Recovery pins channel and thread positions durably before opening each socket. Live traffic advances its high-water marks without changing those positions. A non-evictable completion item follows the recovered events through the serial queue and releases only its own reconnect generation. Errors and cancellation retain the checkpoint; partial thread reads advance it only through the processed prefix. Channel page limits retain the older checkpoint.
 
 ## `watch` overrides both halves of delivery
 

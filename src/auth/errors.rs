@@ -12,6 +12,11 @@ pub enum AuthError {
     #[error("profile '{0}' is not in the auth store")]
     UnknownProfile(String),
 
+    #[error(
+        "authorization for profile '{0}' changed during this invocation; run the command again"
+    )]
+    AuthorizationChanged(String),
+
     #[error("no token available for policy {policy} in profile '{profile}'")]
     NoTokenForPolicy {
         profile: String,

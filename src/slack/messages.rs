@@ -225,6 +225,19 @@ impl SlackMessageClient {
         limit: usize,
         oldest: Option<&str>,
     ) -> Result<Vec<SlackMessage>> {
+        Ok(self
+            .replies_with_completion(channel, thread_ts, limit, oldest)
+            .await?
+            .0)
+    }
+
+    pub(crate) async fn replies_with_completion(
+        &self,
+        channel: &str,
+        thread_ts: &str,
+        limit: usize,
+        oldest: Option<&str>,
+    ) -> Result<(Vec<SlackMessage>, bool)> {
         let mut all_messages = Vec::new();
         let mut cursor: Option<String> = None;
         let page_limit = limit.min(REPLIES_PAGE_SIZE);
@@ -269,8 +282,9 @@ impl SlackMessageClient {
             }
         }
 
+        let complete = cursor.is_none() && all_messages.len() <= limit;
         all_messages.truncate(limit);
-        Ok(all_messages)
+        Ok((all_messages, complete))
     }
 }
 

@@ -26,6 +26,13 @@ const THREAD_LIMIT: usize = 50;
 /// rather than quietly abandoned.
 const MAX_PAGES: usize = 5;
 
+#[derive(Default)]
+pub(super) struct RecoveryBatch {
+    pub events: Vec<Event>,
+    pub channels: Vec<String>,
+    pub threads: Vec<(String, String, Option<String>)>,
+}
+
 /// Closes the gap a disconnect left behind.
 ///
 /// Socket Mode replays nothing, so this is the only recovery there is — and it
@@ -40,8 +47,17 @@ pub async fn recover(
     config: &EventsConfig,
     team_id: Option<&str>,
 ) -> Result<Vec<Event>> {
+    Ok(recover_batch(slack, state, config, team_id).await?.events)
+}
+
+pub(super) async fn recover_batch(
+    slack: &SlackClient,
+    state: &EventState,
+    config: &EventsConfig,
+    team_id: Option<&str>,
+) -> Result<RecoveryBatch> {
     if !config.backfill {
-        return Ok(Vec::new());
+        return Ok(RecoveryBatch::default());
     }
 
     // The furthest back any read will reach. A cursor older than this is not
@@ -62,7 +78,7 @@ pub async fn recover(
         })
         .await?;
     if gaps.is_empty() && watched == 0 {
-        return Ok(Vec::new());
+        return Ok(RecoveryBatch::default());
     }
 
     tracing::info!(
@@ -71,7 +87,7 @@ pub async fn recover(
         "recovering what the connection missed"
     );
 
-    let mut recovered = Vec::new();
+    let mut batch = RecoveryBatch::default();
 
     // Subscribed threads first. `conversations.history` returns a channel's
     // top-level messages and never a thread's replies, so without this pass
@@ -81,7 +97,7 @@ pub async fn recover(
     for thread in threads {
         match slack
             .messages
-            .replies(
+            .replies_with_completion(
                 &thread.channel,
                 &thread.thread_ts,
                 THREAD_LIMIT,
@@ -89,7 +105,19 @@ pub async fn recover(
             )
             .await
         {
-            Ok(messages) => {
+            Ok((messages, complete)) => {
+                let through = messages
+                    .iter()
+                    .filter(|message| message.ts > thread.cursor_ts)
+                    .map(|message| message.ts.clone())
+                    .max();
+                if complete || through.is_some() {
+                    batch.threads.push((
+                        thread.channel.clone(),
+                        thread.thread_ts.clone(),
+                        if complete { None } else { through },
+                    ));
+                }
                 for message in messages {
                     // Slack returns a thread's parent alongside its replies and
                     // treats `oldest` inclusively, so the cursor is enforced
@@ -99,7 +127,9 @@ pub async fn recover(
                     if message.ts.as_str() <= thread.cursor_ts.as_str() {
                         continue;
                     }
-                    recovered.push(from_history(&thread.channel, team_id, message));
+                    batch
+                        .events
+                        .push(from_history(&thread.channel, team_id, message));
                 }
             }
             Err(err) => {
@@ -154,7 +184,9 @@ pub async fn recover(
 
             for message in messages {
                 found += 1;
-                recovered.push(from_history(&gap.channel, team_id, message));
+                batch
+                    .events
+                    .push(from_history(&gap.channel, team_id, message));
             }
 
             pages += 1;
@@ -211,6 +243,9 @@ pub async fn recover(
             }
         }
 
+        if complete {
+            batch.channels.push(gap.channel.clone());
+        }
         if clamped && complete {
             let channel = gap.channel.clone();
             let oldest = oldest.to_owned();
@@ -220,14 +255,10 @@ pub async fn recover(
         }
     }
 
-    // Oldest first. `conversations.history` answers newest first, and the
-    // cursor advances as each event is processed — so replaying in Slack's
-    // order would move the cursor to the newest message before the older ones
-    // had been handled, and a crash or an overflow in between would put them
-    // permanently behind it.
-    recovered.sort_by(|left, right| left.ts.cmp(&right.ts));
+    // Deliver each recovery batch in message order before its completion marker.
+    batch.events.sort_by(|left, right| left.ts.cmp(&right.ts));
 
-    Ok(recovered)
+    Ok(batch)
 }
 
 /// A history message in the shape the pipeline already knows.
@@ -267,6 +298,70 @@ mod tests {
     use super::*;
     use crate::events::envelope::from_event_callback;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn partial_thread_pages_advance_only_the_processed_recovery_prefix() {
+        use crate::auth::{AuthLoadOptions, Authenticator, EnvOverrides};
+        use crate::config::{Config, SlackAppDistribution};
+        use std::sync::Arc;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.connection.api_base_url = server.uri();
+        config.connection.app_distribution = SlackAppDistribution::MarketplaceOrInternal;
+        config.connection.rate_limit_per_minute = 600;
+        let auth = Authenticator::load(AuthLoadOptions {
+            store_path: dir.path().join("auth.json"),
+            api_base_url: server.uri(),
+            explicit_profile: None,
+            overrides: EnvOverrides {
+                user_token: Some(secrecy::SecretString::from("xoxp-test")),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        let slack = SlackClient::new(config.clone(), Arc::new(auth)).unwrap();
+        let state = EventState::open(&dir.path().join("state.db")).unwrap();
+        state
+            .watch_thread("C1", "90.000000", "rule", "eyes", None, Some("100.000000"))
+            .unwrap();
+        let generation = state.begin_recovery().unwrap();
+        state
+            .advance_thread_cursor("C1", "90.000000", "300.000000")
+            .unwrap();
+        for (start, end, cursor, oldest) in [
+            (101, 150, "next", "100.000000"),
+            (151, 160, "", "150.000000"),
+        ] {
+            server.reset().await;
+            let messages: Vec<_> = (start..=end)
+                .map(|n| json!({"ts":format!("{n}.000000"),"text":"reply","thread_ts":"90.000000"}))
+                .collect();
+            Mock::given(method("GET")).and(path("/conversations.replies")).and(query_param("oldest", oldest))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"messages":messages,"response_metadata":{"next_cursor":cursor}})))
+                .expect(1).mount(&server).await;
+            let batch = recover_batch(&slack, &state, &config.events, None)
+                .await
+                .unwrap();
+            assert_eq!(batch.events.len(), (end - start + 1) as usize);
+            state
+                .finish_recovery(&generation, &batch.channels, &batch.threads)
+                .unwrap();
+            assert_eq!(
+                state.watched_threads(1).unwrap()[0].cursor_ts,
+                if cursor.is_empty() {
+                    "300.000000"
+                } else {
+                    "150.000000"
+                }
+            );
+            server.verify().await;
+        }
+    }
 
     fn history_message(ts: &str) -> SlackMessage {
         serde_json::from_value(json!({

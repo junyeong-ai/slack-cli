@@ -8,7 +8,7 @@ use rusqlite::{OptionalExtension, params};
 use super::db;
 use super::envelope::Event;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const STEPS: &[(i64, &str)] = &[
     (
@@ -63,6 +63,13 @@ const STEPS: &[(i64, &str)] = &[
         "ALTER TABLE watched_thread ADD COLUMN cursor_ts TEXT;",
     ),
     (3, "ALTER TABLE daemon ADD COLUMN stop_requested INTEGER;"),
+    (
+        4,
+        "ALTER TABLE channel_cursor ADD COLUMN recovery_ts TEXT;
+         ALTER TABLE channel_cursor ADD COLUMN recovery_generation TEXT;
+         ALTER TABLE watched_thread ADD COLUMN recovery_ts TEXT;
+         ALTER TABLE watched_thread ADD COLUMN recovery_generation TEXT;",
+    ),
 ];
 
 /// How long a deduplication key is remembered. Slack redelivers an
@@ -151,6 +158,34 @@ impl EventState {
         })
     }
 
+    pub fn begin_recovery(&self) -> Result<String> {
+        let generation = uuid::Uuid::new_v4().to_string();
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        tx.execute("UPDATE channel_cursor SET recovery_ts = COALESCE(recovery_ts, last_ts), recovery_generation = ?1 WHERE recoverable = 1 AND last_ts > '0'", [&generation])?;
+        tx.execute("UPDATE watched_thread SET recovery_ts = COALESCE(recovery_ts, cursor_ts, thread_ts), recovery_generation = ?1", [&generation])?;
+        tx.commit()?;
+        Ok(generation)
+    }
+
+    pub fn finish_recovery(
+        &self,
+        generation: &str,
+        channels: &[String],
+        threads: &[(String, String, Option<String>)],
+    ) -> Result<()> {
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for channel in channels {
+            tx.execute("UPDATE channel_cursor SET recovery_ts = NULL, recovery_generation = NULL WHERE channel = ?1 AND recovery_generation = ?2", params![channel, generation])?;
+        }
+        for (channel, thread, through) in threads {
+            tx.execute("UPDATE watched_thread SET recovery_ts = ?4, recovery_generation = CASE WHEN ?4 IS NULL THEN NULL ELSE recovery_generation END WHERE channel = ?1 AND thread_ts = ?2 AND recovery_generation = ?3", params![channel, thread, generation, through])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Records how far a conversation has been followed.
     ///
     /// `recoverable` is sticky: once a channel has produced a match, or has
@@ -200,7 +235,7 @@ impl EventState {
     pub fn gaps(&self, limit: usize) -> Result<Vec<Gap>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT channel, last_ts FROM channel_cursor
+            "SELECT channel, COALESCE(recovery_ts, last_ts) FROM channel_cursor
              WHERE recoverable = 1 AND last_ts > '0'
              ORDER BY updated_at DESC
              LIMIT ?1",
@@ -294,11 +329,10 @@ impl EventState {
     /// `conversations.replies` on the thread it belongs to.
     pub fn watched_threads(&self, limit: usize) -> Result<Vec<WatchedThread>> {
         let conn = self.pool.get()?;
-        // The furthest-followed cursor across the rules watching a thread: a
-        // reply already delivered under one rule must not be read back for
-        // another.
+        // A pending recovery floor takes precedence over live progress.
+        // The earliest rule position keeps new subscriptions from hiding a gap.
         let mut stmt = conn.prepare(
-            "SELECT channel, thread_ts, MAX(IFNULL(cursor_ts, thread_ts)), MAX(created_at)
+            "SELECT channel, thread_ts, MIN(COALESCE(recovery_ts, cursor_ts, thread_ts)), MAX(created_at)
              FROM watched_thread
              GROUP BY channel, thread_ts
              ORDER BY MAX(created_at) DESC
@@ -511,6 +545,61 @@ mod tests {
             super::super::DaemonLock::try_acquire(&path)
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn recovery_checkpoints_survive_live_progress_restart_and_stale_completion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let state = EventState::open(&path).unwrap();
+        state.advance_cursor("C1", "100.000000", true).unwrap();
+        state
+            .watch_thread("C1", "90.000000", "rule", "eyes", None, Some("100.000000"))
+            .unwrap();
+        let first = state.begin_recovery().unwrap();
+        state.advance_cursor("C1", "300.000000", true).unwrap();
+        state
+            .advance_thread_cursor("C1", "90.000000", "300.000000")
+            .unwrap();
+        drop(state);
+        let state = EventState::open(&path).unwrap();
+        assert_eq!(state.gaps(10).unwrap()[0].last_ts, "100.000000");
+        assert_eq!(
+            state.watched_threads(10).unwrap()[0].cursor_ts,
+            "100.000000"
+        );
+        let second = state.begin_recovery().unwrap();
+        state
+            .finish_recovery(
+                &first,
+                &["C1".into()],
+                &[("C1".into(), "90.000000".into(), None)],
+            )
+            .unwrap();
+        assert_eq!(state.gaps(10).unwrap()[0].last_ts, "100.000000");
+        state
+            .finish_recovery(
+                &second,
+                &[],
+                &[("C1".into(), "90.000000".into(), Some("200.000000".into()))],
+            )
+            .unwrap();
+        assert_eq!(
+            state.watched_threads(10).unwrap()[0].cursor_ts,
+            "200.000000"
+        );
+        state
+            .finish_recovery(
+                &second,
+                &["C1".into()],
+                &[("C1".into(), "90.000000".into(), None)],
+            )
+            .unwrap();
+        assert_eq!(state.gaps(10).unwrap()[0].last_ts, "300.000000");
+        assert_eq!(
+            state.watched_threads(10).unwrap()[0].cursor_ts,
+            "300.000000"
         );
     }
 

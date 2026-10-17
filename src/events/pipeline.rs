@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use super::{
     Event, EventKind, EventQueue, EventState, EventStore, HANDLE_ATTEMPTS, HANDLE_BACKOFF,
-    RuleEngine, SinkSet, Tally,
+    PipelineItem, RuleEngine, SinkSet, Tally,
 };
 
 /// The one consumer of the queue, and the only writer of state.
@@ -13,24 +13,33 @@ use super::{
 /// Being single means the read-then-commit around `seen` needs no lock, and
 /// that ordering is what turns a crash into a redelivery instead of a hole.
 pub(super) async fn process(
-    queue: Arc<EventQueue<Event>>,
+    queue: Arc<EventQueue<PipelineItem>>,
     state: Arc<EventState>,
     store: Arc<dyn EventStore>,
     engine: Arc<RuleEngine>,
     sinks: Arc<SinkSet>,
     tally: Arc<Tally>,
-) {
-    while let Some(mut event) = queue.pop().await {
+) -> Result<()> {
+    while let Some(item) = queue.pop().await {
+        let mut event = match item {
+            PipelineItem::Event(event) => *event,
+            PipelineItem::RecoveryComplete { generation, batch } => {
+                state
+                    .execute(move |state| {
+                        state.finish_recovery(&generation, &batch.channels, &batch.threads)
+                    })
+                    .await?;
+                continue;
+            }
+        };
         let mut pause = HANDLE_BACKOFF;
         for attempt in 1..=HANDLE_ATTEMPTS {
-            // This retry covers only what happens before delivery — reading
-            // the deduplication gate and evaluating the rules. Once the sinks
-            // have the event, `handle` retries the commit itself and returns
-            // `Ok`, so a busy database can never repeat a delivery here.
             match handle(&mut event, &state, &store, &engine, &sinks).await {
                 // Counted here rather than inside, so a retry does not report
                 // the same event twice.
-                Ok(handled) => {
+                Ok(None) => break,
+                Ok(Some(handled)) => {
+                    commit_with_retry(&event, &state, handled.interesting).await?;
                     if handled.matched {
                         tally.matched.fetch_add(1, Ordering::Relaxed);
                     }
@@ -58,12 +67,14 @@ pub(super) async fn process(
                         attempts = HANDLE_ATTEMPTS,
                         "gave up on an event that Slack will not send again: {err:#}"
                     );
+                    return Err(err);
                 }
             }
         }
         tally.delivered.store(sinks.delivered(), Ordering::Relaxed);
         tally.failed.store(sinks.failed(), Ordering::Relaxed);
     }
+    Ok(())
 }
 
 /// What one pass over an event did, for the counters that report it. Returned
@@ -73,6 +84,7 @@ pub(super) async fn process(
 struct Handled {
     matched: bool,
     stored: bool,
+    interesting: bool,
 }
 
 async fn handle(
@@ -81,7 +93,7 @@ async fn handle(
     store: &Arc<dyn EventStore>,
     engine: &Arc<RuleEngine>,
     sinks: &SinkSet,
-) -> Result<Handled> {
+) -> Result<Option<Handled>> {
     let pending = event.clone();
     let engine = engine.clone();
     let store = store.clone();
@@ -95,6 +107,7 @@ async fn handle(
             let mut handled = Handled {
                 matched: outcome.matched(),
                 stored: false,
+                interesting: outcome.matched() || outcome.subscribed > 0,
             };
             if outcome.matched() {
                 event.matched = outcome.rules.clone();
@@ -107,23 +120,18 @@ async fn handle(
         })
         .await?;
     let Some((prepared, outcome, handled)) = prepared else {
-        return Ok(Handled::default());
+        return Ok(None);
     };
     *event = prepared;
-    let interesting = outcome.matched() || outcome.subscribed > 0;
     if outcome.matched() {
         sinks.deliver(event, &outcome.sinks).await;
     }
 
-    // Committed only now. Until this point a crash leaves the event
-    // recoverable; after it, the cursor says the channel is followed to here.
-    //
-    // Retried here rather than by the caller, and never by re-running what
-    // came before it. Everything above has already delivered to the sinks, so
-    // starting the pass again on a busy database would repeat a webhook or an
-    // exec handler — turning a moment of contention into four real duplicates.
-    // Failing to commit only risks the event being seen once more later, which
-    // is the smaller of the two.
+    Ok(Some(handled))
+}
+
+async fn commit_with_retry(event: &Event, state: &EventState, interesting: bool) -> Result<()> {
+    // Delivery has completed; a failed commit must not replay the sinks.
     let mut pause = HANDLE_BACKOFF;
     for attempt in 1..=HANDLE_ATTEMPTS {
         let pending = event.clone();
@@ -131,7 +139,7 @@ async fn handle(
             .execute(move |state| commit(&pending, state, interesting))
             .await
         {
-            Ok(()) => return Ok(handled),
+            Ok(()) => return Ok(()),
             Err(err) if attempt < HANDLE_ATTEMPTS => {
                 tracing::warn!(
                     event = %event.id,
@@ -146,11 +154,12 @@ async fn handle(
                     event = %event.id,
                     "delivered an event but could not record it; it may be seen again: {err:#}"
                 );
+                return Err(err);
             }
         }
     }
 
-    Ok(handled)
+    unreachable!("the final commit attempt returns")
 }
 
 /// Records that an event has been handled and how far its conversation has

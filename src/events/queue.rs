@@ -66,6 +66,9 @@ impl<T: Evictable> EventQueue<T> {
         let mut discarded = false;
         {
             let mut queue = self.lock();
+            if self.closed.load(Ordering::Acquire) {
+                return false;
+            }
             if queue.len() >= self.capacity {
                 discarded = true;
                 self.dropped.fetch_add(1, Ordering::Relaxed);
@@ -91,6 +94,25 @@ impl<T: Evictable> EventQueue<T> {
         }
         self.notify.notify_one();
         discarded
+    }
+
+    pub async fn push_wait(&self, item: T) -> bool {
+        let mut item = Some(item);
+        loop {
+            let waiting = self.drained.notified();
+            {
+                let mut queue = self.lock();
+                if self.closed.load(Ordering::Acquire) {
+                    return false;
+                }
+                if queue.len() < self.capacity {
+                    queue.push_back(item.take().expect("item is queued once"));
+                    self.notify.notify_one();
+                    return true;
+                }
+            }
+            let _ = tokio::time::timeout(DRAIN_POLL, waiting).await;
+        }
     }
 
     /// Waits for the next item, or `None` once the queue is closed and drained.
@@ -122,7 +144,10 @@ impl<T: Evictable> EventQueue<T> {
     /// wake-up that can never come again. One consumer drains this queue, so
     /// one stored permit is enough.
     pub fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        {
+            let _queue = self.lock();
+            self.closed.store(true, Ordering::Release);
+        }
         self.notify.notify_waiters();
         self.notify.notify_one();
         // A producer waiting on capacity must not wait for a consumer that has

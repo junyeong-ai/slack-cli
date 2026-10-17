@@ -377,75 +377,50 @@ preserved_dir() {
     echo "$(dirname "$config_path")/skill-backups"
 }
 
-# Whether the installed skill still matches the copy its own version shipped.
-#
-# dpkg's rule for a conffile, and for the same reason: what we shipped is
-# reproducible — every release tag carries this file, and SLACK_CLI_VERSION
-# reinstalls it — so replacing an untouched copy destroys nothing that cannot
-# be fetched back. An edited one exists nowhere else, and is the only copy
-# worth keeping.
-#
-# Answers "modified" when it cannot tell (offline, or a version that was never
-# published): the cost of keeping a copy needlessly is one inert directory,
-# and the cost of guessing wrong the other way is the user's edits.
-skill_is_modified() {
-    local installed_version="$1"
-    local shipped
-    local expected
-    local actual
-
-    [ -f "$USER_SKILL_DIR/SKILL.md" ] || return 1
-    case "$installed_version" in
-        ""|unknown) return 0 ;;
-    esac
-
-    shipped=$(mktemp "${TMPDIR:-/tmp}/slack-cli-shipped.XXXXXX") || return 0
-    if ! curl -fsSL \
-        "https://raw.githubusercontent.com/$REPO/v$installed_version/.claude/skills/$SKILL_NAME/SKILL.md" \
-        -o "$shipped" 2>/dev/null; then
-        rm -f "$shipped"
-        return 0
-    fi
-
-    expected=$(compute_sha256 "$shipped") || { rm -f "$shipped"; return 0; }
-    actual=$(compute_sha256 "$USER_SKILL_DIR/SKILL.md") || { rm -f "$shipped"; return 0; }
-    rm -f "$shipped"
-
-    [ "$expected" != "$actual" ]
-}
-
-# Replaces the installed skill, the way a package manager replaces a file it
-# shipped. Only a copy the user has edited is set aside first — and if there is
-# nowhere safe to put it, the skill is left alone rather than overwritten.
 replace_skill() {
     local installed_version="$1"
     local keep
     local kept
 
-    if skill_is_modified "$installed_version"; then
-        if keep=$(preserved_dir); then
-            kept="$keep/$SKILL_NAME.v$installed_version.$(date +%Y%m%d_%H%M%S)"
-            mkdir -p "$keep"
-            cp -r "$USER_SKILL_DIR" "$kept"
-            echo "📝 Your copy differs from the one v$installed_version shipped." >&2
-            echo "   Kept at: $(display_path "$kept")" >&2
-        else
-            echo "⚠️  Your copy differs from the one v$installed_version shipped, and there is" >&2
-            echo "   nowhere outside the skills directory to set it aside. Leaving it as it is." >&2
-            return 1
-        fi
+    keep=$(preserved_dir) || return 1
+    mkdir -p "$keep" || return 1
+    kept=$(mktemp -d "$keep/$SKILL_NAME.v$installed_version.XXXXXX") || return 1
+    if ! cp -R "$USER_SKILL_DIR/." "$kept/"; then
+        rm -rf "$kept"
+        echo "❌ Could not preserve the installed skill; leaving it unchanged" >&2
+        return 1
     fi
-
-    rm -rf "$USER_SKILL_DIR"
+    echo "📦 Previous skill preserved at: $(display_path "$kept")" >&2
     install_skill
-    return 0
 }
 
 install_skill() {
-    echo "📋 Installing skill to $USER_SKILL_DIR" >&2
-    mkdir -p "$(dirname "$USER_SKILL_DIR")"
-    rm -rf "$USER_SKILL_DIR"
-    cp -r "$SKILL_SOURCE_DIR" "$USER_SKILL_DIR"
+    local parent
+    local staging
+    parent=$(dirname "$USER_SKILL_DIR")
+    mkdir -p "$parent" || return 1
+    staging=$(mktemp -d "$parent/.$SKILL_NAME.XXXXXX") || return 1
+    if ! cp -R "$SKILL_SOURCE_DIR" "$staging/replacement"; then
+        rm -rf "$staging"
+        return 1
+    fi
+    if [ -e "$USER_SKILL_DIR" ] || [ -L "$USER_SKILL_DIR" ]; then
+        if ! mv "$USER_SKILL_DIR" "$staging/previous"; then
+            rm -rf "$staging"
+            return 1
+        fi
+    fi
+    if ! mv "$staging/replacement" "$USER_SKILL_DIR"; then
+        if [ -e "$staging/previous" ] || [ -L "$staging/previous" ]; then
+            mv "$staging/previous" "$USER_SKILL_DIR" || {
+                echo "❌ Could not restore the previous skill; preserved at $staging/previous" >&2
+                return 1
+            }
+        fi
+        rm -rf "$staging"
+        return 1
+    fi
+    rm -rf "$staging"
     echo "   ✅ Skill installed" >&2
 }
 
