@@ -498,3 +498,54 @@ async fn malformed_retry_after_uses_bounded_backoff_and_stops_at_the_attempt_lim
         Some(slack_cli::slack::SlackApiError::RateLimitExhausted { attempts: 3, .. })
     ));
 }
+
+#[tokio::test]
+async fn installation_identities_keep_the_human_principal_and_validate_the_bot() {
+    use wiremock::matchers::header;
+    let server = MockServer::start().await;
+    for (token, identity) in [
+        (
+            "xoxp-test-user",
+            json!({"ok":true,"team":"Team","team_id":"T1","user":"Human","user_id":"UHUMAN123"}),
+        ),
+        (
+            "xoxb-test-bot",
+            json!({"ok":true,"team":"Team","team_id":"T1","user":"Bot","user_id":"UBOT12345","bot_id":"BBOT12345"}),
+        ),
+    ] {
+        Mock::given(path("/auth.test"))
+            .and(header("authorization", format!("Bearer {token}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(identity))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let (client, _store) = test_client(&server).await;
+    let identities = client.auth.identities().await.unwrap();
+    assert_eq!(identities.primary.user_id, "UHUMAN123");
+    assert_eq!(
+        identities.secondary.unwrap().bot_id.as_deref(),
+        Some("BBOT12345")
+    );
+}
+
+#[tokio::test]
+async fn installation_identities_reject_credentials_from_different_workspaces() {
+    use wiremock::matchers::header;
+    let server = MockServer::start().await;
+    for (token, team) in [("xoxp-test-user", "T1"), ("xoxb-test-bot", "T2")] {
+        Mock::given(path("/auth.test")).and(header("authorization", format!("Bearer {token}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"team":"Team","team_id":team,"user":"Actor","user_id":"UACTOR123"})))
+            .mount(&server).await;
+    }
+    let (client, _store) = test_client(&server).await;
+    assert!(matches!(
+        client
+            .auth
+            .identities()
+            .await
+            .unwrap_err()
+            .downcast_ref::<slack_cli::auth::AuthError>(),
+        Some(slack_cli::auth::AuthError::WorkspaceMismatch { .. })
+    ));
+}

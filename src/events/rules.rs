@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashSet;
 
 use super::envelope::{Event, EventKind};
 use super::state::EventState;
@@ -33,6 +34,8 @@ pub struct RuleEngine {
     all_sinks: Vec<String>,
     me: Option<String>,
     mention: Option<String>,
+    own_users: HashSet<String>,
+    own_bots: HashSet<String>,
 }
 
 struct CompiledRule {
@@ -55,8 +58,18 @@ impl RuleEngine {
                 .collect(),
             all_sinks,
             mention: me.as_ref().map(|id| format!("<@{id}")),
+            own_users: me.iter().cloned().collect(),
+            own_bots: HashSet::new(),
             me,
         }
+    }
+
+    pub fn with_own_identity(mut self, identity: &crate::slack::SlackAuthIdentity) -> Self {
+        self.own_users.insert(identity.user_id.clone());
+        if let Some(bot) = &identity.bot_id {
+            self.own_bots.insert(bot.clone());
+        }
+        self
     }
 
     /// Channels a rule names outright. Marked recoverable at startup so a
@@ -216,8 +229,14 @@ impl RuleEngine {
     ) -> Result<bool> {
         if event.kind == EventKind::Message
             && !rule.config.include_own_messages
-            && event.user.is_some()
-            && event.user == self.me
+            && (event
+                .user
+                .as_ref()
+                .is_some_and(|user| self.own_users.contains(user))
+                || event
+                    .bot_id
+                    .as_ref()
+                    .is_some_and(|bot| self.own_bots.contains(bot)))
         {
             return Ok(false);
         }
@@ -424,6 +443,55 @@ mod tests {
             .evaluate(&message("hey <@U_SOMEONE>"), &state)
             .unwrap();
         assert!(!miss.matched());
+    }
+
+    #[test]
+    fn own_actor_filter_preserves_other_bots_and_explicit_opt_in() {
+        let (state, _dir) = state();
+        let bot: crate::slack::SlackAuthIdentity = serde_json::from_value(serde_json::json!({
+            "team":"Team", "team_id":"T1", "user":"Bot", "user_id":"U_BOT", "bot_id":"B_OWN"
+        }))
+        .unwrap();
+        for include_own_messages in [false, true] {
+            let guarded = engine(vec![RuleConfig {
+                channels: vec!["C0000001".into()],
+                include_own_messages,
+                ..rule("channel")
+            }])
+            .with_own_identity(&bot);
+            for (user, bot_id, own) in [
+                (Some(ME), None, true),
+                (Some("U_BOT"), None, true),
+                (None, Some("B_OWN"), true),
+                (Some("U_OTHER"), Some("B_OTHER"), false),
+                (None, Some("B_OTHER"), false),
+            ] {
+                let event = Event {
+                    user: user.map(str::to_owned),
+                    bot_id: bot_id.map(str::to_owned),
+                    ..message("reply")
+                };
+                assert_eq!(
+                    guarded.evaluate(&event, &state).unwrap().matched(),
+                    !own || include_own_messages
+                );
+            }
+        }
+        let bot_only = RuleEngine::new(
+            vec![RuleConfig {
+                channels: vec!["C0000001".into()],
+                ..rule("channel")
+            }],
+            vec![],
+            Some(bot.user_id.clone()),
+        )
+        .with_own_identity(&bot);
+        let event = Event {
+            user: None,
+            bot_id: bot.bot_id.clone(),
+            ..message("reply")
+        };
+        assert!(!bot_only.evaluate(&event, &state).unwrap().matched());
     }
 
     /// An assistant that answers its own messages is a loop, so the author

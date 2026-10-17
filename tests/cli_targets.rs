@@ -234,3 +234,130 @@ async fn empty_snapshots_replace_stale_rows_and_are_reused_without_refetching() 
         }
     }
 }
+
+#[tokio::test]
+async fn user_targets_use_the_operation_actor_instead_of_cached_human_dms() {
+    use wiremock::matchers::{body_partial_json, method, query_param};
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    for (token, channels, cursor) in [
+        (
+            "xoxp-user",
+            json!([{"id":"DHUMAN123","is_im":true,"user":"UTARGET12"}]),
+            "",
+        ),
+        ("xoxb-bot", json!([]), "next-im-page"),
+    ] {
+        Mock::given(path("/conversations.list"))
+            .and(header("authorization", format!("Bearer {token}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok":true,"channels":channels,"response_metadata":{"next_cursor":cursor}
+            })))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(path("/conversations.list"))
+        .and(header("authorization", "Bearer xoxb-bot"))
+        .and(query_param("cursor", "next-im-page"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok":true,"channels":[{"id":"DBOT12345","is_im":true,"user":"UTARGET12"}],
+            "response_metadata":{"next_cursor":""}
+        })))
+        .with_priority(1)
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(path("/chat.postMessage"))
+        .and(header("authorization", "Bearer xoxb-bot"))
+        .and(body_partial_json(json!({"channel":"DBOT12345"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok":true,"channel":"DBOT12345","ts":"1.000001"})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/conversations.history"))
+        .and(header("authorization", "Bearer xoxp-user"))
+        .and(query_param("channel", "DHUMAN123"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok":true,"messages":[],"has_more":false})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/bookmarks.list"))
+        .and(header("authorization", "Bearer xoxb-bot"))
+        .and(query_param("channel_id", "DBOT12345"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"bookmarks":[]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(path("/assistant.search.context"))
+        .and(header("authorization", "Bearer xoxp-user"))
+        .and(body_partial_json(json!({"context_channel_id":"DHUMAN123"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"results":{}})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    for args in [
+        vec!["cache", "refresh", "channels"],
+        vec!["send", "UTARGET12", "-t", "hello"],
+        vec!["messages", "UTARGET12"],
+        vec!["bookmarks", "UTARGET12"],
+        vec!["search", "hello", "--channel", "UTARGET12"],
+    ] {
+        let output = command(dir.path(), &server)
+            .env("SLACK_USER_TOKEN", "xoxp-user")
+            .env("SLACK_BOT_TOKEN", "xoxb-bot")
+            .args(&args)
+            .output()
+            .await
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+    }
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() != "/conversations.open")
+    );
+}
+
+#[tokio::test]
+async fn missing_bot_dm_never_falls_back_to_a_human_sender() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    Mock::given(path("/conversations.list"))
+        .and(header("authorization", "Bearer xoxb-bot"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({"ok":true,"channels":[],"response_metadata":{"next_cursor":""}}),
+            ),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = command(dir.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-user")
+        .env("SLACK_BOT_TOKEN", "xoxb-bot")
+        .args(["send", "UTARGET12", "-t", "hello"])
+        .output()
+        .await
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("selected bot token"));
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() == "/conversations.list")
+    );
+}

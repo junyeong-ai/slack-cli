@@ -279,7 +279,11 @@ impl SlackSearchClient {
 
             let response = self
                 .core
-                .api_call("assistant.search.context", params.clone())
+                .api_call_in_conversation(
+                    "assistant.search.context",
+                    params.clone(),
+                    "context_channel_id",
+                )
                 .await
                 .context("Search requires a user token (xoxp-...) with search:read.* scopes")?;
             let response: SearchContextResponse = serde_json::from_value(response)?;

@@ -1,3 +1,20 @@
+pub fn is_conversation_id(input: &str) -> bool {
+    is_id_with_prefix(input, |c| matches!(c, 'C' | 'D' | 'G'))
+}
+
+pub fn is_user_id(input: &str) -> bool {
+    is_id_with_prefix(input, |c| matches!(c, 'U' | 'W'))
+}
+
+fn is_id_with_prefix(input: &str, allow: impl Fn(char) -> bool) -> bool {
+    let mut chars = input.chars();
+    match chars.next() {
+        Some(first) if allow(first) => {}
+        _ => return false,
+    }
+    chars.clone().count() >= 8 && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]

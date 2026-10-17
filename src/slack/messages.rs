@@ -112,7 +112,10 @@ impl SlackMessageClient {
     ) -> Result<MessageResponse> {
         payload.validate()?;
         let params = payload.into_post_json(channel, thread_ts);
-        let response = self.core.api_call("chat.postMessage", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("chat.postMessage", params, "channel")
+            .await?;
 
         let ts = response["ts"]
             .as_str()
@@ -131,7 +134,10 @@ impl SlackMessageClient {
     ) -> Result<MessageResponse> {
         payload.validate()?;
         let params = payload.into_update_json(channel, ts);
-        let response = self.core.api_call("chat.update", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("chat.update", params, "channel")
+            .await?;
 
         Ok(MessageResponse {
             channel: response["channel"].as_str().unwrap_or(channel).to_string(),
@@ -145,7 +151,10 @@ impl SlackMessageClient {
             "ts": ts,
         });
 
-        let response = self.core.api_call("chat.delete", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("chat.delete", params, "channel")
+            .await?;
 
         Ok(MessageResponse {
             channel: response["channel"].as_str().unwrap_or(channel).to_string(),
@@ -159,7 +168,10 @@ impl SlackMessageClient {
             "message_ts": message_ts,
         });
 
-        let response = self.core.api_call("chat.getPermalink", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("chat.getPermalink", params, "channel")
+            .await?;
 
         response["permalink"]
             .as_str()
@@ -191,7 +203,10 @@ impl SlackMessageClient {
             params["latest"] = json!(latest);
         }
 
-        let mut response = self.core.api_call("conversations.history", params).await?;
+        let mut response = self
+            .core
+            .api_call_in_conversation("conversations.history", params, "channel")
+            .await?;
 
         let raw_messages = response
             .get_mut("messages")
@@ -257,7 +272,10 @@ impl SlackMessageClient {
                 params["cursor"] = json!(c);
             }
 
-            let mut response = self.core.api_call("conversations.replies", params).await?;
+            let mut response = self
+                .core
+                .api_call_in_conversation("conversations.replies", params, "channel")
+                .await?;
 
             let raw_messages = response
                 .get_mut("messages")

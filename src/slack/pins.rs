@@ -32,7 +32,9 @@ impl SlackPinClient {
             "timestamp": ts,
         });
 
-        self.core.api_call("pins.add", params).await?;
+        self.core
+            .api_call_in_conversation("pins.add", params, "channel")
+            .await?;
 
         Ok(())
     }
@@ -43,7 +45,9 @@ impl SlackPinClient {
             "timestamp": ts,
         });
 
-        self.core.api_call("pins.remove", params).await?;
+        self.core
+            .api_call_in_conversation("pins.remove", params, "channel")
+            .await?;
 
         Ok(())
     }
@@ -53,7 +57,10 @@ impl SlackPinClient {
             "channel": channel,
         });
 
-        let response = self.core.api_call("pins.list", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("pins.list", params, "channel")
+            .await?;
 
         let items = response
             .get("items")

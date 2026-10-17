@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-10-17
+
+### Fixed
+
+- Exclude all verified human and bot actors from event rules by default, preventing own-bot reply loops while retaining primary-user mentions, reactions and explicit own-message opt-in.
+- Resolve user-ID DM targets with the actual operation credential and use that same credential for the request. Never reuse another sender's cached DM, create a DM during lookup or fall back to a different sender.
+
+### Changed
+
+- Daemon startup validates both installation identities and rejects mixed workspaces. Add `AuthError::WorkspaceMismatch`, `SlackAuthClient::identities` and `RuleEngine::with_own_identity`.
+- User-ID targets query accessible existing DMs directly; they no longer require an IM cache refresh. Direct conversation IDs retain their behavior and permissions.
+
 ## [0.17.1] - 2026-10-17
 
 ### Fixed

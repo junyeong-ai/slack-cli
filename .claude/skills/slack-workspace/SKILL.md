@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.17.1"
+  version: "0.18.0"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -156,7 +156,7 @@ generate-blocks.sh | slack-cli send "#alerts" -t "fallback" -b -
 | `#name`, `name` | Unique exact name in the local cache (case-insensitive) |
 | `C…`, `G…` | Channel ID (public / private channel, MPIM) — passthrough |
 | `D…` | DM channel ID — passthrough |
-| `U…`, `W…` | User ID — auto-resolves to that user's DM channel via cache (`channel_types` must include `im` and cache must be refreshed) |
+| `U…`, `W…` | User ID — resolves an existing DM with the operation's selected token; does not create a DM or switch senders |
 
 Names resolve via the local cache; partial matches never select a target. If the name is unknown, run `slack-cli cache refresh` and retry. When a name is ambiguous, inspect `slack-cli channels <name> --json` and select the intended ID.
 

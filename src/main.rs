@@ -625,22 +625,8 @@ async fn resolve_channel(
     cache: &cache::SqliteCache,
     json: bool,
 ) -> Result<String> {
-    if is_slack_conversation_id(input) {
+    if slack::is_conversation_id(input) || slack::is_user_id(input) {
         return Ok(input.to_string());
-    }
-
-    if is_slack_user_id(input) {
-        let user = input.to_owned();
-        if let Some(dm_id) = cache
-            .execute(move |cache| cache.find_dm_by_user(&user))
-            .await?
-        {
-            return Ok(dm_id);
-        }
-        anyhow::bail!(
-            "No DM cached for user {}. Add \"im\" to `cache.channel_types` and run `slack-cli cache refresh`.",
-            input
-        );
     }
 
     let name = input.trim_start_matches('#').trim_start_matches('@');
@@ -677,23 +663,6 @@ async fn resolve_channel(
             input
         ),
     }
-}
-
-fn is_slack_conversation_id(input: &str) -> bool {
-    is_slack_id_with_prefix(input, |c| matches!(c, 'C' | 'D' | 'G'))
-}
-
-fn is_slack_user_id(input: &str) -> bool {
-    is_slack_id_with_prefix(input, |c| matches!(c, 'U' | 'W'))
-}
-
-fn is_slack_id_with_prefix(input: &str, allow: impl Fn(char) -> bool) -> bool {
-    let mut chars = input.chars();
-    match chars.next() {
-        Some(first) if allow(first) => {}
-        _ => return false,
-    }
-    chars.clone().count() >= 8 && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
 async fn ensure_users_cache(

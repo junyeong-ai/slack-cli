@@ -26,6 +26,14 @@ pub enum AuthError {
         team: String,
     },
 
+    #[error(
+        "user and bot credentials belong to different workspaces ({primary_team} and {secondary_team}); log in with credentials from the same workspace"
+    )]
+    WorkspaceMismatch {
+        primary_team: String,
+        secondary_team: String,
+    },
+
     #[error("no token available for policy {policy} in profile '{profile}'")]
     NoTokenForPolicy {
         profile: String,

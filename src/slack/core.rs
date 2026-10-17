@@ -133,6 +133,66 @@ impl SlackCore {
         .await
     }
 
+    pub(crate) async fn api_call_in_conversation(
+        &self,
+        method: &str,
+        mut params: Value,
+        channel_field: &str,
+    ) -> Result<Value> {
+        let config = lookup_config(method)?;
+        let (token, kind) = self.auth.token_for(config.token_policy).await?;
+        if let Some(user) = params
+            .get(channel_field)
+            .and_then(Value::as_str)
+            .filter(|id| super::is_user_id(id))
+        {
+            let channel = self.dm_for(user, token.expose_secret(), kind).await?;
+            params[channel_field] = Value::String(channel);
+        }
+        self.dispatch(method, config, params, token.expose_secret(), Some(kind))
+            .await
+    }
+
+    async fn dm_for(&self, user: &str, token: &str, kind: TokenKind) -> Result<String> {
+        let config = lookup_config("conversations.list")?;
+        let mut cursor = None;
+        loop {
+            let mut params =
+                serde_json::json!({ "types": "im", "limit": 200, "exclude_archived": false });
+            if let Some(cursor) = cursor {
+                params["cursor"] = Value::String(cursor);
+            }
+            let response = self
+                .dispatch("conversations.list", config, params, token, Some(kind))
+                .await?;
+            let channels = response
+                .get("channels")
+                .and_then(Value::as_array)
+                .context("Missing channels in conversations.list response")?;
+            for channel in channels {
+                if channel.get("user").and_then(Value::as_str) == Some(user)
+                    && channel.get("is_im").and_then(Value::as_bool) == Some(true)
+                {
+                    return channel
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned)
+                        .context("Missing DM ID in conversations.list response");
+                }
+            }
+            cursor = response
+                .pointer("/response_metadata/next_cursor")
+                .and_then(Value::as_str)
+                .filter(|cursor| !cursor.is_empty())
+                .map(ToOwned::to_owned);
+            if cursor.is_none() {
+                anyhow::bail!(
+                    "No existing DM with user {user} is accessible to the selected {kind} token. Open a DM with that sender first, or use an accessible D channel ID"
+                );
+            }
+        }
+    }
+
     pub async fn api_call_with(&self, method: &str, params: Value, token: &str) -> Result<Value> {
         let api_config = lookup_config(method)?;
         self.dispatch(method, api_config, params, token, None).await

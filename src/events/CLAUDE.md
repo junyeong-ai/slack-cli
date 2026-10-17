@@ -222,3 +222,5 @@ consumer at `events pull` instead.
 `daemon stop` records a request in the profile state database. The daemon checks it during startup and while connected, then drains its queue before exiting. No external PID is signalled. Shutdown cancels recovery, drains the processing queue and waits for active database workers before releasing the profile lock. A record from an older daemon has no control flag; it must be stopped through its service manager before upgrading.
 
 Stdout uses one process-owned writer thread, outside the runtime blocking pool, so an unread pipe cannot hold runtime shutdown. Timeout, cancellation or write failure retires stdout until process restart; an in-flight write may still finish. Other sinks and durable log processing continue.
+
+Mentions and subscription reactions use the primary user. The default own-message filter checks all verified user and bot actor IDs, including bot-only events without a user field. Other bots remain eligible; `include_own_messages` explicitly permits own actors.

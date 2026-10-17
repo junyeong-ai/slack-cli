@@ -42,7 +42,7 @@ slack-cli send "#general" -t "Hello!"
 
 ### 채널 식별자 (`<channel>` 인자)
 
-`#name` · `name` (대소문자를 무시한 유일한 정확한 캐시 이름) · `C…/G…` 채널 ID · `D…` DM ID · `U…/W…` 유저 ID (해당 유저와의 DM 채널로 자동 해석 — `cache refresh` 시점에 `channel_types` 에 `im` 포함 필요)
+`#name` · `name` (대소문자를 무시한 유일한 정확한 캐시 이름) · `C…/G…` 채널 ID · `D…` DM ID · `U…/W…` 유저 ID (실제 작업 토큰으로 접근 가능한 기존 DM을 조회하며, DM을 새로 만들지 않음)
 
 ### 메시지
 ```bash
@@ -539,7 +539,7 @@ stdout 싱크가 시간 초과되거나 쓰기에 실패하면 해당 프로세�
 - `channels` — 대화 ID 허용 목록 (이름이 아니라 ID — `slack-cli channels <name>`으로 확인)
 - `subscribe_emoji` — **내가** 그 이모지를 찍은 메시지의 스레드를 구독하고, 이후 답글이 매칭됩니다. 이모지를 떼면 구독이 해제됩니다. 이모지가 곧 구독 버튼입니다.
 
-`include_own_messages`는 기본 `false`입니다 — 자기 메시지에 반응하는 비서는 루프가 됩니다.
+`include_own_messages = false`는 인증된 사람과 봇의 메시지를 모두 제외하며, 다른 봇 메시지는 규칙에 따라 처리합니다. 멘션과 구독 리액션은 기본 사용자 기준으로 판정합니다. 기본값은 `false`입니다 — 자기 메시지에 반응하는 비서는 루프가 됩니다.
 
 ### 에이전트에 연결하기
 

@@ -46,7 +46,10 @@ impl SlackBookmarkClient {
             params["emoji"] = json!(emoji);
         }
 
-        let response = self.core.api_call("bookmarks.add", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("bookmarks.add", params, "channel_id")
+            .await?;
 
         let bookmark = response
             .get("bookmark")
@@ -73,7 +76,9 @@ impl SlackBookmarkClient {
             "bookmark_id": bookmark_id,
         });
 
-        self.core.api_call("bookmarks.remove", params).await?;
+        self.core
+            .api_call_in_conversation("bookmarks.remove", params, "channel_id")
+            .await?;
 
         Ok(())
     }
@@ -83,7 +88,10 @@ impl SlackBookmarkClient {
             "channel_id": channel,
         });
 
-        let response = self.core.api_call("bookmarks.list", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("bookmarks.list", params, "channel_id")
+            .await?;
 
         let bookmarks = response
             .get("bookmarks")

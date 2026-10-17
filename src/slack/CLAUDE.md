@@ -109,3 +109,5 @@ Both RTS methods are wired in: `assistant.search.context` runs the query, `assis
 ## Response shapes
 
 Domain types in `slack/types.rs` are shared across modules. Module-local result structs (e.g. `SearchMessageResult`) stay private to their module unless re-exported via `slack/mod.rs`.
+
+Channel-targeted methods use `SlackCore::api_call_in_conversation` with their explicit channel field. User IDs resolve through existing IMs with the operation token, and the same token performs the operation. Reads never open DMs; no automatic sender fallback is permitted. `auth.identities` validates each held installation actor and preserves the primary user separately from the optional bot.

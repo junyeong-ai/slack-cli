@@ -323,13 +323,14 @@ pub async fn run(
         .await?;
     let shutdown = shutdown_requested(runtime.state.clone());
     tokio::pin!(shutdown);
-    let identity = tokio::select! {
-        identity = resolve_identity(&slack) => identity?,
+    let identities = tokio::select! {
+        identities = resolve_identities(&slack) => identities?,
         result = &mut shutdown => return result,
     };
+    let identity = &identities.primary;
     if let Some(owner) = &runtime.owner {
         anyhow::ensure!(
-            owner.accepts(&identity),
+            owner.accepts(identity),
             "Slack identity does not match the event store owner; log in again"
         );
     }
@@ -349,11 +350,12 @@ pub async fn run(
             rule.sinks.clear();
         }
     }
-    let engine = Arc::new(RuleEngine::new(
-        rules,
-        sinks.names(),
-        Some(identity.user_id.clone()),
-    ));
+    let mut engine = RuleEngine::new(rules, sinks.names(), Some(identity.user_id.clone()))
+        .with_own_identity(identity);
+    if let Some(secondary) = &identities.secondary {
+        engine = engine.with_own_identity(secondary);
+    }
+    let engine = Arc::new(engine);
 
     // A channel a rule names is a recovery candidate from the start, before it
     // has ever produced a match.
@@ -610,16 +612,17 @@ fn authorized_teams(payload: &Value) -> String {
 /// A daemon started at boot may come up before the network does. A refused
 /// token will not fix itself and is reported at once; anything else is worth
 /// a few seconds.
-async fn resolve_identity(slack: &SlackClient) -> Result<crate::slack::SlackAuthIdentity> {
+async fn resolve_identities(
+    slack: &SlackClient,
+) -> Result<crate::slack::auth::SlackAuthIdentities> {
     let mut pause = RECONNECT_MIN;
 
     for attempt in 1..=IDENTITY_ATTEMPTS {
-        match slack.auth.identity().await {
+        match slack.auth.identities().await {
             Ok(identity) => return Ok(identity),
             Err(err) if is_fatal(&err) || attempt == IDENTITY_ATTEMPTS => {
                 return Err(err).context(
-                    "the daemon needs to know which user it is running as before it can \
-                     recognise a mention. Check `slack-cli auth status --verify`",
+                    "the daemon must verify its user and bot identities before processing events. Check `slack-cli auth status --verify`",
                 );
             }
             Err(err) => {
@@ -645,6 +648,7 @@ fn is_fatal(err: &anyhow::Error) -> bool {
             return matches!(
                 auth,
                 AuthError::NoAppToken
+                    | AuthError::WorkspaceMismatch { .. }
                     | AuthError::NotConfigured
                     | AuthError::UnknownProfile(_)
                     | AuthError::AuthorizationChanged(_)

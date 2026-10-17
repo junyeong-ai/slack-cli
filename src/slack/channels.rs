@@ -84,7 +84,10 @@ impl SlackChannelClient {
                 params["cursor"] = json!(c);
             }
 
-            let response = self.core.api_call("conversations.members", params).await?;
+            let response = self
+                .core
+                .api_call_in_conversation("conversations.members", params, "channel")
+                .await?;
 
             let members = response
                 .get("members")

@@ -36,7 +36,9 @@ impl SlackReactionClient {
             "name": name,
         });
 
-        self.core.api_call("reactions.add", params).await?;
+        self.core
+            .api_call_in_conversation("reactions.add", params, "channel")
+            .await?;
 
         Ok(())
     }
@@ -49,7 +51,9 @@ impl SlackReactionClient {
             "name": name,
         });
 
-        self.core.api_call("reactions.remove", params).await?;
+        self.core
+            .api_call_in_conversation("reactions.remove", params, "channel")
+            .await?;
 
         Ok(())
     }
@@ -61,7 +65,10 @@ impl SlackReactionClient {
             "full": true,
         });
 
-        let response = self.core.api_call("reactions.get", params).await?;
+        let response = self
+            .core
+            .api_call_in_conversation("reactions.get", params, "channel")
+            .await?;
 
         let reactions = response
             .get("message")

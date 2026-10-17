@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::core::SlackCore;
+use crate::auth::{AuthError, TokenPolicy};
 
 pub struct SlackAuthClient {
     core: Arc<SlackCore>,
@@ -26,6 +28,12 @@ pub struct SlackAuthIdentity {
     pub enterprise_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_enterprise_install: Option<bool>,
+}
+
+#[derive(Debug)]
+pub struct SlackAuthIdentities {
+    pub primary: SlackAuthIdentity,
+    pub secondary: Option<SlackAuthIdentity>,
 }
 
 impl SlackAuthClient {
@@ -51,6 +59,26 @@ impl SlackAuthClient {
     pub async fn identity(&self) -> Result<SlackAuthIdentity> {
         let response = self.core.api_call("auth.test", json!({})).await?;
         serde_json::from_value(response).context("auth.test response did not match expected shape")
+    }
+
+    pub async fn identities(&self) -> Result<SlackAuthIdentities> {
+        let (token, primary_kind) = self.core.auth.token_for(TokenPolicy::UserPreferred).await?;
+        let primary = self.test(token.expose_secret()).await?;
+        let (token, secondary_kind) = self.core.auth.token_for(TokenPolicy::BotPreferred).await?;
+        let secondary = if primary_kind == secondary_kind {
+            None
+        } else {
+            let identity = self.test(token.expose_secret()).await?;
+            if primary.team_id != identity.team_id {
+                return Err(AuthError::WorkspaceMismatch {
+                    primary_team: primary.team_id,
+                    secondary_team: identity.team_id,
+                }
+                .into());
+            }
+            Some(identity)
+        };
+        Ok(SlackAuthIdentities { primary, secondary })
     }
 
     /// Calls `auth.revoke` against Slack with an explicit token.

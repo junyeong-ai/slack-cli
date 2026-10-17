@@ -42,7 +42,7 @@ slack-cli send "#general" -t "Hello!"
 
 ### Channel identifier (`<channel>` argument)
 
-`#name` · `name` (unique exact cached name, case-insensitive) · `C…/G…` channel ID · `D…` DM ID · `U…/W…` user ID (auto-resolves to that user's DM channel — requires `im` in `channel_types` at the next `cache refresh`)
+`#name` · `name` (unique exact cached name, case-insensitive) · `C…/G…` channel ID · `D…` DM ID · `U…/W…` user ID (looks up an existing DM accessible to the operation's token; never creates a DM)
 
 ### Messages
 ```bash
@@ -552,7 +552,7 @@ Rules are configuration, not code, and a wrong one is refused when the config lo
 - `channels` — an allowlist of conversation IDs, not names (`slack-cli channels <name>` prints them)
 - `subscribe_emoji` — **your own** reaction subscribes that message's thread, and every later reply matches. Removing the reaction unsubscribes. The emoji is the subscribe button.
 
-`include_own_messages` defaults to `false`: an assistant that answers its own messages is a loop.
+`include_own_messages = false` excludes messages from both authenticated human and bot actors, while other bots remain eligible. Mentions and subscription reactions use the primary user. It defaults to `false`: an assistant that answers its own messages is a loop.
 
 ### Wiring it to an agent
 
