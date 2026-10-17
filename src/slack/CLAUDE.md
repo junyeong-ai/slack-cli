@@ -33,12 +33,14 @@ Metadata is a first-class field on `MessagePayload` and on `SlackMessage`. `conv
 ```
 SlackCore::api_call(method, params)
   → get_api_config(method)           encoding, token policy, rate policy, scopes
-  → method-level rate limiter        governor + Jitter::up_to(100ms)
   → token via Authenticator::token_for
-  → HTTP via reqwest                 Query or Json encoding
+  → method-level rate gate           shared cooldown + governor, every attempt
+  → HTTP via reqwest                 Query, Json or Form encoding
   → retry on HTTP 429                respect Retry-After header
   → parse JSON, check `"ok"` field   Err on ok=false with the API's error string
 ```
+
+Rate gates are shared by calls on one `SlackCore`; they do not coordinate independent CLI processes. A 429 defers subsequent calls to the same method, including retries. Transport errors and 5xx responses are returned without automatic replay because a write may already have taken effect.
 
 Effective rate = `min(config.connection.rate_limit_per_minute, per-method rate)`. The per-method rate is the ceiling; user config can only lower it.
 

@@ -6,6 +6,9 @@ use r2d2_sqlite::SqliteConnectionManager;
 
 use super::error::CacheResult;
 use super::schema;
+use crate::blocking::BlockingExecutor;
+
+const POOL_SIZE: u32 = 10;
 
 /// Retry budget for the one-time WAL switch: SQLite returns SQLITE_BUSY
 /// without consulting the busy handler on journal-mode transitions, so a
@@ -16,7 +19,8 @@ const WAL_SWITCH_RETRY_DELAY_MS: u64 = 50;
 #[derive(Debug, Clone)]
 pub struct SqliteCache {
     pub(super) pool: Pool<SqliteConnectionManager>,
-    pub(super) instance_id: String,
+    executor: BlockingExecutor,
+    pub(super) writer: BlockingExecutor,
 }
 
 fn is_busy(err: &rusqlite::Error) -> bool {
@@ -31,8 +35,11 @@ fn is_busy(err: &rusqlite::Error) -> bool {
 
 impl SqliteCache {
     pub async fn new(path: impl AsRef<Path>) -> CacheResult<Self> {
-        let path = path.as_ref();
+        let path = path.as_ref().to_path_buf();
+        tokio::task::spawn_blocking(move || Self::open(&path)).await?
+    }
 
+    fn open(path: &Path) -> CacheResult<Self> {
         // Ensure parent directory exists (skip for in-memory databases)
         let is_memory = path == Path::new(":memory:");
         if !is_memory && let Some(parent) = path.parent() {
@@ -64,12 +71,16 @@ impl SqliteCache {
         });
 
         let pool = Pool::builder()
-            .max_size(10)
+            .max_size(POOL_SIZE)
             .min_idle(Some(2))
             .connection_timeout(Duration::from_secs(5))
             .build(manager)?;
 
-        let cache = Self { pool, instance_id };
+        let cache = Self {
+            pool,
+            executor: BlockingExecutor::new(POOL_SIZE),
+            writer: BlockingExecutor::new(1),
+        };
 
         // WAL mode persists in the database file: switch it once, before any
         // other database activity, instead of per connection (skip in-memory).
@@ -81,43 +92,27 @@ impl SqliteCache {
                     return Err(err.into());
                 }
                 attempts += 1;
-                tokio::time::sleep(Duration::from_millis(WAL_SWITCH_RETRY_DELAY_MS)).await;
+                std::thread::sleep(Duration::from_millis(WAL_SWITCH_RETRY_DELAY_MS));
             }
         }
 
-        schema::initialize_schema(&cache.pool).await?;
+        schema::initialize_schema(&cache.pool)?;
         Ok(cache)
+    }
+
+    /// Runs a synchronous cache operation without occupying a runtime worker.
+    pub async fn execute<T, F>(&self, operation: F) -> CacheResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Self) -> CacheResult<T> + Send + 'static,
+    {
+        let cache = self.clone();
+        self.executor.execute(move || operation(&cache)).await
     }
 
     #[cfg(test)]
     pub fn new_sync(path: impl AsRef<Path>) -> CacheResult<Self> {
-        let path = path.as_ref();
-        let is_memory = path == Path::new(":memory:");
-        let instance_id = uuid::Uuid::new_v4().to_string();
-
-        let manager = if is_memory {
-            SqliteConnectionManager::file(format!("file:{}?mode=memory&cache=shared", instance_id))
-        } else {
-            SqliteConnectionManager::file(path)
-        }
-        .with_init(move |conn| {
-            conn.execute_batch(
-                "PRAGMA synchronous = NORMAL;
-                 PRAGMA foreign_keys = ON;
-                 PRAGMA busy_timeout = 5000;",
-            )?;
-            Ok(())
-        });
-
-        let pool = Pool::builder()
-            .max_size(10)
-            .min_idle(Some(2))
-            .connection_timeout(Duration::from_secs(5))
-            .build(manager)?;
-
-        let cache = Self { pool, instance_id };
-        schema::initialize_schema_sync(&cache.pool)?;
-        Ok(cache)
+        Self::open(path.as_ref())
     }
 }
 
@@ -130,9 +125,7 @@ mod tests {
         let result = SqliteCache::new(":memory:").await;
         assert!(result.is_ok());
 
-        let cache = result.unwrap();
-        assert!(!cache.instance_id.is_empty());
-        assert!(uuid::Uuid::parse_str(&cache.instance_id).is_ok());
+        assert_eq!(result.unwrap().get_counts().unwrap(), (0, 0));
     }
 
     #[tokio::test]
@@ -151,16 +144,25 @@ mod tests {
 
         assert!(tables.contains(&"users".to_string()));
         assert!(tables.contains(&"channels".to_string()));
-        assert!(tables.contains(&"locks".to_string()));
         assert!(tables.contains(&"metadata".to_string()));
     }
 
     #[tokio::test]
-    async fn test_unique_instance_ids() {
+    async fn in_memory_caches_are_isolated() {
         let cache1 = SqliteCache::new(":memory:").await.unwrap();
         let cache2 = SqliteCache::new(":memory:").await.unwrap();
 
-        assert_ne!(cache1.instance_id, cache2.instance_id);
+        cache1
+            .pool
+            .get()
+            .unwrap()
+            .execute(
+                r#"INSERT INTO users (id, data) VALUES ('U1', '{"name":"alice"}')"#,
+                [],
+            )
+            .unwrap();
+        assert_eq!(cache1.get_counts().unwrap(), (1, 0));
+        assert_eq!(cache2.get_counts().unwrap(), (0, 0));
     }
 
     #[tokio::test]

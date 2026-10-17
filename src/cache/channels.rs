@@ -2,7 +2,7 @@ use super::error::{CacheError, CacheResult};
 use super::sqlite_cache::SqliteCache;
 use crate::slack::types::SlackChannel;
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{TransactionBehavior, params};
 
 use rusqlite::OptionalExtension;
 
@@ -12,7 +12,9 @@ impl SqliteCache {
             return Err(CacheError::InvalidInput("No channels to save".to_string()));
         }
 
-        self.with_lock("channels_update", || self.save_channels_internal(channels))
+        let cache = self.clone();
+        self.writer
+            .execute(move || cache.save_channels_internal(channels))
             .await
     }
 
@@ -21,7 +23,7 @@ impl SqliteCache {
             return Err(CacheError::InvalidInput("No channels to save".to_string()));
         }
 
-        let conn = self.pool.get()?;
+        let mut conn = self.pool.get()?;
 
         conn.execute(
             "CREATE TEMP TABLE IF NOT EXISTS channels_new (
@@ -32,10 +34,8 @@ impl SqliteCache {
             [],
         )?;
 
-        conn.execute("DELETE FROM channels_new", [])?;
-
-        let tx = conn.unchecked_transaction()?;
-        let mut successful_count = 0;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM channels_new", [])?;
 
         for channel in channels {
             let json = serde_json::to_string(&channel)?;
@@ -43,13 +43,6 @@ impl SqliteCache {
                 "INSERT INTO channels_new (id, data) VALUES (?, ?)",
                 params![&channel.id, json],
             )?;
-            successful_count += 1;
-        }
-
-        if successful_count == 0 {
-            return Err(CacheError::InvalidInput(
-                "Failed to save any channels".to_string(),
-            ));
         }
 
         tx.execute("DELETE FROM channels", [])?;

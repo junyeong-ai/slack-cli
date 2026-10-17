@@ -1,4 +1,5 @@
 pub mod auth;
+mod blocking;
 pub mod cache;
 pub mod cli;
 pub mod config;

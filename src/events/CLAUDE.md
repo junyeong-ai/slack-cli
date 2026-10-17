@@ -2,8 +2,8 @@
 
 Opens Slack's Socket Mode WebSocket, normalizes what arrives, keeps only what a
 rule matched, and hands it to whatever is consuming. The reason it exists is
-arithmetic: `conversations.history` is one request a minute and 15 messages for
-a non-Marketplace app, so polling cannot follow a workspace. Events are pushed
+arithmetic: `conversations.history` can be limited to one request a minute and 15 messages for
+commercially distributed apps outside the Marketplace; internal apps retain their tiered limits, so polling cannot follow a workspace. Events are pushed
 on a separate axis, capped at 30,000 per workspace per hour.
 
 ## The pipeline, in order
@@ -117,7 +117,8 @@ on — but only one of them should be wired up at a time.
 1. **One daemon per Slack app.** Slack load-balances an app's payloads across
    its open connections, so a second daemon splits the stream rather than
    duplicating it, and each half sees a partial workspace. `DaemonLock` refuses
-   the second one; the failure would otherwise be silent.
+   a second process for the same profile. Different profiles and machines have
+   separate locks, so the operator must assign each daemon its own Slack app.
 2. **The daemon never holds a token.** Every call goes through
    `Authenticator::token_for`, so the 12-hour PKCE rotation is handled by the
    existing cross-process transaction. Caching a token at startup would work
@@ -208,3 +209,9 @@ on — but only one of them should be wired up at a time.
 is counted and logged, never propagated. One unreachable sink must not stop the
 daemon, and a sink that needs a guarantee is the wrong shape: point the
 consumer at `events pull` instead.
+
+## Execution boundaries
+
+`pipeline.rs` prepares and commits events on the state database executor and awaits sinks between those operations. Processing stays serial. Recovery and housekeeping use the same bounded executor; no pool wait or SQLite busy handler occupies the Socket Mode runtime. CLI event handlers live in `commands/events.rs`.
+
+`daemon stop` records a request in the profile state database. The daemon checks it during startup and while connected, then drains its queue before exiting. No external PID is signalled. Shutdown cancels recovery, drains the processing queue and waits for active database workers before releasing the profile lock. A record from an older daemon has no control flag; it must be stopped through its service manager before upgrading.

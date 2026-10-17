@@ -1,2 +1,0 @@
-pub const LOCK_TIMEOUT_SECS: i64 = 300;
-pub const STALE_LOCK_THRESHOLD_SECS: i64 = 600;

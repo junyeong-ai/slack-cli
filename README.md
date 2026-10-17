@@ -127,7 +127,7 @@ slack-cli config show                           # 설정 표시
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh`는 GitHub Release의 사전 빌드 바이너리를 내려받아 SHA-256 체크섬을 검증하고, `cosign`이 설치돼 있으면 sigstore 서명까지 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. Linux에서는 glibc/musl을 자동 감지합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다. 스킬을 갱신할 때는 배포본을 그대로 덮어씁니다 — 이전 버전은 `SLACK_CLI_VERSION=<버전> install.sh`로 다시 받을 수 있기 때문입니다. 다만 설치본을 직접 수정했다면 그 복사본만은 `~/.claude/skills` 바깥에 보관하고 경로를 알려줍니다. 스킬 디렉터리 안에 두면 Claude Code가 그것도 별개 스킬로 인식합니다.
+`install.sh`는 GitHub Release의 사전 빌드 바이너리를 내려받아 SHA-256 체크섬을 검증하고, `cosign`이 설치돼 있으면 sigstore 서명까지 검증한 뒤 `~/.local/bin/slack-cli`에 설치합니다. Linux에서는 glibc/musl을 자동 감지합니다. 같은 실행 안에서 Claude Code 스킬도 `~/.claude/skills/slack-workspace`에 설치할 수 있으므로 저장소를 clone할 필요가 없습니다. 스킬은 설치한 바이너리와 같은 버전의 태그에서 가져오며, 소스 빌드에서는 같은 버전의 로컬 스킬을 사용합니다. 일치하는 스킬이 없으면 기존 설치본을 유지합니다. 스킬을 갱신할 때는 배포본을 그대로 덮어씁니다 — 이전 버전은 `SLACK_CLI_VERSION=<버전> install.sh`로 다시 받을 수 있기 때문입니다. 다만 설치본을 직접 수정했다면 그 복사본만은 `~/.claude/skills` 바깥에 보관하고 경로를 알려줍니다. 스킬 디렉터리 안에 두면 Claude Code가 그것도 별개 스킬로 인식합니다.
 
 ```bash
 # 특정 릴리스 설치
@@ -148,10 +148,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### 소스 빌드
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release   # rust-toolchain.toml이 1.98.0 툴체인을 자동 선택
+cargo build --release --locked   # rust-toolchain.toml이 1.99.1 툴체인을 자동 선택
 ```
 
-**요구사항**: Rust 1.98.0+ (rustup)
+**요구사항**: Rust 1.98.0+ (rustup). 저장소 빌드는 1.99.1을 사용합니다.
 
 ---
 
@@ -387,7 +387,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `watch` | 매칭 이벤트를 stdout으로 스트리밍 (저장 없음, 설정된 싱크도 무시) |
 | `daemon run` | Socket Mode 데몬을 포그라운드로 실행 |
 | `daemon status` | 데몬이 실행 중인지(락으로 판단), 마지막 하트비트와 카운터 |
-| `daemon stop` | 실행 중인 데몬에 종료 신호 (Unix 전용; Windows에서는 서비스 관리자로) |
+| `daemon stop` | 현재 프로필의 데몬에 정상 종료 요청 |
 | `events pull [--consumer --ack --follow]` | 아직 ack하지 않은 이벤트 읽기 |
 | `events ack --through <seq>` | 소비자 위치 전진 |
 | `events stats` | 이벤트 로그 크기·보존·소비자 지연 |
@@ -468,7 +468,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 
 ## 실시간 이벤트 (Socket Mode)
 
-Slack이 이벤트를 밀어주는 WebSocket 연결을 열고, 규칙에 걸린 것만 골라 로컬로 전달합니다. `conversations.history`는 비-Marketplace 앱에서 분당 1회·15건으로 제한되므로 폴링으로는 여러 채널을 따라갈 수 없습니다. 이벤트 전달은 그 제한과 별개 축입니다.
+Slack이 이벤트를 밀어주는 WebSocket 연결을 열고, 규칙에 걸린 것만 골라 로컬로 전달합니다. `conversations.history`는 Marketplace 미승인 상용 배포 앱에서 분당 1회·15건으로 제한될 수 있으므로 폴링으로는 여러 채널을 따라갈 수 없습니다. 이벤트 전달은 그 제한과 별개 축입니다.
 
 ### 앱 설정
 
@@ -530,18 +530,23 @@ slack-cli daemon status
 회신은 새 프로토콜 없이 기존 CLI 그대로입니다:
 
 ```bash
-slack-cli events pull --consumer agent --follow --json |
-  while read -r event; do
-    ts=$(echo "$event" | jq -r '.thread_ts // .ts')
-    ch=$(echo "$event" | jq -r '.channel')
-    id=$(echo "$event" | jq -r '.id')
+set -euo pipefail
+batch=$(slack-cli events pull --consumer agent --limit 20 --json)
+while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    ts=$(jq -er '.thread_ts // .ts' <<<"$event")
+    ch=$(jq -er '.channel' <<<"$event")
+    id=$(jq -er '.id' <<<"$event")
+    seq=$(jq -er '.seq' <<<"$event")
     reply=$(my-agent "$event")
-    slack-cli send "$ch" --thread "$ts" -t "$reply" \
-      -m "{\"event_type\":\"assistant_reply\",\"event_payload\":{\"source_event\":\"$id\"}}"
-  done
+    metadata=$(jq -cn --arg id "$id" \
+        '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
+    slack-cli send "$ch" --thread "$ts" -t "$reply" -m "$metadata"
+    slack-cli events ack --consumer agent --through "$seq"
+done <<<"$batch"
 ```
 
-`--metadata`에 원본 이벤트 id를 실으면 에이전트가 재시작해도 같은 답을 두 번 보내지 않습니다. 배달은 at-least-once이므로 소비자는 멱등해야 합니다.
+처리에 성공한 이벤트만 ack합니다. `--metadata`는 원본 이벤트를 식별하는 표식이며 중복 전송을 자동 차단하지 않습니다. 소비자는 완료한 이벤트 ID를 기록하고, 재처리 전에 이전 전송 결과를 확인해야 합니다. 전송 성공 후 ack 전 종료되거나 응답이 유실되면 같은 이벤트가 다시 전달될 수 있습니다.
 
 > **경고**: user 토큰으로 보낸 메시지는 봇 표시 없이 **본인 이름으로** 나갑니다. 자동 전송은 봇 토큰으로 하거나, 초안을 본인에게 DM으로 보내고 승인 후 전송하세요.
 

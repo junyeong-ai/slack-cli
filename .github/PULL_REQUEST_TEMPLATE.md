@@ -8,8 +8,8 @@
 
 ## Test plan
 
-- [ ] `cargo nextest run --profile ci --all-features --workspace`
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
+- [ ] `cargo nextest run --profile ci --all-features --workspace --locked`
+- [ ] `cargo clippy --all-targets --all-features --locked -- -D warnings`
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo deny check` (when touching dependencies)
 

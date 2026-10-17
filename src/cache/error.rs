@@ -3,6 +3,9 @@ use thiserror::Error;
 /// Cache-specific error types
 #[derive(Debug, Error)]
 pub enum CacheError {
+    #[error("Cache worker failed: {0}")]
+    WorkerError(#[from] tokio::task::JoinError),
+
     /// Failed to acquire a connection from the pool
     #[error("Failed to get connection from pool: {0}")]
     ConnectionPoolError(#[from] r2d2::Error),
@@ -15,11 +18,7 @@ pub enum CacheError {
     #[error("JSON serialization failed: {0}")]
     SerializationError(#[from] serde_json::Error),
 
-    /// Failed to acquire distributed lock after retries
-    #[error("Failed to acquire lock for '{key}' after {attempts} attempts")]
-    LockAcquisitionFailed { key: String, attempts: usize },
-
-    /// System time error (used in lock operations)
+    /// System time error
     #[error("System time error: {0}")]
     SystemTimeError(#[from] std::time::SystemTimeError),
 

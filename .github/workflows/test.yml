@@ -12,7 +12,7 @@ env:
   CARGO_NET_RETRY: "10"
   RUSTUP_MAX_RETRIES: "10"
   RUST_BACKTRACE: "1"
-  RUSTFLAGS: -D warnings
+  CARGO_BUILD_WARNINGS: deny
 
 jobs:
   test:
@@ -28,16 +28,42 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           cache: false
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: Install nextest
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: nextest
+          tool: nextest@0.9.148
 
       - name: Run tests
         run: cargo nextest run --profile ci --all-features --workspace --locked
+
+  msrv:
+    name: Minimum supported Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read minimum supported Rust
+        id: msrv
+        run: |
+          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import tomllib
+          with open("Cargo.toml", "rb") as manifest:
+              print("version=" + tomllib.load(manifest)["package"]["rust-version"])
+          PYTHON
+
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+          cache: false
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - run: cargo check --all-targets --locked

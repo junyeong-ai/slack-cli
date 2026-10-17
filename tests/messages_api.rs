@@ -51,6 +51,8 @@ async fn test_client(server: &MockServer) -> (SlackClient, tempfile::TempDir) {
     let mut config = Config::default();
     config.connection.api_base_url = server.uri();
     config.connection.rate_limit_per_minute = 600;
+    config.retry.initial_delay_ms = 1;
+    config.retry.max_delay_ms = 10;
 
     let store_dir = tempfile::tempdir().unwrap();
     let store_path = store_dir.path().join("auth.json");
@@ -403,4 +405,96 @@ async fn delete_body_contains_channel_and_ts() {
         .await
         .unwrap();
     assert_eq!(result.ts, "1700000000.000200");
+}
+
+#[tokio::test]
+async fn rate_limited_writes_retry_only_after_an_explicit_rejection() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat.postMessage"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+        .up_to_n_times(1)
+        .expect(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat.postMessage"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"ok":true,"channel":"C1","ts":"1.0"})),
+        )
+        .expect(1)
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    let (client, _dir) = test_client(&server).await;
+    let result = client
+        .messages
+        .send(
+            "C1",
+            MessagePayload {
+                text: Some("hello".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.ts, "1.0");
+}
+
+#[tokio::test]
+async fn a_server_failure_does_not_replay_a_write_with_an_unknown_outcome() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat.postMessage"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (client, _dir) = test_client(&server).await;
+    let error = client
+        .messages
+        .send(
+            "C1",
+            MessagePayload {
+                text: Some("hello".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<slack_cli::slack::SlackApiError>(),
+        Some(slack_cli::slack::SlackApiError::Http { .. })
+    ));
+}
+
+#[tokio::test]
+async fn malformed_retry_after_uses_bounded_backoff_and_stops_at_the_attempt_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat.postMessage"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "invalid"))
+        .expect(3)
+        .mount(&server)
+        .await;
+    let (client, _dir) = test_client(&server).await;
+    let error = client
+        .messages
+        .send(
+            "C1",
+            MessagePayload {
+                text: Some("hello".into()),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<slack_cli::slack::SlackApiError>(),
+        Some(slack_cli::slack::SlackApiError::RateLimitExhausted { attempts: 3, .. })
+    ));
 }

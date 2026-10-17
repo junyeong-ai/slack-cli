@@ -142,20 +142,16 @@ compute_sha256() {
 
 get_latest_version() {
     local latest_url
-
-    latest_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null || true)
+    latest_url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest") || return 1
     case "$latest_url" in
-        */releases/tag/v*)
-            latest_url="${latest_url##*/releases/tag/v}"
-            echo "${latest_url%%[/?#]*}"
-            return 0
+        "https://github.com/$REPO/releases/tag/v"*)
+            latest_url="${latest_url#"https://github.com/$REPO/releases/tag/v"}"
+            latest_url="${latest_url%%[/?#]*}"
+            is_valid_release_version "$latest_url" || return 1
+            echo "$latest_url"
             ;;
+        *) return 1 ;;
     esac
-
-    curl -sf "https://api.github.com/repos/$REPO/releases/latest" \
-        | grep '"tag_name"' \
-        | sed -E 's/.*"v([^"]+)".*/\1/' \
-        || echo ""
 }
 
 download_binary() {
@@ -271,7 +267,7 @@ build_from_source() {
     fi
 
     echo "🔨 Building from source (rustup uses the toolchain pinned in rust-toolchain.toml)..." >&2
-    if ! (cd "$PROJECT_ROOT" && cargo build --release) >&2; then
+    if ! (cd "$PROJECT_ROOT" && cargo build --release --locked) >&2; then
         echo "❌ Build failed" >&2
         exit 1
     fi
@@ -281,12 +277,20 @@ build_from_source() {
 install_binary() {
     local binary_path="$1"
 
+    local staged
     mkdir -p "$INSTALL_DIR"
-    cp "$binary_path" "$INSTALL_DIR/$BINARY_NAME"
-    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+    staged=$(mktemp "$INSTALL_DIR/.slack-cli.XXXXXX")
+    if ! cp "$binary_path" "$staged" || ! chmod +x "$staged"; then
+        rm -f "$staged"
+        return 1
+    fi
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        codesign --force --deep --sign - "$INSTALL_DIR/$BINARY_NAME" 2>/dev/null || true
+        codesign --force --deep --sign - "$staged" 2>/dev/null || true
+    fi
+    if ! mv -f "$staged" "$INSTALL_DIR/$BINARY_NAME"; then
+        rm -f "$staged"
+        return 1
     fi
 
     echo "✅ Installed to $INSTALL_DIR/$BINARY_NAME" >&2
@@ -294,7 +298,21 @@ install_binary() {
 
 get_skill_version() {
     local skill_md="$1"
-    [ -f "$skill_md" ] && grep "^version:" "$skill_md" 2>/dev/null | sed 's/version: *//' || echo "unknown"
+    [ -f "$skill_md" ] || { echo unknown; return; }
+    awk '
+        NR == 1 { if ($0 != "---") exit 1; next }
+        /^---$/ { exit }
+        /^metadata:$/ { metadata = 1; next }
+        /^[^[:space:]]/ { metadata = 0 }
+        /^version:[[:space:]]/ || (metadata && /^  version:[[:space:]]/) {
+            sub(/^[[:space:]]*version:[[:space:]]*/, "")
+            gsub(/^"|"$/, "")
+            print
+            found = 1
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$skill_md" || echo unknown
 }
 
 check_skill_exists() {
@@ -433,10 +451,14 @@ install_skill() {
 
 prepare_skill_source() {
     local ref="$1"
-    local skill_url
-    local fallback_url
+    local from_checkout="${2:-false}"
+    local expected="${ref#v}"
 
-    if [ -f "$PROJECT_SKILL_DIR/SKILL.md" ]; then
+    if [ "$from_checkout" = true ] && [ -f "$PROJECT_SKILL_DIR/SKILL.md" ]; then
+        if [ "$(get_skill_version "$PROJECT_SKILL_DIR/SKILL.md")" != "$expected" ]; then
+            echo "❌ Checkout skill does not match binary v$expected" >&2
+            return 1
+        fi
         SKILL_SOURCE_DIR="$PROJECT_SKILL_DIR"
         return 0
     fi
@@ -444,31 +466,22 @@ prepare_skill_source() {
     SKILL_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/slack-cli-skill.XXXXXX")
     SKILL_SOURCE_DIR="$SKILL_TMP_DIR/$SKILL_NAME"
     mkdir -p "$SKILL_SOURCE_DIR"
-
-    skill_url="https://raw.githubusercontent.com/$REPO/$ref/.claude/skills/$SKILL_NAME/SKILL.md"
-    if ! curl -fsSL "$skill_url" -o "$SKILL_SOURCE_DIR/SKILL.md"; then
-        if [ "$ref" != "main" ]; then
-            fallback_url="https://raw.githubusercontent.com/$REPO/main/.claude/skills/$SKILL_NAME/SKILL.md"
-            echo "⚠️  Skill not found at $ref; trying main" >&2
-            if curl -fsSL "$fallback_url" -o "$SKILL_SOURCE_DIR/SKILL.md"; then
-                return 0
-            fi
-        fi
-
-        rm -rf "$SKILL_TMP_DIR"
-        SKILL_TMP_DIR=""
-        SKILL_SOURCE_DIR=""
+    if ! curl -fsSL \
+        "https://raw.githubusercontent.com/$REPO/$ref/.claude/skills/$SKILL_NAME/SKILL.md" \
+        -o "$SKILL_SOURCE_DIR/SKILL.md"; then
         return 1
     fi
-
-    return 0
+    if [ "$(get_skill_version "$SKILL_SOURCE_DIR/SKILL.md")" != "$expected" ]; then
+        echo "❌ Downloaded skill does not match binary v$expected" >&2
+        return 1
+    fi
 }
 
 prompt_skill_installation() {
     local ref="$1"
     local choice
 
-    if ! prepare_skill_source "$ref"; then
+    if ! prepare_skill_source "$ref" "${2:-false}"; then
         echo "" >&2
         echo "⚠️  Could not fetch $SKILL_NAME skill from $ref; skipping skill installation" >&2
         return 0
@@ -580,12 +593,13 @@ main() {
     local binary_path=""
     local target
     local version
-    local skill_ref="main"
+    local skill_ref
+    local from_checkout=false
+    local actual_version
     local binary_dir
     local display_install_dir
     local command_name
     local method
-    local download_status
     local pinned
     target=$(detect_platform)
     version="${SLACK_CLI_VERSION:-}"
@@ -595,24 +609,12 @@ main() {
     fi
     pinned="$version"
 
+    if [ -n "$version" ] && ! is_valid_release_version "$version"; then
+        echo "❌ Invalid release version: $version" >&2
+        exit 1
+    fi
+
     if command -v curl >/dev/null; then
-        if [ -z "$version" ]; then
-            version=$(get_latest_version)
-            version="${version#v}"
-        fi
-
-        if [ -n "$version" ] && ! is_valid_release_version "$version"; then
-            echo "❌ Invalid release version: $version" >&2
-            exit 1
-        fi
-
-        if [ -n "$version" ]; then
-            skill_ref="v$version"
-            echo "Version: v$version" >&2
-        else
-            echo "Version: latest release" >&2
-        fi
-        echo "" >&2
         echo "Installation method:" >&2
         echo "  [1] Download prebuilt binary (RECOMMENDED - fast)" >&2
         echo "  [2] Build from source (requires rustup; uses the repo's pinned toolchain)" >&2
@@ -622,26 +624,17 @@ main() {
         case "$method" in
             2)
                 binary_path=$(build_from_source)
+                from_checkout=true
+                [ -n "$pinned" ] || version=""
                 ;;
             1|"")
-                # A binary that could not be fetched may be built instead. One
-                # that arrived and failed its checksum or signature may not:
-                # falling back would turn a tampered download into a silent
-                # change of install method.
-                download_status=0
-                binary_path=$(download_binary "$version" "$target") || download_status=$?
-                if [ "$download_status" -eq 2 ]; then
-                    exit 1
-                elif [ "$download_status" -ne 0 ]; then
-                    # Building a different version than the one asked for is a
-                    # substitution, not a fallback.
-                    if [ -n "$pinned" ]; then
-                        echo "❌ No prebuilt binary for v$pinned on $target" >&2
+                if [ -z "$version" ]; then
+                    version=$(get_latest_version) || {
+                        echo "❌ Could not resolve the latest release; set SLACK_CLI_VERSION to install a specific release" >&2
                         exit 1
-                    fi
-                    echo "⚠️  Could not download a prebuilt binary; building from source" >&2
-                    binary_path=$(build_from_source)
+                    }
                 fi
+                binary_path=$(download_binary "$version" "$target") || exit 1
                 binary_dir="$(dirname "$binary_path")"
                 case "$(basename "$binary_dir")" in
                     slack-cli-install.*) BINARY_TMP_DIR="$binary_dir" ;;
@@ -655,7 +648,20 @@ main() {
     else
         [ -z "$version" ] && echo "⚠️  Cannot fetch latest version, building from source" >&2
         binary_path=$(build_from_source)
+        from_checkout=true
     fi
+
+    actual_version=$("$binary_path" --version)
+    actual_version="${actual_version#slack-cli }"
+    if ! is_valid_release_version "$actual_version"; then
+        echo "❌ Could not determine binary version" >&2
+        exit 1
+    fi
+    if [ -n "$version" ] && [ "$actual_version" != "$version" ]; then
+        echo "❌ Expected binary v$version, got v$actual_version" >&2
+        exit 1
+    fi
+    skill_ref="v$actual_version"
 
     install_binary "$binary_path"
 
@@ -682,7 +688,7 @@ main() {
         echo "" >&2
     fi
 
-    prompt_skill_installation "$skill_ref"
+    prompt_skill_installation "$skill_ref" "$from_checkout"
 
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
@@ -697,4 +703,6 @@ main() {
     echo "" >&2
 }
 
-main
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main
+fi

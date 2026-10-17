@@ -10,8 +10,9 @@ use secrecy::ExposeSecret;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::time::Instant;
 use tracing::warn;
 
 use crate::auth::{Authenticator, TokenKind};
@@ -22,6 +23,51 @@ use crate::slack::api_config::{
 use crate::slack::error::SlackApiError;
 
 type SimpleRateLimiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
+
+struct RateGate {
+    limiter: SimpleRateLimiter,
+    ready_at: Mutex<Instant>,
+}
+
+impl RateGate {
+    fn new(quota: Quota) -> Self {
+        Self {
+            limiter: Arc::new(RateLimiter::direct(quota)),
+            ready_at: Mutex::new(Instant::now()),
+        }
+    }
+
+    async fn wait(&self) {
+        loop {
+            let ready_at = *self
+                .ready_at
+                .lock()
+                .expect("rate gate lock is not poisoned");
+            tokio::time::sleep_until(ready_at).await;
+            self.limiter
+                .until_ready_with_jitter(Jitter::up_to(Duration::from_millis(100)))
+                .await;
+            if Instant::now()
+                >= *self
+                    .ready_at
+                    .lock()
+                    .expect("rate gate lock is not poisoned")
+            {
+                return;
+            }
+        }
+    }
+
+    fn defer(&self, delay: Duration) -> Option<()> {
+        let until = Instant::now().checked_add(delay)?;
+        let mut ready_at = self
+            .ready_at
+            .lock()
+            .expect("rate gate lock is not poisoned");
+        *ready_at = (*ready_at).max(until);
+        Some(())
+    }
+}
 
 /// HTTP connection pool tuning. Internal — no user-facing knob.
 /// A CLI process is short-lived: 10 idle slots is generous for any realistic
@@ -34,7 +80,7 @@ pub struct SlackCore {
     pub(crate) config: Config,
     pub(crate) auth: Arc<Authenticator>,
     pub(crate) http: HttpClient,
-    pub(crate) rate_limiters: HashMap<&'static str, SimpleRateLimiter>,
+    rate_limiters: HashMap<&'static str, RateGate>,
 }
 
 impl SlackCore {
@@ -62,7 +108,7 @@ impl SlackCore {
                 let quota_limit =
                     NonZeroU32::new(limit).context("Rate limit must be greater than zero")?;
                 let quota = Quota::per_minute(quota_limit);
-                Ok((*method, Arc::new(RateLimiter::direct(quota))))
+                Ok((*method, RateGate::new(quota)))
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
@@ -112,17 +158,14 @@ impl SlackCore {
             params["limit"] = Value::from(max_limit);
         }
 
-        if let Some(rate_limiter) = self.rate_limiters.get(method) {
-            rate_limiter
-                .until_ready_with_jitter(Jitter::up_to(Duration::from_millis(100)))
-                .await;
-        }
-
         let mut retry_count = 0;
         let max_attempts = self.config.retry.max_attempts;
         let mut delay = self.config.retry.initial_delay_ms;
 
         loop {
+            if let Some(gate) = self.rate_limiters.get(method) {
+                gate.wait().await;
+            }
             let endpoint = format!(
                 "{}/{}",
                 self.config.connection.api_base_url.trim_end_matches('/'),
@@ -172,32 +215,34 @@ impl SlackCore {
 
             if status == StatusCode::TOO_MANY_REQUESTS {
                 retry_count += 1;
-                if retry_count >= max_attempts {
+                let retry_after = headers
+                    .get("Retry-After")
+                    .and_then(|header| header.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .map(Duration::from_secs);
+                let wait = retry_after.unwrap_or_else(|| Duration::from_millis(delay));
+                let scheduled = self
+                    .rate_limiters
+                    .get(method)
+                    .is_some_and(|gate| gate.defer(wait).is_some());
+                if retry_count >= max_attempts || !scheduled {
                     return Err(SlackApiError::RateLimitExhausted {
                         method: method.to_string(),
-                        attempts: max_attempts,
+                        attempts: retry_count,
                     }
                     .into());
                 }
-
-                let wait_time = headers
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(|secs| secs * 1000)
-                    .unwrap_or(delay);
-
                 warn!(
-                    "Rate limited for {}, retrying in {}ms (attempt {}/{})",
-                    method, wait_time, retry_count, max_attempts
+                    method,
+                    ?wait,
+                    attempt = retry_count,
+                    max_attempts,
+                    "Rate limited; waiting before retry"
                 );
-                tokio::time::sleep(Duration::from_millis(wait_time)).await;
-
-                if !headers.contains_key("Retry-After") {
-                    delay = (delay as f64 * self.config.retry.exponential_base) as u64;
-                    delay = delay.min(self.config.retry.max_delay_ms);
+                if retry_after.is_none() {
+                    delay = ((delay as f64 * self.config.retry.exponential_base) as u64)
+                        .min(self.config.retry.max_delay_ms);
                 }
-
                 continue;
             }
 
@@ -275,6 +320,26 @@ fn scope_requirement(api_config: &'static ApiConfig, kind: Option<TokenKind>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn cooldown_is_shared_and_cannot_be_shortened_by_another_response() {
+        let gate = Arc::new(RateGate::new(Quota::per_minute(
+            NonZeroU32::new(20).unwrap(),
+        )));
+        gate.defer(Duration::from_secs(30)).unwrap();
+        gate.defer(Duration::from_secs(1)).unwrap();
+        let start = Instant::now();
+        let first = gate.clone();
+        let second = gate.clone();
+        let ((), ()) = tokio::join!(first.wait(), second.wait());
+        assert!(start.elapsed() >= Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn an_unrepresentable_retry_after_is_rejected_without_panicking() {
+        let gate = RateGate::new(Quota::per_minute(NonZeroU32::new(20).unwrap()));
+        assert!(gate.defer(Duration::from_secs(u64::MAX)).is_none());
+    }
 
     #[test]
     fn commercial_external_uses_restricted_history_limits() {

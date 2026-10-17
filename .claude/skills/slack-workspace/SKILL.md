@@ -1,9 +1,8 @@
 ---
 name: slack-workspace
-# version is not part of the official skill frontmatter; scripts/install.sh
-# uses it for upgrade comparison — bump with the crate
-version: 0.13.1
-description: Drive a Slack workspace from the terminal via slack-cli. Use when the user wants to send/edit/delete messages (plain text, Markdown, or Block Kit), search Slack history, look up users or channels by name, read threads or paginated channel history, add reactions, pin or bookmark messages, fetch a message permalink, attach message metadata for idempotent notifications, or read the events a Socket Mode daemon has collected (mentions, replies in watched threads) with `events pull`.
+metadata:
+  version: "0.14.0"
+description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
 
@@ -185,9 +184,9 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
 - `auth scopes --json` → `{user: [...], bot: [...], app: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops. `app` is the app-level token's scope (`connections:write`), which is granted in the app's own configuration rather than by an authorization and is therefore never excludable.
 
-## Message metadata (idempotency)
+## Message metadata and retries
 
-Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cli` exposes it as a first-class field on input (`-m`) and output (`metadata` is in the lean message default). Use it when a job may retry: read recent history with `messages --json | jq '.messages[].metadata'`, dedupe by your own key inside `event_payload`, skip re-sending.
+Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cli` exposes it as a first-class field on input (`-m`) and output (`metadata` is in the lean message default). Metadata is a correlation marker, not a server-side idempotency key. Record completed event IDs and check previous results before retrying a send. A timeout may mean Slack accepted the message but the response was lost; reconcile that outcome before sending again. History reads are rate-limited, so do not poll history for every event.
 
 `conversations.history` and `conversations.replies` always request `include_all_metadata=true`, so no extra flag is needed to see the field.
 
@@ -262,17 +261,19 @@ When replying, carry the id so a repeat is visible:
 
 ```bash
 # No --ack here: the position moves only once the work has actually happened.
-last=""
-slack-cli events pull --consumer assistant --limit 10 --json |
-while read -r event; do
-  ch=$(jq -r '.channel' <<<"$event")
-  ts=$(jq -r '.thread_ts // .ts' <<<"$event")
-  id=$(jq -r '.id' <<<"$event")
-  slack-cli send "$ch" --thread "$ts" -t "on it" \
-    -m "{\"event_type\":\"assistant_reply\",\"event_payload\":{\"source_event\":\"$id\"}}"
-  last=$(jq -r '.seq' <<<"$event")
-done
-[ -n "$last" ] && slack-cli events ack --consumer assistant --through "$last"
+set -euo pipefail
+batch=$(slack-cli events pull --consumer assistant --limit 20 --json)
+while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    ts=$(jq -er '.thread_ts // .ts' <<<"$event")
+    ch=$(jq -er '.channel' <<<"$event")
+    id=$(jq -er '.id' <<<"$event")
+    seq=$(jq -er '.seq' <<<"$event")
+    metadata=$(jq -cn --arg id "$id" \
+        '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
+    slack-cli send "$ch" --thread "$ts" -t "on it" -m "$metadata"
+    slack-cli events ack --consumer assistant --through "$seq"
+done <<<"$batch"
 ```
 
 `events pull` needs the installation to be storing events. If it fails saying
@@ -281,7 +282,7 @@ is nothing to pull — report that rather than retrying.
 
 > A message sent with a user token goes out **under the user's own name**, with
 > no bot badge. Do not auto-send on someone's behalf unless they asked for
-> exactly that; posting a draft to their DM is the safe default.
+> exactly that; show a draft in the current conversation when sending has not been requested.
 
 ## Multi-workspace
 

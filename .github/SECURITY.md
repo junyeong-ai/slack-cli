@@ -8,11 +8,11 @@ sigstore signatures published with each release.
 
 ## Credential storage
 
-`slack-cli` writes every credential it holds — user and bot access tokens and
-their refresh tokens — to `auth.json` in the platform config directory, with mode
+`slack-cli` writes every credential it holds — user, bot and app-level access tokens and
+any refresh tokens — to `auth.json` in the platform config directory, with mode
 `0600` and its parent directory tightened to `0700` on Unix. The file is
 rewritten atomically and guarded by an advisory lock so concurrent invocations
-cannot interleave writes. Permissions are re-tightened on every read, and a
+cannot interleave writes. On Windows, files inherit the platform configuration directory ACL. Permissions are re-tightened on every read, and a
 loosening is reported on stderr.
 
 Tokens are held in memory behind `secrecy::SecretString`, which zeroizes on
@@ -34,9 +34,9 @@ verifies the sigstore bundle. Its identity pin is stricter than the one above:
 because the updater always knows the version it is installing, it anchors the
 tag, refusing a validly-signed binary taken from a different release. With
 `cosign` installed a release that publishes no signature is refused; without it
-the download rests on its checksum alone and the command says so. The new file is staged beside the
-destination and renamed into place, so an interrupted update leaves the existing
-binary untouched.
+the download rests on its checksum alone and the command says so. The new file
+is staged beside the destination. Unix replaces it with an atomic rename;
+Windows preserves the running executable as `.old` before installing the replacement.
 
 ## Reporting a vulnerability
 

@@ -1,12 +1,14 @@
 # slack-cli
 
-Rust CLI for the Slack Web API. Single crate, SQLite + FTS5 local cache, async/await throughout.
+Rust CLI for the Slack Web API. Single crate, async HTTP and Socket Mode, SQLite + FTS5 local cache. SQLite operations run on bounded blocking workers.
 
 ## Layout
 
 ```
 src/
 ├── main.rs       CLI entry, command dispatch
+├── commands/     Event command handlers
+├── blocking.rs   Bounded execution of synchronous database operations
 ├── cli.rs        clap command definitions
 ├── config.rs     TOML config (user preferences + the OAuth app — no user or bot tokens)
 ├── format.rs     Output formatting (table / JSON)
@@ -25,8 +27,8 @@ The toolchain is pinned by `rust-toolchain.toml` (single source of truth —
 rustup picks it up automatically; don't restate the version in commands).
 
 ```bash
-cargo nextest run --profile ci --all-features --workspace
-cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --profile ci --all-features --workspace --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 ```
 
@@ -45,3 +47,5 @@ RUST_LOG=debug cargo run -- users "john"
 - **The app-level token is a third axis, not a third flavour of the same thing.** `TokenKind::App` is the `xapp-` token that opens a Socket Mode connection. No OAuth grant issues it, it never rotates, and it authorizes nothing in a workspace — so `TokenPolicy::accepts` keeps it disjoint from `User`/`Bot` in both directions. That disjointness is what stops `connections:write` reaching the authorization request, which Slack would refuse as a whole.
 - **The event daemon reuses the library and owns nothing else.** `events/` depends on `slack/`, `auth/` and `config/`; nothing depends on `events/`. Its state lives outside `cache_dir` because the cache rebuilds itself on a schema change and Socket Mode never replays what it dropped.
 - **Filesystem locations come from `paths.rs`.** `AppPaths` resolves the config root once per invocation and hands out `config.toml`, `auth.json` and the cache directory. No module reads `HOME` or `XDG_CONFIG_HOME` itself.
+
+- **Database work leaves the async runtime.** Use `SqliteCache::execute`, `EventState::execute` or `EventRuntime::execute` for synchronous database operations from async code. Keep pool connections and transactions inside the blocking operation; never carry them across an await. Event preparation and commit remain separate from asynchronous sink delivery.

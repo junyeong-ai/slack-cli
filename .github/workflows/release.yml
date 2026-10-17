@@ -17,6 +17,12 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
 
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  supply-chain:
+    uses: ./.github/workflows/supply-chain.yml
+
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -51,7 +57,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           target: ${{ matrix.target }}
           cache: false
@@ -62,9 +68,9 @@ jobs:
 
       - name: Install cross
         if: matrix.cross
-        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cross
+          tool: cross@0.2.5
 
       - name: Build release binary
         shell: bash
@@ -133,7 +139,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ matrix.target }}
           path: |
@@ -152,7 +158,7 @@ jobs:
       hashes: ${{ steps.collect.outputs.hashes }}
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           pattern: dist-*
@@ -187,21 +193,21 @@ jobs:
 
   release:
     name: Publish release
-    needs: [test, build, provenance]
+    needs: [test, lint, supply-chain, build, provenance]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           pattern: dist-*
           merge-multiple: true
 
       - name: Download SLSA provenance
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           name: ${{ needs.provenance.outputs.provenance-name }}

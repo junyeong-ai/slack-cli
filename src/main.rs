@@ -1,3 +1,5 @@
+mod commands;
+
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
@@ -5,11 +7,8 @@ use serde_json::Value;
 use slack_cli::{
     auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
-    cli::{
-        CacheAction, Cli, Command, ConfigAction, DaemonAction, EventsAction, MessageContent,
-        RefreshTarget, SelfAction,
-    },
-    config, events, format,
+    cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget, SelfAction},
+    config, format,
     paths::AppPaths,
     slack,
     slack::{MessageMetadata, MessagePayload, SlackApiError},
@@ -18,7 +17,6 @@ use slack_cli::{
 use std::io::Read;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
@@ -118,25 +116,22 @@ async fn run(cli: Cli) -> Result<()> {
         cli.command,
         Command::Watch | Command::Daemon { .. } | Command::Events { .. }
     ) {
-        let profile = events_profile(&authenticator, cli.profile.as_deref()).await;
-        return handle_events_command(cli, config, &paths, &profile, slack).await;
+        let profile = commands::events::profile(&authenticator, cli.profile.as_deref()).await;
+        return commands::events::handle(cli, config, &paths, &profile, slack).await;
     }
 
     let db_path = config.db_path(&paths);
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let db_path_str = db_path
-        .to_str()
-        .context("Database path contains invalid UTF-8 characters")?;
-    let cache = Arc::new(cache::SqliteCache::new(db_path_str).await?);
-
-    let threshold = config.cache.refresh_threshold_percent;
-    let cache_status = cache.get_cache_status(
-        config.cache.ttl_users_hours,
-        config.cache.ttl_channels_hours,
-        threshold,
-    )?;
+    let cache = Arc::new(cache::SqliteCache::new(&db_path).await?);
+    let cache_config = config.cache.clone();
+    let cache_status = cache
+        .execute(move |cache| {
+            cache.get_cache_status(
+                cache_config.ttl_users_hours,
+                cache_config.ttl_channels_hours,
+                cache_config.refresh_threshold_percent,
+            )
+        })
+        .await?;
 
     match cli.command {
         Command::Users {
@@ -146,11 +141,15 @@ async fn run(cli: Cli) -> Result<()> {
             expand,
         } => {
             ensure_users_cache(&slack, &cache, cli.json).await?;
-            let users = if let Some(ids) = id {
-                cache.get_users_by_ids(&ids)?
-            } else {
-                cache.search_users(query.as_deref().unwrap_or(""), limit, false)?
-            };
+            let users = cache
+                .execute(move |cache| {
+                    if let Some(ids) = id {
+                        cache.get_users_by_ids(&ids)
+                    } else {
+                        cache.search_users(query.as_deref().unwrap_or(""), limit, false)
+                    }
+                })
+                .await?;
             let fields = merge_fields(&config.output.users_fields, expand.as_deref());
             format::print_users(&users, &fields, cli.json);
         }
@@ -162,11 +161,15 @@ async fn run(cli: Cli) -> Result<()> {
             expand,
         } => {
             ensure_channels_cache(&slack, &cache, cli.json).await?;
-            let channels = if let Some(ids) = id {
-                cache.get_channels_by_ids(&ids)?
-            } else {
-                cache.search_channels(query.as_deref().unwrap_or(""), limit)?
-            };
+            let channels = cache
+                .execute(move |cache| {
+                    if let Some(ids) = id {
+                        cache.get_channels_by_ids(&ids)
+                    } else {
+                        cache.search_channels(query.as_deref().unwrap_or(""), limit)
+                    }
+                })
+                .await?;
             let fields = merge_fields(&config.output.channels_fields, expand.as_deref());
             format::print_channels(&channels, &fields, cli.json);
         }
@@ -452,7 +455,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
 
             CacheAction::Stats => {
-                let (users, channels) = cache.get_counts()?;
+                let (users, channels) = cache.execute(|cache| cache.get_counts()).await?;
                 if cli.json {
                     println!(
                         "{}",
@@ -523,299 +526,6 @@ fn classify_error(err: &anyhow::Error) -> (String, u8) {
     }
 
     ("error".to_string(), 1)
-}
-
-/// A heartbeat older than this means the daemon is gone rather than quiet: it
-/// publishes on a 30-second cycle, so three missed cycles is not a hiccup.
-const DAEMON_STALE_AFTER_SECONDS: i64 = 90;
-
-/// How long `events pull --follow` waits between polls. The daemon writes as
-/// events arrive; this only decides how quickly a follower notices.
-const FOLLOW_POLL_INTERVAL: Duration = Duration::from_secs(1);
-
-/// Which profile's events these are.
-///
-/// `--profile` has to be honoured here and not only by the authenticator:
-/// events are stored per profile, so resolving the active one instead would
-/// read another workspace's log while holding this workspace's tokens.
-async fn events_profile(authenticator: &Authenticator, explicit: Option<&str>) -> String {
-    // Environment tokens bypass the store entirely, so the active profile
-    // names an installation this run is not talking to. Filing the events
-    // under it would write one workspace's messages into another's databases.
-    if authenticator.uses_env_tokens() {
-        return "env".to_string();
-    }
-
-    authenticator
-        .snapshot()
-        .await
-        .resolve(explicit)
-        .unwrap_or("default")
-        .to_string()
-}
-
-async fn handle_events_command(
-    cli: Cli,
-    config: config::Config,
-    paths: &AppPaths,
-    profile: &str,
-    slack: Arc<slack::SlackClient>,
-) -> Result<()> {
-    let dir = config.events_dir(paths);
-    let as_json = cli.json;
-
-    match cli.command {
-        // `watch` is the streaming mode made explicit: whatever the config
-        // says about retention, this run keeps nothing.
-        Command::Watch => {
-            let runtime = events::EventRuntime::open_with(
-                &dir,
-                profile,
-                &config,
-                config::EventRetention::Stream,
-            )?;
-            events::run(
-                slack,
-                config,
-                runtime,
-                events::DaemonOptions {
-                    stdout: if as_json {
-                        events::StdoutFormat::Ndjson
-                    } else {
-                        events::StdoutFormat::Line
-                    },
-                    // `watch` keeps nothing and shows everything here: it
-                    // overrides both the retention mode and the sinks, so an
-                    // installation configured for a daemon still gets what
-                    // this command promises.
-                    stdout_only: true,
-                    announce: !as_json,
-                },
-            )
-            .await
-        }
-
-        Command::Daemon { action } => match action {
-            DaemonAction::Run => {
-                let runtime = events::EventRuntime::open(&dir, profile, &config)?;
-                events::run(
-                    slack,
-                    config,
-                    runtime,
-                    events::DaemonOptions {
-                        stdout: if as_json {
-                            events::StdoutFormat::Ndjson
-                        } else {
-                            events::StdoutFormat::Line
-                        },
-                        stdout_only: false,
-                        announce: !as_json,
-                    },
-                )
-                .await
-            }
-
-            DaemonAction::Status => {
-                let runtime = events::EventRuntime::open(&dir, profile, &config)?;
-                let status = runtime.state.daemon_status()?;
-                // Same question `stop` asks, answered the same way: taking the
-                // lock means nobody holds it, so no daemon is running. The
-                // heartbeat cannot answer it — see `stop_daemon`.
-                let running = events::DaemonLock::acquire(&runtime.paths.lock_file()).is_err();
-                format::print_daemon_status(
-                    status.as_ref(),
-                    profile,
-                    running,
-                    DAEMON_STALE_AFTER_SECONDS,
-                    as_json,
-                );
-                Ok(())
-            }
-
-            DaemonAction::Stop => {
-                let runtime = events::EventRuntime::open(&dir, profile, &config)?;
-                stop_daemon(&runtime, as_json)
-            }
-        },
-
-        Command::Events { action } => {
-            let runtime = events::EventRuntime::open(&dir, profile, &config)?;
-            handle_events_action(action, &config, &runtime, profile, as_json).await
-        }
-
-        _ => unreachable!("dispatched on the events commands only"),
-    }
-}
-
-async fn handle_events_action(
-    action: EventsAction,
-    config: &config::Config,
-    runtime: &events::EventRuntime,
-    profile: &str,
-    as_json: bool,
-) -> Result<()> {
-    match action {
-        EventsAction::Pull {
-            consumer,
-            limit,
-            ack,
-            follow,
-        } => {
-            // Where to read from when nothing is being acknowledged. Without
-            // it a follower would re-print the same batch for as long as it
-            // kept asking — and, once the backlog reached `limit`, would do so
-            // without ever pausing.
-            let mut emitted: Option<i64> = None;
-
-            loop {
-                let batch = runtime.store.pull(&consumer, emitted, usize::from(limit))?;
-                if batch.is_empty() && !follow {
-                    // Silence would be ambiguous: nothing pending reads the
-                    // same as a command that did not run.
-                    format::print_events(&batch, as_json);
-                    return Ok(());
-                }
-                if let Some(last) = batch.last() {
-                    format::print_events(&batch, as_json);
-                    if ack {
-                        runtime.store.ack(&consumer, last.seq)?;
-                    } else {
-                        emitted = Some(last.seq);
-                    }
-                }
-
-                if !follow {
-                    return Ok(());
-                }
-                // Only wait when the log is drained: a backlog is walked at
-                // full speed, and the poll is what idles.
-                if batch.len() < usize::from(limit) {
-                    tokio::time::sleep(FOLLOW_POLL_INTERVAL).await;
-                }
-            }
-        }
-
-        EventsAction::Ack { consumer, through } => {
-            let pending = runtime.store.ack(&consumer, through)?;
-            if as_json {
-                println!(
-                    "{}",
-                    serde_json::json!({ "consumer": consumer, "acked_seq": through, "pending": pending })
-                );
-            } else {
-                println!("✓ {consumer} acknowledged through {through} ({pending} pending)");
-            }
-            Ok(())
-        }
-
-        EventsAction::Stats => {
-            let stats = runtime.store.stats()?;
-            format::print_event_stats(
-                &stats,
-                &runtime.store.caps(),
-                config.events.mode.as_str(),
-                profile,
-                as_json,
-            );
-            Ok(())
-        }
-
-        EventsAction::Prune => {
-            let outcome = runtime.store.prune()?;
-            format::print_prune_outcome(&outcome, as_json);
-            Ok(())
-        }
-
-        EventsAction::Path => {
-            // stdout is parseable data or nothing, which under `--json` means
-            // an object rather than a bare path: an agent piping this to `jq`
-            // gets a parse error otherwise.
-            if as_json {
-                println!(
-                    "{}",
-                    serde_json::json!({ "path": runtime.paths.root().display().to_string() })
-                );
-            } else {
-                println!("{}", runtime.paths.root().display());
-            }
-            Ok(())
-        }
-    }
-}
-
-/// Signals the running daemon to stop.
-///
-/// It is a signal rather than a flag in the database because the daemon spends
-/// its life awaiting a socket: a flag would only be noticed on the next event,
-/// which in a quiet workspace could be hours away.
-///
-/// Liveness comes from the lock, not from the heartbeat. A daemon that was
-/// killed a moment ago leaves a fresh heartbeat behind, and signalling the pid
-/// it recorded would send SIGTERM to whatever the operating system has since
-/// given that number to.
-fn stop_daemon(runtime: &events::EventRuntime, as_json: bool) -> Result<()> {
-    let Some(status) = runtime.state.daemon_status()? else {
-        anyhow::bail!("no daemon has run for this profile");
-    };
-
-    if events::DaemonLock::acquire(&runtime.paths.lock_file()).is_ok() {
-        anyhow::bail!(
-            "no daemon is running for this profile; the record it left behind says pid {} \
-             started at {}",
-            status.pid,
-            format::format_epoch(status.started_at)
-        );
-    }
-
-    signal_stop(status.pid)?;
-
-    if as_json {
-        println!(
-            "{}",
-            serde_json::json!({ "stopped": true, "pid": status.pid })
-        );
-    } else {
-        println!("✓ Asked the daemon (pid {}) to stop", status.pid);
-    }
-    Ok(())
-}
-
-/// Sends SIGTERM, after confirming the pid still belongs to this program.
-///
-/// The lock says *a* daemon is running; this says the recorded pid is the one.
-/// Between them, a recycled pid cannot be signalled by mistake.
-#[cfg(unix)]
-fn signal_stop(pid: i64) -> Result<()> {
-    let running = std::process::Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "comm="])
-        .output()
-        .context("could not ask ps what that process is")?;
-    let command = String::from_utf8_lossy(&running.stdout);
-    if !command.contains("slack-cli") {
-        anyhow::bail!(
-            "pid {pid} is not a slack-cli process ({}), so it was not signalled. The daemon \
-             record is stale; stop the daemon through whatever started it",
-            command.trim()
-        );
-    }
-
-    let status = std::process::Command::new("kill")
-        .arg("-TERM")
-        .arg(pid.to_string())
-        .status()
-        .context("could not run kill")?;
-    if !status.success() {
-        anyhow::bail!("could not signal pid {pid}");
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn signal_stop(pid: i64) -> Result<()> {
-    anyhow::bail!(
-        "stopping a daemon by signal is not supported on this platform; stop pid {pid} \
-         through the service manager that started it"
-    )
 }
 
 async fn handle_self_action(action: &SelfAction, as_json: bool) -> Result<()> {
@@ -897,7 +607,11 @@ async fn resolve_channel(
     }
 
     if is_slack_user_id(input) {
-        if let Some(dm_id) = cache.find_dm_by_user(input)? {
+        let user = input.to_owned();
+        if let Some(dm_id) = cache
+            .execute(move |cache| cache.find_dm_by_user(&user))
+            .await?
+        {
             return Ok(dm_id);
         }
         anyhow::bail!(
@@ -907,11 +621,17 @@ async fn resolve_channel(
     }
 
     let name = input.trim_start_matches('#').trim_start_matches('@');
-    let mut channels = cache.search_channels(name, 2)?;
+    let query = name.to_owned();
+    let mut channels = cache
+        .execute(move |cache| cache.search_channels(&query, 2))
+        .await?;
 
     if channels.is_empty() {
         ensure_channels_cache(slack, cache, json).await?;
-        channels = cache.search_channels(name, 2)?;
+        let query = name.to_owned();
+        channels = cache
+            .execute(move |cache| cache.search_channels(&query, 2))
+            .await?;
     }
 
     let name_matches: Vec<&slack::SlackChannel> = channels
@@ -969,7 +689,7 @@ async fn ensure_users_cache(
     cache: &cache::SqliteCache,
     json: bool,
 ) -> Result<()> {
-    let (users, _) = cache.get_counts()?;
+    let (users, _) = cache.execute(|cache| cache.get_counts()).await?;
     if users == 0 {
         if !json {
             eprint!("Fetching users... ");
@@ -988,7 +708,7 @@ async fn ensure_channels_cache(
     cache: &cache::SqliteCache,
     json: bool,
 ) -> Result<()> {
-    let (_, channels) = cache.get_counts()?;
+    let (_, channels) = cache.execute(|cache| cache.get_counts()).await?;
     if channels == 0 {
         if !json {
             eprint!("Fetching channels... ");

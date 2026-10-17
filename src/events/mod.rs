@@ -1,6 +1,7 @@
 pub mod backfill;
 mod db;
 pub mod envelope;
+mod pipeline;
 pub mod queue;
 pub mod rules;
 pub mod sink;
@@ -67,6 +68,7 @@ const IDENTITY_ATTEMPTS: u32 = 5;
 
 /// The files one profile's daemon owns. Kept apart per profile because the
 /// credentials, and therefore the events, belong to one workspace each.
+#[derive(Clone)]
 pub struct EventPaths {
     root: PathBuf,
 }
@@ -139,6 +141,7 @@ fn profile_dir(profile: &str) -> String {
 /// `events pull`, `events stats` and `daemon status` are answered from here,
 /// which is why the store is chosen by retention mode and not by whether a
 /// daemon happens to be running.
+#[derive(Clone)]
 pub struct EventRuntime {
     pub state: EventState,
     pub store: Arc<dyn EventStore>,
@@ -146,6 +149,27 @@ pub struct EventRuntime {
 }
 
 impl EventRuntime {
+    pub async fn open_async(
+        dir: &Path,
+        profile: &str,
+        config: &Config,
+        mode: EventRetention,
+    ) -> Result<Self> {
+        let dir = dir.to_owned();
+        let profile = profile.to_owned();
+        let config = config.clone();
+        tokio::task::spawn_blocking(move || Self::open_with(&dir, &profile, &config, mode)).await?
+    }
+
+    pub async fn execute<T, F>(&self, operation: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Self) -> Result<T> + Send + 'static,
+    {
+        let runtime = self.clone();
+        self.state.execute(move |_| operation(&runtime)).await
+    }
+
     pub fn open(dir: &Path, profile: &str, config: &Config) -> Result<Self> {
         Self::open_with(dir, profile, config, config.events.mode)
     }
@@ -180,12 +204,7 @@ impl EventRuntime {
     }
 }
 
-/// Holds the one-daemon-per-profile guarantee for as long as it is alive.
-///
-/// Slack load-balances an app's payloads across its open connections, so a
-/// second daemon on the same app does not duplicate the stream — it *splits*
-/// it, and each half then sees a partial workspace. That failure is silent,
-/// which is why it is refused here rather than left to be noticed.
+/// Holds the profile lock for the lifetime of a daemon.
 #[derive(Debug)]
 pub struct DaemonLock {
     _file: File,
@@ -193,6 +212,15 @@ pub struct DaemonLock {
 
 impl DaemonLock {
     pub fn acquire(path: &Path) -> Result<Self> {
+        Self::try_acquire(path)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "another slack-cli daemon is already running for this profile (`daemon run` and \
+             `watch` both take this lock). Use a separate profile and Slack app for another daemon"
+            )
+        })
+    }
+
+    pub fn try_acquire(path: &Path) -> Result<Option<Self>> {
         let mut options = OpenOptions::new();
         options.create(true).read(true).write(true).truncate(false);
         #[cfg(unix)]
@@ -202,17 +230,13 @@ impl DaemonLock {
             .open(path)
             .with_context(|| format!("could not open {}", path.display()))?;
 
-        file.try_lock().map_err(|_| {
-            anyhow::anyhow!(
-                "another slack-cli daemon is already running for this profile (`daemon run` and \
-                 `watch` both take this lock). Slack splits an app's events across its open \
-                 connections, so a second one would see only part of the workspace — and both \
-                 would be writing the same cursors and subscriptions. Stop the first, or give \
-                 this one its own profile and Slack app"
-            )
-        })?;
-
-        Ok(Self { _file: file })
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(err)) => {
+                Err(err).with_context(|| format!("could not lock {}", path.display()))
+            }
+        }
     }
 }
 
@@ -269,12 +293,22 @@ pub struct DaemonOptions {
 pub async fn run(
     slack: Arc<SlackClient>,
     config: Config,
-    runtime: EventRuntime,
+    mut runtime: EventRuntime,
     options: DaemonOptions,
 ) -> Result<()> {
-    let _lock = DaemonLock::acquire(&runtime.paths.lock_file())?;
+    let lock = Arc::new(DaemonLock::acquire(&runtime.paths.lock_file())?);
+    runtime.state.hold_daemon_lock(lock);
 
-    let identity = resolve_identity(&slack).await?;
+    runtime
+        .state
+        .execute(|state| state.claim_daemon(std::process::id()))
+        .await?;
+    let shutdown = shutdown_requested(runtime.state.clone());
+    tokio::pin!(shutdown);
+    let identity = tokio::select! {
+        identity = resolve_identity(&slack) => identity?,
+        result = &mut shutdown => return result,
+    };
 
     let configured = config.events.effective_sinks();
     let sinks = Arc::new(if options.stdout_only {
@@ -300,10 +334,20 @@ pub async fn run(
 
     // A channel a rule names is a recovery candidate from the start, before it
     // has ever produced a match.
-    for channel in engine.declared_channels() {
-        runtime.state.mark_recoverable(channel)?;
-    }
-    runtime.state.claim_daemon(std::process::id())?;
+    let channels = engine
+        .declared_channels()
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    runtime
+        .state
+        .execute(move |state| {
+            for channel in channels {
+                state.mark_recoverable(&channel)?;
+            }
+            Ok(())
+        })
+        .await?;
 
     // Reported from the store that was actually opened, not from the setting:
     // `watch` runs ephemerally against a configuration that says otherwise,
@@ -335,7 +379,8 @@ pub async fn run(
     let state = Arc::new(runtime.state);
     let store = runtime.store;
 
-    let processor = tokio::spawn(process(
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(pipeline::process(
         queue.clone(),
         state.clone(),
         store.clone(),
@@ -344,7 +389,7 @@ pub async fn run(
         tally.clone(),
     ));
 
-    let housekeeping = tokio::spawn(housekeep(
+    let housekeeping = tasks.spawn(housekeep(
         state.clone(),
         store.clone(),
         queue.clone(),
@@ -352,6 +397,7 @@ pub async fn run(
         connected.clone(),
     ));
 
+    let mut recovery = tokio::task::JoinSet::new();
     let outcome = tokio::select! {
         result = connect_loop(
             slack.clone(),
@@ -364,11 +410,13 @@ pub async fn run(
                 team_id: identity.team_id.clone(),
                 org_wide: identity.is_enterprise_install.unwrap_or(false),
             },
+            &mut recovery,
         ) => result,
-        () = shutdown_signal() => {
-            tracing::info!("stopping");
-            Ok(())
-        }
+        result = &mut shutdown => result,
+        result = tasks.join_next() => match result {
+            Some(Err(err)) => Err(err).context("a daemon task failed"),
+            _ => Err(anyhow::anyhow!("a daemon task stopped unexpectedly")),
+        },
     };
 
     // Draining before exit: everything already acknowledged to Slack is
@@ -376,29 +424,34 @@ pub async fn run(
     // because a deep backlog through a slow sink would otherwise hold the
     // process open past any supervisor's patience — and a supervisor that
     // gives up sends SIGKILL, which drains nothing at all.
+    recovery.abort_all();
+    while recovery.join_next().await.is_some() {}
     queue.close();
-    let mut processor = processor;
-    let drained = tokio::time::timeout(SHUTDOWN_DRAIN, &mut processor).await;
-    if let Ok(Err(panicked)) = &drained {
-        tracing::error!("the event processor stopped unexpectedly: {panicked}");
-    }
+    housekeeping.abort();
+    let drained = tokio::time::timeout(SHUTDOWN_DRAIN, async {
+        while let Some(result) = tasks.join_next().await {
+            if let Err(err) = result
+                && !err.is_cancelled()
+            {
+                tracing::error!("a daemon task stopped unexpectedly: {err}");
+            }
+        }
+    })
+    .await;
     if drained.is_err() {
         tracing::warn!(
-            queued = queue.len(),
-            "gave up draining the queue after {}s; those events were acknowledged to Slack but \
-             not delivered",
-            SHUTDOWN_DRAIN.as_secs()
+            seconds = SHUTDOWN_DRAIN.as_secs(),
+            "the event queue did not drain before shutdown"
         );
-        // Borrowed rather than consumed above, so the task can still be
-        // stopped. Dropping the handle would detach it instead, leaving it
-        // writing state after the lock this function holds has been released.
-        processor.abort();
-        let _ = processor.await;
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
     }
-    housekeeping.abort();
-    let _ = housekeeping.await;
+    state.drain().await;
     connected.store(false, Ordering::Relaxed);
-    let _ = state.heartbeat(false, tally.snapshot(queue.dropped()));
+    let counters = tally.snapshot(queue.dropped());
+    let _ = state
+        .execute(move |state| state.heartbeat(false, counters))
+        .await;
 
     outcome
 }
@@ -584,6 +637,7 @@ fn is_fatal(err: &anyhow::Error) -> bool {
 /// Opens a connection, feeds the queue from it, and opens another when it
 /// ends. Every reconnect starts recovery, because Socket Mode replays nothing
 /// across the gap.
+#[allow(clippy::too_many_arguments)]
 async fn connect_loop(
     slack: Arc<SlackClient>,
     config: Config,
@@ -592,9 +646,9 @@ async fn connect_loop(
     tally: Arc<Tally>,
     connected: Arc<AtomicBool>,
     installation: Installation,
+    recovery: &mut tokio::task::JoinSet<()>,
 ) -> Result<()> {
     let mut backoff = RECONNECT_MIN;
-    let recovering = Arc::new(AtomicBool::new(false));
 
     loop {
         let opened = tokio::time::Instant::now();
@@ -606,7 +660,7 @@ async fn connect_loop(
             &tally,
             &connected,
             &installation,
-            &recovering,
+            recovery,
         )
         .await;
         connected.store(false, Ordering::Relaxed);
@@ -645,7 +699,7 @@ async fn connect_once(
     tally: &Arc<Tally>,
     connected: &AtomicBool,
     installation: &Installation,
-    recovering: &Arc<AtomicBool>,
+    recovery: &mut tokio::task::JoinSet<()>,
 ) -> Result<()> {
     let url = slack.apps.connection().await?;
     let mut socket = SocketStream::connect(&url).await?;
@@ -655,7 +709,11 @@ async fn connect_once(
     // tick. Otherwise `daemon status` reports a working daemon as
     // "reconnecting" with nothing received for the first half-minute of its
     // life — which is exactly when someone is watching it.
-    if let Err(err) = state.heartbeat(true, tally.snapshot(queue.dropped())) {
+    let counters = tally.snapshot(queue.dropped());
+    if let Err(err) = state
+        .execute(move |state| state.heartbeat(true, counters))
+        .await
+    {
         tracing::warn!("could not publish the connection heartbeat: {err:#}");
     }
 
@@ -666,7 +724,7 @@ async fn connect_once(
         state,
         tally,
         &installation.team_id,
-        recovering,
+        recovery,
     );
 
     let keep_raw = config.events.store_raw;
@@ -717,9 +775,14 @@ fn start_recovery(
     state: &Arc<EventState>,
     tally: &Arc<Tally>,
     team_id: &str,
-    recovering: &Arc<AtomicBool>,
+    recovery: &mut tokio::task::JoinSet<()>,
 ) {
-    if !config.events.backfill || recovering.swap(true, Ordering::SeqCst) {
+    while let Some(result) = recovery.try_join_next() {
+        if let Err(err) = result {
+            tracing::warn!("recovery task failed: {err}");
+        }
+    }
+    if !config.events.backfill || !recovery.is_empty() {
         return;
     }
 
@@ -727,11 +790,10 @@ fn start_recovery(
     let queue = queue.clone();
     let state = state.clone();
     let tally = tally.clone();
-    let recovering = recovering.clone();
     let events: EventsConfig = config.events.clone();
     let team_id = team_id.to_string();
 
-    tokio::spawn(async move {
+    recovery.spawn(async move {
         match backfill::recover(&slack, &state, &events, Some(&team_id)).await {
             Ok(recovered) => {
                 let room = (queue.capacity() / 2).max(1);
@@ -750,171 +812,7 @@ fn start_recovery(
             }
             Err(err) => tracing::warn!("recovery failed: {err:#}"),
         }
-        recovering.store(false, Ordering::SeqCst);
     });
-}
-
-/// The one consumer of the queue, and the only writer of state.
-///
-/// Being single means the read-then-commit around `seen` needs no lock, and
-/// that ordering is what turns a crash into a redelivery instead of a hole.
-async fn process(
-    queue: Arc<EventQueue<Event>>,
-    state: Arc<EventState>,
-    store: Arc<dyn EventStore>,
-    engine: Arc<RuleEngine>,
-    sinks: Arc<SinkSet>,
-    tally: Arc<Tally>,
-) {
-    while let Some(mut event) = queue.pop().await {
-        let mut pause = HANDLE_BACKOFF;
-        for attempt in 1..=HANDLE_ATTEMPTS {
-            // This retry covers only what happens before delivery — reading
-            // the deduplication gate and evaluating the rules. Once the sinks
-            // have the event, `handle` retries the commit itself and returns
-            // `Ok`, so a busy database can never repeat a delivery here.
-            match handle(&mut event, &state, &store, &engine, &sinks).await {
-                // Counted here rather than inside, so a retry does not report
-                // the same event twice.
-                Ok(handled) => {
-                    if handled.matched {
-                        tally.matched.fetch_add(1, Ordering::Relaxed);
-                    }
-                    if handled.stored {
-                        tally.stored.fetch_add(1, Ordering::Relaxed);
-                    }
-                    break;
-                }
-                // The event was acknowledged to Slack before it got here, so
-                // nothing will send it again — and a reaction or an edit
-                // cannot be read back from history at all. A busy database is
-                // worth waiting out rather than losing it to.
-                Err(err) if attempt < HANDLE_ATTEMPTS => {
-                    tracing::warn!(
-                        event = %event.id,
-                        attempt,
-                        "could not process an event, retrying: {err:#}"
-                    );
-                    tokio::time::sleep(pause).await;
-                    pause *= 2;
-                }
-                Err(err) => {
-                    tracing::error!(
-                        event = %event.id,
-                        attempts = HANDLE_ATTEMPTS,
-                        "gave up on an event that Slack will not send again: {err:#}"
-                    );
-                }
-            }
-        }
-        tally.delivered.store(sinks.delivered(), Ordering::Relaxed);
-        tally.failed.store(sinks.failed(), Ordering::Relaxed);
-    }
-}
-
-/// What one pass over an event did, for the counters that report it. Returned
-/// rather than tallied inside, because the pass is retried and a retry must not
-/// report the same event again.
-#[derive(Debug, Default, Clone, Copy)]
-struct Handled {
-    matched: bool,
-    stored: bool,
-}
-
-async fn handle(
-    event: &mut Event,
-    state: &EventState,
-    store: &Arc<dyn EventStore>,
-    engine: &RuleEngine,
-    sinks: &SinkSet,
-) -> Result<Handled> {
-    if state.is_seen(event)? {
-        return Ok(Handled::default());
-    }
-
-    let outcome = engine.evaluate(event, state)?;
-    let interesting = outcome.matched() || outcome.subscribed > 0;
-    let mut handled = Handled {
-        matched: outcome.matched(),
-        stored: false,
-    };
-
-    if outcome.matched() {
-        event.matched = outcome.rules.clone();
-
-        match store.append(event)? {
-            Some(seq) => {
-                event.seq = seq;
-                handled.stored = true;
-                sinks.deliver(event, &outcome.sinks).await;
-            }
-            // Already in the log. Usually that means a crash between the
-            // append and the commit, so the sinks may never have seen it —
-            // and the contract is at-least-once, which makes a second copy
-            // the right answer and a silent drop the wrong one. Delivered
-            // again, deliberately.
-            None => {
-                tracing::debug!(
-                    event = %event.id,
-                    "already in the event log; delivering again rather than risk a drop"
-                );
-                sinks.deliver(event, &outcome.sinks).await;
-            }
-        }
-    }
-
-    // Committed only now. Until this point a crash leaves the event
-    // recoverable; after it, the cursor says the channel is followed to here.
-    //
-    // Retried here rather than by the caller, and never by re-running what
-    // came before it. Everything above has already delivered to the sinks, so
-    // starting the pass again on a busy database would repeat a webhook or an
-    // exec handler — turning a moment of contention into four real duplicates.
-    // Failing to commit only risks the event being seen once more later, which
-    // is the smaller of the two.
-    let mut pause = HANDLE_BACKOFF;
-    for attempt in 1..=HANDLE_ATTEMPTS {
-        match commit(event, state, interesting) {
-            Ok(()) => return Ok(handled),
-            Err(err) if attempt < HANDLE_ATTEMPTS => {
-                tracing::warn!(
-                    event = %event.id,
-                    attempt,
-                    "could not record an event as handled, retrying: {err:#}"
-                );
-                tokio::time::sleep(pause).await;
-                pause *= 2;
-            }
-            Err(err) => {
-                tracing::error!(
-                    event = %event.id,
-                    "delivered an event but could not record it; it may be seen again: {err:#}"
-                );
-            }
-        }
-    }
-
-    Ok(handled)
-}
-
-/// Records that an event has been handled and how far its conversation has
-/// been followed. The last thing to happen, and the only part of the pass that
-/// is safe to repeat once the sinks have seen the event.
-fn commit(event: &Event, state: &EventState, interesting: bool) -> Result<()> {
-    state.mark_seen(event)?;
-
-    if event.kind == EventKind::Message
-        && let (Some(channel), Some(ts)) = (event.channel.as_deref(), event.ts.as_deref())
-    {
-        state.advance_cursor(channel, ts, interesting)?;
-        // A subscribed thread keeps its own position, so recovery reads the
-        // part of it nobody has seen rather than the whole conversation.
-        if let Some(root) = event.thread_ts.as_deref() {
-            state.advance_thread_cursor(channel, root, ts)?;
-        }
-    }
-
-    Ok(())
 }
 
 async fn housekeep(
@@ -946,16 +844,21 @@ async fn housekeep(
             reported_drops = dropped;
         }
 
-        if let Err(err) = state.heartbeat(
-            connected.load(Ordering::Relaxed),
-            tally.snapshot(queue.dropped()),
-        ) {
-            tracing::warn!("could not publish the daemon heartbeat: {err:#}");
-        }
-        if let Err(err) = state.prune_seen() {
-            tracing::warn!("could not trim the deduplication table: {err:#}");
-        }
-        match store.prune() {
+        let is_connected = connected.load(Ordering::Relaxed);
+        let counters = tally.snapshot(queue.dropped());
+        let store = store.clone();
+        let result = state
+            .execute(move |state| {
+                if let Err(err) = state.heartbeat(is_connected, counters) {
+                    tracing::warn!("could not publish the daemon heartbeat: {err:#}");
+                }
+                if let Err(err) = state.prune_seen() {
+                    tracing::warn!("could not trim the deduplication table: {err:#}");
+                }
+                store.prune()
+            })
+            .await;
+        match result {
             Ok(outcome) if outcome.total() > 0 => {
                 tracing::debug!(
                     acknowledged = outcome.acknowledged,
@@ -967,6 +870,21 @@ async fn housekeep(
             Ok(_) => {}
             Err(err) => tracing::warn!("could not trim the event log: {err:#}"),
         }
+    }
+}
+
+async fn shutdown_requested(state: EventState) -> Result<()> {
+    tokio::select! {
+        () = shutdown_signal() => Ok(()),
+        result = async {
+            let mut ticker = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                ticker.tick().await;
+                if state.execute(|state| state.stop_requested()).await? {
+                    return Ok(());
+                }
+            }
+        } => result,
     }
 }
 
@@ -997,6 +915,17 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lock_contention_and_filesystem_errors_are_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(DaemonLock::try_acquire(dir.path()).is_err());
+        let path = dir.path().join("daemon.lock");
+        let held = DaemonLock::acquire(&path).unwrap();
+        assert!(DaemonLock::try_acquire(&path).unwrap().is_none());
+        drop(held);
+        assert!(DaemonLock::try_acquire(&path).unwrap().is_some());
+    }
 
     #[test]
     fn a_profile_name_becomes_a_directory_name_that_travels() {

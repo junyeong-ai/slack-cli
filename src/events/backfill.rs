@@ -51,8 +51,16 @@ pub async fn recover(
         "{}.000000",
         (Utc::now() - Duration::hours(config.backfill_max_age_hours)).timestamp()
     );
-    let gaps = state.gaps(config.backfill_max_channels)?;
-    let watched = state.watched_count()?;
+    let limit = config.backfill_max_channels;
+    let (gaps, watched, threads) = state
+        .execute(move |state| {
+            Ok((
+                state.gaps(limit)?,
+                state.watched_count()?,
+                state.watched_threads(limit)?,
+            ))
+        })
+        .await?;
     if gaps.is_empty() && watched == 0 {
         return Ok(Vec::new());
     }
@@ -70,7 +78,7 @@ pub async fn recover(
     // the one flow the emoji rule exists for is the one a disconnect loses.
     // Bounded by the same budget as the channels, on the same rationed
     // endpoints.
-    for thread in state.watched_threads(config.backfill_max_channels)? {
+    for thread in threads {
         match slack
             .messages
             .replies(
@@ -204,7 +212,11 @@ pub async fn recover(
         }
 
         if clamped && complete {
-            state.advance_cursor(&gap.channel, oldest, true)?;
+            let channel = gap.channel.clone();
+            let oldest = oldest.to_owned();
+            state
+                .execute(move |state| state.advance_cursor(&channel, &oldest, true))
+                .await?;
         }
     }
 

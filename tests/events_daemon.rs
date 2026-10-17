@@ -331,7 +331,16 @@ async fn a_mention_travels_from_the_socket_into_the_event_log() {
         .expect("apps.connections.open should have been called")
         .unwrap();
 
-    daemon.abort();
+    runtime
+        .execute(|runtime| runtime.state.request_stop())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), daemon)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(DaemonLock::acquire(&runtime.paths.lock_file()).is_ok());
 
     assert_eq!(stored.len(), 1, "only the mention should have been stored");
     assert_eq!(stored[0].matched, vec!["mention".to_string()]);
@@ -1674,4 +1683,20 @@ fn status_reads_liveness_from_the_lock_not_the_heartbeat() {
         json!(true),
         "a held lock is a running daemon: {reported}"
     );
+    let state = EventState::open(&paths.state_db()).unwrap();
+    state.claim_daemon(u32::MAX).unwrap();
+    let stopped = std::process::Command::new(BIN)
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "--json",
+            "daemon",
+            "stop",
+        ])
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .env_remove("SLACK_PROFILE")
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    assert!(state.stop_requested().unwrap());
 }

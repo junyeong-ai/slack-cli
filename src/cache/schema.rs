@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params, types
 
 use super::error::CacheResult;
 
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Every object the cache owns. `apply_schema` drops and recreates all of it
 /// when the stored version differs from `SCHEMA_VERSION` — cache contents are
@@ -106,15 +106,7 @@ const SCHEMA_DDL: &str = "
         updated_at INTEGER DEFAULT (unixepoch())
     );
 
-    -- Distributed locks table for multi-instance coordination
-    CREATE TABLE IF NOT EXISTS locks (
-        key TEXT PRIMARY KEY,
-        instance_id TEXT NOT NULL,
-        acquired_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
-    );
 
-    CREATE INDEX IF NOT EXISTS idx_locks_expires ON locks(expires_at);
 ";
 
 /// FTS virtual tables first (they shadow the content tables), then the
@@ -128,13 +120,7 @@ const SCHEMA_TEARDOWN: &str = "
     DROP TABLE IF EXISTS locks;
 ";
 
-pub async fn initialize_schema(pool: &Pool<SqliteConnectionManager>) -> CacheResult<()> {
-    let mut conn = pool.get()?;
-    apply_schema(&mut conn)
-}
-
-#[cfg(test)]
-pub fn initialize_schema_sync(pool: &Pool<SqliteConnectionManager>) -> CacheResult<()> {
+pub fn initialize_schema(pool: &Pool<SqliteConnectionManager>) -> CacheResult<()> {
     let mut conn = pool.get()?;
     apply_schema(&mut conn)
 }

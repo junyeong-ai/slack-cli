@@ -2,7 +2,7 @@ use super::error::{CacheError, CacheResult};
 use super::sqlite_cache::SqliteCache;
 use crate::slack::types::SlackUser;
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{TransactionBehavior, params};
 
 #[allow(unused_imports)]
 use rusqlite::OptionalExtension;
@@ -13,7 +13,9 @@ impl SqliteCache {
             return Err(CacheError::InvalidInput("No users to save".to_string()));
         }
 
-        self.with_lock("users_update", || self.save_users_internal(users))
+        let cache = self.clone();
+        self.writer
+            .execute(move || cache.save_users_internal(users))
             .await
     }
 
@@ -22,7 +24,7 @@ impl SqliteCache {
             return Err(CacheError::InvalidInput("No users to save".to_string()));
         }
 
-        let conn = self.pool.get()?;
+        let mut conn = self.pool.get()?;
 
         conn.execute(
             "CREATE TEMP TABLE IF NOT EXISTS users_new (
@@ -33,10 +35,8 @@ impl SqliteCache {
             [],
         )?;
 
-        conn.execute("DELETE FROM users_new", [])?;
-
-        let tx = conn.unchecked_transaction()?;
-        let mut successful_count = 0;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM users_new", [])?;
 
         for user in users {
             let json = serde_json::to_string(&user)?;
@@ -44,13 +44,6 @@ impl SqliteCache {
                 "INSERT INTO users_new (id, data) VALUES (?, ?)",
                 params![&user.id, json],
             )?;
-            successful_count += 1;
-        }
-
-        if successful_count == 0 {
-            return Err(CacheError::InvalidInput(
-                "Failed to save any users".to_string(),
-            ));
         }
 
         tx.execute("DELETE FROM users", [])?;
@@ -587,6 +580,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_replacement_preserves_the_previous_snapshot_and_search_index() {
+        let cache = setup_cache().await;
+        cache
+            .save_users(vec![create_test_user("U1", "alice", None, false)])
+            .await
+            .unwrap();
+        let duplicate = create_test_user("U2", "bob", None, false);
+        assert!(
+            cache
+                .save_users(vec![duplicate.clone(), duplicate])
+                .await
+                .is_err()
+        );
+        assert_eq!(cache.get_users().unwrap()[0].id, "U1");
+        assert_eq!(cache.search_users("alice", 10, false).unwrap().len(), 1);
+        assert!(cache.search_users("bob", 10, false).unwrap().is_empty());
+        cache
+            .save_users(vec![create_test_user("U3", "carol", None, false)])
+            .await
+            .unwrap();
+        assert_eq!(cache.get_users().unwrap()[0].id, "U3");
+    }
+
+    #[tokio::test]
+    async fn independent_pools_replace_whole_snapshots_without_mixing_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.db");
+        let first = SqliteCache::new(&path).await.unwrap();
+        let second = SqliteCache::new(&path).await.unwrap();
+        let a = (0..30)
+            .map(|i| create_test_user(&format!("A{i}"), "alice", None, false))
+            .collect();
+        let b = (0..30)
+            .map(|i| create_test_user(&format!("B{i}"), "bob", None, false))
+            .collect();
+        let (left, right) = tokio::join!(first.save_users(a), second.save_users(b));
+        left.unwrap();
+        right.unwrap();
+        let users = first.get_users().unwrap();
+        assert_eq!(users.len(), 30);
+        assert!(
+            users.iter().all(|user| user.id.starts_with('A'))
+                || users.iter().all(|user| user.id.starts_with('B'))
+        );
+    }
+
+    #[tokio::test]
     async fn test_concurrent_save_users() {
         let cache = setup_cache().await;
 
@@ -616,6 +656,8 @@ mod tests {
         let result1 = handle1.await.unwrap();
         let result2 = handle2.await.unwrap();
 
-        assert!(result1.is_ok() || result2.is_ok());
+        result1.unwrap();
+        result2.unwrap();
+        assert_eq!(cache.get_users().unwrap().len(), 1);
     }
 }

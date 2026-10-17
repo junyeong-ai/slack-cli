@@ -12,6 +12,8 @@ use rusqlite::{Connection, TransactionBehavior};
 const WAL_SWITCH_MAX_ATTEMPTS: u32 = 10;
 const WAL_SWITCH_RETRY_DELAY_MS: u64 = 50;
 
+pub(super) const POOL_SIZE: u32 = 4;
+
 /// Opens one of the daemon's databases.
 ///
 /// Unlike the cache, these files are opened with `auto_vacuum = INCREMENTAL`,
@@ -34,7 +36,7 @@ pub fn open_pool(path: &Path) -> Result<Pool<SqliteConnectionManager>> {
     });
 
     let pool = Pool::builder()
-        .max_size(4)
+        .max_size(POOL_SIZE)
         .connection_timeout(Duration::from_secs(5))
         .build(manager)
         .with_context(|| format!("could not open {}", path.display()))?;

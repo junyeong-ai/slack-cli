@@ -127,7 +127,7 @@ slack-cli config show                             # Show config
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | bash
 ```
 
-`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. Updating the skill overwrites what was shipped, because any earlier version can be fetched back with `SLACK_CLI_VERSION=<version> install.sh`. A copy you edited yourself is the exception: it is set aside outside `~/.claude/skills` and its path is printed, because anything left inside that directory is discovered as a second skill.
+`install.sh` downloads the prebuilt GitHub Release binary, verifies its SHA-256 checksum (plus the sigstore signature when `cosign` is installed), and installs it to `~/.local/bin/slack-cli`. On Linux it auto-detects glibc vs musl. The same run can install the Claude Code skill into `~/.claude/skills/slack-workspace`, so no repository checkout is required. The skill comes from the installed binary's release tag, or the matching checkout when building from source. If no matching skill is available, the existing installation is kept. Updating the skill overwrites what was shipped, because any earlier version can be fetched back with `SLACK_CLI_VERSION=<version> install.sh`. A copy you edited yourself is the exception: it is set aside outside `~/.claude/skills` and its path is printed, because anything left inside that directory is discovered as a second skill.
 
 ```bash
 # Install a specific release
@@ -148,10 +148,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### Build from Source
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release   # rust-toolchain.toml selects the 1.98.0 toolchain
+cargo build --release --locked   # rust-toolchain.toml selects the 1.99.1 toolchain
 ```
 
-**Requirements**: Rust 1.98.0+ (rustup)
+**Requirements**: Rust 1.98.0+ (rustup). Repository builds use 1.99.1.
 
 ---
 
@@ -400,7 +400,7 @@ A `.env` file in the working directory supplies any of the above.
 | `watch` | Stream matching events to stdout (stores nothing, ignores configured sinks) |
 | `daemon run` | Run the Socket Mode daemon in the foreground |
 | `daemon status` | Whether a daemon is running (decided by its lock), its last heartbeat and counters |
-| `daemon stop` | Signal the running daemon to stop (Unix only; use the service manager on Windows) |
+| `daemon stop` | Request graceful shutdown of the current profile's daemon |
 | `events pull [--consumer --ack --follow]` | Read events a consumer has not acknowledged |
 | `events ack --through <seq>` | Move a consumer's position forward |
 | `events stats` | Event log size, age and consumer backlogs |
@@ -481,7 +481,7 @@ Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` enve
 
 ## Real-time events (Socket Mode)
 
-Opens the WebSocket Slack pushes events down, and forwards only what a rule matches. `conversations.history` is capped at one request a minute and 15 messages for a non-Marketplace app, so polling cannot follow more than a channel or two. Event delivery is a separate axis from that limit.
+Opens the WebSocket Slack pushes events down, and forwards only what a rule matches. `conversations.history` can be capped at one request a minute and 15 messages for commercially distributed apps outside the Marketplace, so polling cannot follow more than a channel or two. Event delivery is a separate axis from that limit.
 
 ### App setup
 
@@ -543,18 +543,23 @@ Events arrive as one JSON object per line under the `slack-cli.event/1` schema. 
 Replying needs no new protocol — it is the CLI you already have:
 
 ```bash
-slack-cli events pull --consumer agent --follow --json |
-  while read -r event; do
-    ts=$(echo "$event" | jq -r '.thread_ts // .ts')
-    ch=$(echo "$event" | jq -r '.channel')
-    id=$(echo "$event" | jq -r '.id')
+set -euo pipefail
+batch=$(slack-cli events pull --consumer agent --limit 20 --json)
+while IFS= read -r event; do
+    [ -n "$event" ] || continue
+    ts=$(jq -er '.thread_ts // .ts' <<<"$event")
+    ch=$(jq -er '.channel' <<<"$event")
+    id=$(jq -er '.id' <<<"$event")
+    seq=$(jq -er '.seq' <<<"$event")
     reply=$(my-agent "$event")
-    slack-cli send "$ch" --thread "$ts" -t "$reply" \
-      -m "{\"event_type\":\"assistant_reply\",\"event_payload\":{\"source_event\":\"$id\"}}"
-  done
+    metadata=$(jq -cn --arg id "$id" \
+        '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
+    slack-cli send "$ch" --thread "$ts" -t "$reply" -m "$metadata"
+    slack-cli events ack --consumer agent --through "$seq"
+done <<<"$batch"
 ```
 
-Carrying the source event id in `--metadata` is what stops a restarted agent from answering the same message twice. Delivery is at-least-once, so a consumer has to be idempotent.
+Acknowledge each event only after successful processing. `--metadata` identifies the source event; it does not automatically prevent duplicate sends. Consumers must record completed event IDs and reconcile earlier sends before retrying. A crash after sending but before acknowledgement, or a lost response, can cause redelivery.
 
 > **Warning**: a message sent with a user token goes out **under your own name**, with no bot badge. Send automatically with a bot token, or have the agent DM you a draft and send it yourself.
 

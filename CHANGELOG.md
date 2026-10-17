@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-17
+
+### Changed
+
+- Remove the cache `with_lock` helper and lease constants; snapshot writes coordinate through SQLite transactions. The cache schema advances to version 3 and rebuilds on first use.
+- Update the pinned toolchain to Rust 1.99.1, refresh direct and transitive dependencies, and remove redundant development dependencies and unused features.
+- Run SQLite work on bounded blocking workers and separate event command handling from pipeline processing.
+- Apply rate limiting to every request attempt and share HTTP 429 cooldowns across calls to the same method.
+
+### Fixed
+
+- Request daemon shutdown through its profile state database on every platform instead of matching process names and signalling PIDs. Existing daemons must be stopped through their service manager and restarted with this binary.
+- Match installed skills to the binary version, replace installed binaries atomically and stop failed downloads without switching to a source build.
+- Correct event acknowledgement examples, metadata deduplication guidance and configuration defaults.
+- Store the skill version in supported frontmatter metadata and read legacy installed versions during upgrades.
+
 ## [0.13.1] - 2026-08-31
 
 ### Fixed

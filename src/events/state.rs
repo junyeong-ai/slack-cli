@@ -8,7 +8,7 @@ use rusqlite::{OptionalExtension, params};
 use super::db;
 use super::envelope::Event;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const STEPS: &[(i64, &str)] = &[
     (
@@ -62,6 +62,7 @@ const STEPS: &[(i64, &str)] = &[
         // thread each time.
         "ALTER TABLE watched_thread ADD COLUMN cursor_ts TEXT;",
     ),
+    (3, "ALTER TABLE daemon ADD COLUMN stop_requested INTEGER;"),
 ];
 
 /// How long a deduplication key is remembered. Slack redelivers an
@@ -78,6 +79,8 @@ const SEEN_RETENTION_HOURS: i64 = 24;
 #[derive(Clone)]
 pub struct EventState {
     pool: Pool<SqliteConnectionManager>,
+    executor: crate::blocking::BlockingExecutor,
+    _daemon_lock: Option<std::sync::Arc<super::DaemonLock>>,
 }
 
 /// One channel the daemon may ask Slack to replay after a disconnect.
@@ -119,12 +122,33 @@ pub struct Counters {
 }
 
 impl EventState {
+    pub(super) fn hold_daemon_lock(&mut self, lock: std::sync::Arc<super::DaemonLock>) {
+        self._daemon_lock = Some(lock);
+    }
+
+    pub(crate) async fn drain(&self) {
+        self.executor.drain().await;
+    }
+
+    pub async fn execute<T, F>(&self, operation: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Self) -> Result<T> + Send + 'static,
+    {
+        let state = self.clone();
+        self.executor.execute(move || operation(&state)).await
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         let pool = db::open_pool(path)?;
         let mut conn = pool.get()?;
         db::migrate(&mut conn, "event state", SCHEMA_VERSION, STEPS)?;
         drop(conn);
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            executor: crate::blocking::BlockingExecutor::new(db::POOL_SIZE),
+            _daemon_lock: None,
+        })
     }
 
     /// Records how far a conversation has been followed.
@@ -349,16 +373,42 @@ impl EventState {
         conn.execute(
             "INSERT INTO daemon (id, pid, started_at, heartbeat_at, connected,
                                  received, matched, stored, dropped, delivered,
-                                 failed, reconnects, backfilled)
-             VALUES (1, ?1, unixepoch(), unixepoch(), 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                                 failed, reconnects, backfilled, stop_requested)
+             VALUES (1, ?1, unixepoch(), unixepoch(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
              ON CONFLICT(id) DO UPDATE SET
                 pid = excluded.pid, started_at = excluded.started_at,
                 heartbeat_at = excluded.heartbeat_at, connected = 0,
                 received = 0, matched = 0, stored = 0, dropped = 0,
-                delivered = 0, failed = 0, reconnects = 0, backfilled = 0",
+                delivered = 0, failed = 0, reconnects = 0, backfilled = 0, stop_requested = 0",
             params![i64::from(pid)],
         )?;
         Ok(())
+    }
+
+    pub fn request_stop(&self) -> Result<()> {
+        let conn = self.pool.get()?;
+        let changed = conn.execute(
+            "UPDATE daemon SET stop_requested = 1 WHERE id = 1 AND stop_requested IS NOT NULL",
+            [],
+        )?;
+        if changed == 0 {
+            anyhow::bail!(
+                "this daemon does not support stop requests; stop it through its service manager and restart with the current binary"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn stop_requested(&self) -> Result<bool> {
+        let conn = self.pool.get()?;
+        Ok(conn
+            .query_row(
+                "SELECT COALESCE(stop_requested, 0) FROM daemon WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
     }
 
     pub fn heartbeat(&self, connected: bool, counters: Counters) -> Result<()> {
@@ -426,6 +476,96 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = EventState::open(&dir.path().join("state.db")).unwrap();
         (state, dir)
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_call_keeps_the_profile_locked_until_its_database_worker_finishes() {
+        let (mut state, dir) = state();
+        let path = dir.path().join("daemon.lock");
+        state.hold_daemon_lock(std::sync::Arc::new(
+            super::super::DaemonLock::acquire(&path).unwrap(),
+        ));
+        let executor = state.executor.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let caller = tokio::spawn(async move {
+            state
+                .execute(move |_| {
+                    started_tx.send(()).unwrap();
+                    finish_rx.recv()?;
+                    Ok(())
+                })
+                .await
+        });
+        started_rx.await.unwrap();
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        assert!(
+            super::super::DaemonLock::try_acquire(&path)
+                .unwrap()
+                .is_none()
+        );
+        finish_tx.send(()).unwrap();
+        executor.drain().await;
+        assert!(
+            super::super::DaemonLock::try_acquire(&path)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn upgrading_state_preserves_channel_and_thread_positions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let pool = db::open_pool(&path).unwrap();
+        {
+            let mut conn = pool.get().unwrap();
+            db::migrate(&mut conn, "state", 2, &STEPS[..2]).unwrap();
+        }
+        pool.get()
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO channel_cursor VALUES ('C1', '2.0', 1, unixepoch());
+             INSERT INTO watched_thread (channel, thread_ts, rule, emoji, created_at, cursor_ts)
+             VALUES ('C1', '1.0', 'watch', 'eyes', unixepoch(), '1.5');",
+            )
+            .unwrap();
+        drop(pool);
+        let state = EventState::open(&path).unwrap();
+        assert_eq!(state.gaps(10).unwrap()[0].last_ts, "2.0");
+        assert_eq!(state.watched_threads(10).unwrap()[0].cursor_ts, "1.5");
+    }
+
+    #[test]
+    fn stop_requests_are_cleared_when_a_new_daemon_claims_the_profile() {
+        let (state, _dir) = state();
+        assert!(!state.stop_requested().unwrap());
+        state.claim_daemon(123).unwrap();
+        state.request_stop().unwrap();
+        assert!(state.stop_requested().unwrap());
+        state.claim_daemon(456).unwrap();
+        assert!(!state.stop_requested().unwrap());
+    }
+
+    #[test]
+    fn a_legacy_daemon_is_not_reported_as_accepting_stop_requests() {
+        let (state, _dir) = state();
+        state.claim_daemon(123).unwrap();
+        state
+            .pool
+            .get()
+            .unwrap()
+            .execute("UPDATE daemon SET stop_requested = NULL", [])
+            .unwrap();
+        assert!(
+            state
+                .request_stop()
+                .unwrap_err()
+                .to_string()
+                .contains("service manager")
+        );
+        assert!(!state.stop_requested().unwrap());
     }
 
     /// Cursor tests run against the recovery horizon, which is measured from
