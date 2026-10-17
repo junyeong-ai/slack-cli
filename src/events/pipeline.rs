@@ -111,10 +111,10 @@ async fn handle(
             };
             if outcome.matched() {
                 event.matched = outcome.rules.clone();
-                if let Some(seq) = store.append(&event)? {
-                    event.seq = seq;
-                    handled.stored = true;
-                }
+                let appended = store.append(&event)?;
+                event.id = appended.id;
+                event.seq = appended.seq;
+                handled.stored = appended.inserted;
             }
             Ok(Some((event, outcome, handled)))
         })
@@ -180,4 +180,90 @@ fn commit(event: &Event, state: &EventState, interesting: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{EventsConfig, RuleConfig, SinkKind, default_sink};
+    use crate::events::{EventSource, SqliteStore, StdoutFormat};
+    use serde_json::json;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn replay_uses_the_retained_identity_without_replacing_current_event_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = EventState::open(&dir.path().join("state.db")).unwrap();
+        let store: Arc<dyn EventStore> = Arc::new(
+            SqliteStore::open(
+                &dir.path().join("events.db"),
+                &EventsConfig {
+                    store_body: false,
+                    ..EventsConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let original = super::super::envelope::from_event_callback(
+            &json!({
+                "event_id":"Ev-original", "event":{
+                    "type":"message", "channel":"C01", "user":"U_OTHER",
+                    "ts":"1700000000.000100", "text":"current body"
+                }
+            }),
+            false,
+        )
+        .unwrap();
+        let retained = store.append(&original).unwrap();
+        let mut recovered = Event {
+            id: "backfill:C01:1700000000.000100".into(),
+            source: EventSource::Backfill,
+            ..original
+        };
+        let server = MockServer::start().await;
+        Mock::given(path("/sink"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let sinks = SinkSet::build(
+            &[crate::config::SinkConfig {
+                kind: SinkKind::Http,
+                url: Some(format!("{}/sink", server.uri())),
+                ..default_sink("consumer")
+            }],
+            StdoutFormat::Ndjson,
+        )
+        .unwrap();
+        let rule: RuleConfig =
+            serde_json::from_value(json!({"name":"channel", "channels":["C01"]})).unwrap();
+        let engine = Arc::new(RuleEngine::new(
+            vec![rule],
+            sinks.names(),
+            Some("U_ME".into()),
+        ));
+        let handled = handle(&mut recovered, &state, &store, &engine, &sinks)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(handled.matched);
+        assert!(!handled.stored);
+        let requests = server.received_requests().await.unwrap();
+        let delivered: Event = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(delivered.id, retained.id);
+        assert_eq!(delivered.seq, retained.seq);
+        assert_eq!(delivered.source, EventSource::Backfill);
+        assert_eq!(delivered.text.as_deref(), Some("current body"));
+        assert_eq!(delivered.matched, vec!["channel"]);
+        assert_eq!(store.stats().unwrap().events, 1);
+        commit(&recovered, &state, handled.interesting).unwrap();
+        assert!(state.is_seen(&recovered).unwrap());
+        assert!(
+            handle(&mut recovered, &state, &store, &engine, &sinks)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 }

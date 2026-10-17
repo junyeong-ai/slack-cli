@@ -80,6 +80,13 @@ impl PruneOutcome {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppendOutcome {
+    pub id: String,
+    pub seq: i64,
+    pub inserted: bool,
+}
+
 /// The event log, in the two forms retention can take.
 ///
 /// Everything upstream — the socket, the rule engine, the sinks — is written
@@ -88,9 +95,9 @@ impl PruneOutcome {
 pub trait EventStore: Send + Sync {
     fn caps(&self) -> StoreCaps;
 
-    /// Assigns the event its position in the log, returning `None` when this
-    /// delivery has already been recorded.
-    fn append(&self, event: &Event) -> Result<Option<i64>>;
+    /// Returns the original ID and position for a retained event, or assigns
+    /// them on first insertion. Re-delivery keeps that identity.
+    fn append(&self, event: &Event) -> Result<AppendOutcome>;
 
     /// Events after `from`, or after what `consumer` has acknowledged when
     /// `from` is `None`.
@@ -146,8 +153,12 @@ impl EventStore for NullStore {
         }
     }
 
-    fn append(&self, _event: &Event) -> Result<Option<i64>> {
-        Ok(Some(self.next.fetch_add(1, Ordering::Relaxed) + 1))
+    fn append(&self, event: &Event) -> Result<AppendOutcome> {
+        Ok(AppendOutcome {
+            id: event.id.clone(),
+            seq: self.next.fetch_add(1, Ordering::Relaxed) + 1,
+            inserted: true,
+        })
     }
 
     fn pull(&self, _consumer: &str, _from: Option<i64>, _limit: usize) -> Result<Vec<Event>> {
@@ -216,7 +227,7 @@ impl EventStore for SqliteStore {
         }
     }
 
-    fn append(&self, event: &Event) -> Result<Option<i64>> {
+    fn append(&self, event: &Event) -> Result<AppendOutcome> {
         // What is written is decided here, once: `store_body = false` means
         // the log holds a pointer to the message rather than a copy of it.
         let persisted = if self.store_body {
@@ -226,13 +237,16 @@ impl EventStore for SqliteStore {
         };
         let payload = serde_json::to_string(&persisted).context("could not encode the event")?;
 
-        let conn = self.pool.get()?;
-        let inserted = conn.execute(
-            "INSERT OR IGNORE INTO event
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let dedupe_key = event.dedupe_key();
+        let inserted = tx.execute(
+            "INSERT INTO event
                 (dedupe_key, id, kind, channel, ts, thread_ts, author, received_at, payload)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(dedupe_key) DO NOTHING",
             params![
-                event.dedupe_key(),
+                dedupe_key,
                 event.id,
                 event.kind.as_str(),
                 event.channel,
@@ -244,10 +258,19 @@ impl EventStore for SqliteStore {
             ],
         )?;
 
-        if inserted == 0 {
-            return Ok(None);
-        }
-        Ok(Some(conn.last_insert_rowid()))
+        let outcome = tx.query_row(
+            "SELECT id, seq FROM event WHERE dedupe_key = ?1",
+            params![dedupe_key],
+            |row| {
+                Ok(AppendOutcome {
+                    id: row.get(0)?,
+                    seq: row.get(1)?,
+                    inserted: inserted > 0,
+                })
+            },
+        )?;
+        tx.commit()?;
+        Ok(outcome)
     }
 
     fn pull(&self, consumer: &str, from: Option<i64>, limit: usize) -> Result<Vec<Event>> {
@@ -472,8 +495,8 @@ mod tests {
     fn the_null_store_hands_out_positions_and_keeps_nothing() {
         let store = NullStore::new();
         assert!(!store.caps().durable);
-        assert_eq!(store.append(&event("1")).unwrap(), Some(1));
-        assert_eq!(store.append(&event("2")).unwrap(), Some(2));
+        assert_eq!(store.append(&event("1")).unwrap().seq, 1);
+        assert_eq!(store.append(&event("2")).unwrap().seq, 2);
         assert_eq!(store.stats().unwrap().events, 0);
     }
 
@@ -489,11 +512,42 @@ mod tests {
     }
 
     #[test]
-    fn appending_the_same_delivery_twice_records_it_once() {
-        let (store, _dir) = store(EventRetention::Spool);
-        assert_eq!(store.append(&event("1700000000.000100")).unwrap(), Some(1));
-        assert_eq!(store.append(&event("1700000000.000100")).unwrap(), None);
-        assert_eq!(store.stats().unwrap().events, 1);
+    fn retained_events_keep_their_identity_across_deliveries_and_restarts() {
+        let (store, dir) = store(EventRetention::Spool);
+        let original = event("1700000000.000100");
+        let first = store.append(&original).unwrap();
+        assert!(first.inserted);
+        assert_eq!(first.id, original.id);
+        assert_eq!(first.seq, 1);
+        drop(store);
+        let store = SqliteStore::open(
+            &dir.path().join("events.db"),
+            &config(EventRetention::Spool),
+        )
+        .unwrap();
+        let recovered = Event {
+            id: "backfill:C01:1700000000.000100".into(),
+            source: EventSource::Backfill,
+            ..original
+        };
+        let replay = store.append(&recovered).unwrap();
+        assert_eq!(
+            replay,
+            AppendOutcome {
+                inserted: false,
+                ..first.clone()
+            }
+        );
+        let pulled = store.pull("consumer", None, 10).unwrap();
+        assert_eq!(pulled.len(), 1);
+        assert_eq!(pulled[0].id, first.id);
+        assert_eq!(pulled[0].seq, first.seq);
+        store.ack("consumer", first.seq).unwrap();
+        assert_eq!(store.prune().unwrap().acknowledged, 1);
+        let after_retention = store.append(&recovered).unwrap();
+        assert!(after_retention.inserted);
+        assert!(after_retention.seq > first.seq);
+        assert_eq!(after_retention.id, recovered.id);
     }
 
     #[test]

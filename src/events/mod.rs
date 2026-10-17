@@ -24,7 +24,8 @@ pub use envelope::{EVENT_SCHEMA, Event, EventKind, EventSource};
 pub use sink::StdoutFormat;
 pub use state::{Counters, DaemonStatus, EventState};
 pub use store::{
-    ConsumerLag, EventStore, NullStore, PruneOutcome, SqliteStore, StoreCaps, StoreStats,
+    AppendOutcome, ConsumerLag, EventStore, NullStore, PruneOutcome, SqliteStore, StoreCaps,
+    StoreStats,
 };
 
 use crate::auth::AuthError;

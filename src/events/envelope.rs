@@ -76,8 +76,9 @@ impl EventSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub schema: String,
-    /// Slack's own identifier for the delivery, kept for traceability. It is
-    /// *not* the deduplication key — see `dedupe_key`.
+    /// Identifier from the first retained delivery, reused on redelivery.
+    /// A recovered message starts with a synthetic ID when no row remains.
+    /// Storage deduplication uses `dedupe_key`, independently of this ID.
     pub id: String,
     /// Monotonic position in this installation's log. Assigned on ingest, so
     /// it orders events as the daemon saw them, not as Slack timestamped them.

@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.18.0"
+  version: "0.19.0"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -258,7 +258,7 @@ installation stores references only — fetch the body with
 `slack-cli thread <channel> <thread_ts>` when you need it.
 
 Persisted events can be delivered again after a restart, so deduplicate on
-`id`. Replay lasts only while rows remain within `retention_days` and
+`id`. While an event remains in the log, push redelivery preserves its original `id` and `seq`. Replay lasts only while rows remain within `retention_days` and
 `max_bytes`; the bounded input queue and disconnect recovery can lose events. `--ack` is the one place that flips: it marks
 the batch as it is printed, so a crash between printing and acting loses it.
 When replying, carry the id so a repeat is visible:

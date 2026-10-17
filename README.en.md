@@ -561,6 +561,8 @@ Events arrive as one JSON object per line under the `slack-cli.event/1` schema. 
 - **push** — an `exec` or `http` sink calls the agent the moment a rule matches. Lowest latency, but **not the guaranteed path**: a failure is counted and never retried, because retrying inline would stall every event behind it. Whatever arrived while the agent was down is gone.
 - **pull** — `events pull` reads from a cursor, so an agent that restarts resumes where it stopped. Needs `mode` set to `spool` or `archive`.
 
+Push redelivery preserves the original `id` and `seq` while the event remains in the log. Rows removed by retention limits and stream mode retain no historical identity.
+
 Replying needs no new protocol — it is the CLI you already have:
 
 ```bash

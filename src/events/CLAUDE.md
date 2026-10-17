@@ -76,9 +76,11 @@ what was said.
 
 Persisted rows are replayable within the retention and size limits. An event that matched is appended before it is
 delivered and the commit happens after both, so a crash re-delivers rather than
-drops — and on the re-run `append` returns `None` for a row that is already
-there, which is answered by delivering *again*, because at-least-once makes a
-duplicate the right failure and a silent skip the wrong one.
+drops. `append` returns the original ID and sequence for a retained row and
+whether it was newly inserted. The pipeline redelivers using that identity;
+current source, content and matching rules remain unchanged. Insertion and
+identity lookup share a transaction with respect to concurrent pruning.
+Deleted rows and stream mode retain no historical identity.
 
 Sinks are best-effort on top of that. A failed push is counted and logged, not
 retried: retrying inline would stall every event behind it, and one unreachable
