@@ -7,18 +7,18 @@ r2d2 connection pool, WAL mode. Used to make name-based lookups (users, channels
 ```
 Phase 1: LIKE with priority         exact match ranks first, cheap
   SELECT data FROM users WHERE name LIKE ?
-Phase 2: FTS5 MATCH                 only if Phase 1 returned nothing
+Phase 2: FTS5 phrase MATCH          only if Phase 1 returned nothing
   SELECT data FROM users JOIN users_fts WHERE users_fts MATCH ?
 ```
 
-Phase 1 wins for the common case (typing the start of a name). Phase 2 is the fuzzy fallback. Always run them in this order — FTS5 over short inputs is noisy and slower than LIKE.
+LIKE searches substrings and ranks exact names first. FTS5 searches a quoted phrase only when LIKE returns no rows; it does not perform typo correction or approximate matching.
 
 ## FTS5 query sanitization (mandatory)
 
 Any user-supplied query MUST pass through `helpers::process_fts_query` before reaching `MATCH`. The helper:
-- escapes FTS5 operators (`"`, `*`, `(`, `)`, ...)
-- returns a quoted string when the sanitized form is non-empty
-- returns an empty string when the input contains no searchable text
+- trims surrounding whitespace and removes `*` and `%`
+- doubles embedded double quotes and wraps the remaining input as a literal phrase
+- returns an empty string when nothing remains after trimming and wildcard removal
 
 **An empty string skips Phase 2 entirely.** Submitting an empty MATCH expression to FTS5 errors out the statement.
 

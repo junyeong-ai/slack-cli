@@ -417,7 +417,7 @@ A `.env` file in the working directory supplies any of the above.
 | `events stats` | Event log size, age and consumer backlogs |
 | `events prune` | Apply the retention policy now |
 | `events path` | Where the daemon keeps its files |
-| `cache stats/refresh` | Cache management |
+| `cache stats/refresh/path` | Cache management and the selected database path |
 | `config show/path/edit` | Config management |
 | `self update` | Replace this binary with the latest release |
 | `self update --check` | Report whether an update exists, changing nothing |
@@ -426,6 +426,7 @@ A `.env` file in the working directory supplies any of the above.
 - `--json` — JSON output
 - `--profile <name>` — Use a specific profile for this invocation (env: `SLACK_PROFILE`)
 - `--config <path>` — Override the config.toml path. A named file that is absent is an error, not a fall back to defaults
+- `--data-dir <path>` — Root directory containing authorization-specific caches. Use `cache path` for the selected database path
 - `--verbose` — Enable debug logs
 
 ### users/channels Options

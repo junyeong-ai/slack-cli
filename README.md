@@ -404,7 +404,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `events stats` | 이벤트 로그 크기·보존·소비자 지연 |
 | `events prune` | 보존 정책 즉시 적용 |
 | `events path` | 데몬 파일 위치 |
-| `cache stats/refresh` | 캐시 관리 |
+| `cache stats/refresh/path` | 캐시 관리 및 현재 데이터베이스 경로 |
 | `config show/path/edit` | 설정 관리 |
 | `self update` | 최신 릴리스로 이 바이너리를 교체 |
 | `self update --check` | 업데이트 유무만 확인 (교체하지 않음) |
@@ -413,6 +413,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 - `--json` — JSON 출력
 - `--profile <name>` — 1회 호출에 사용할 프로필 (env: `SLACK_PROFILE`)
 - `--config <path>` — config.toml 경로 override. 지정한 파일이 없으면 기본값으로 넘어가지 않고 오류입니다
+- `--data-dir <path>` — 프로필별 캐시를 담는 루트 디렉터리 지정. 현재 데이터베이스 경로는 `cache path`로 확인
 - `--verbose` — debug 로그 활성
 
 ### users/channels 옵션
