@@ -53,7 +53,7 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 - `UserRequired` — user only (e.g. `assistant.search.context`, where bot calls would need an `action_token` a CLI never receives)
 - `AppRequired` — the app-level token only (`apps.connections.open`). Disjoint from the installation axes in both directions
 
-`Authenticator::token_for(policy)` is the single resolution point. Domain clients never touch tokens directly.
+`Authenticator::token_for(policy)` selects credentials for domain requests through `SlackCore`. Profile inspection uses `token_for_profile`, while logout uses `token_for_authorization` to preserve its captured authorization boundary; `SlackAuthClient::identities` validates each resolved installation credential with `auth.test`.
 
 `TokenPolicy::accepts(kind)` answers the same question statically: whether a token of that kind can ever satisfy the method. That is what keeps unusable scopes out of an installation — a `UserRequired` method contributes nothing to the bot scope set.
 
@@ -71,7 +71,7 @@ When Slack answers `missing_scope`, `SlackCore` reports which scopes the method 
 
 ### Exception: `oauth.v2.access`
 
-The only Slack endpoint not routed through `SlackCore::api_call`. It has no `Authorization` header and uses a different response envelope. Lives in `auth/oauth/exchange.rs` with a dedicated `reqwest::Client`.
+The only Slack endpoint outside `SlackCore` dispatch. It has no `Authorization` header and uses a different response envelope. Lives in `auth/oauth/exchange.rs` with a dedicated `reqwest::Client`.
 
 For ad-hoc validation with an explicit token (login flows before persistence), use `SlackCore::api_call_with(method, params, token)` — same retry/rate-limit/JSON-envelope handling, but the token comes from the caller instead of the `Authenticator`.
 
@@ -87,12 +87,13 @@ Adding scopes in step 1 fails `tests/documented_scopes.rs` until both READMEs ar
 
 ## Pagination shapes
 
-Two patterns coexist by design:
+Pagination follows the operation:
 
 | Shape | Used by | Caller responsibility |
 |---|---|---|
 | Returns `(Vec<T>, Option<cursor>)` | `messages.history` | Caller decides whether to follow cursor |
-| Loops internally to a user `limit` | `search.context`, `messages.replies`, `users.list`, `channels.list` | Caller passes a total cap; method owns the loop |
+| Loops internally to a user `limit` | `search.context`, `messages.replies` | Caller passes a total cap; method owns the loop |
+| Fetches every page | `users.list`, `channels.list`, `channels.members` | Directory lists populate complete cache snapshots; members returns the complete member list |
 
 Each internally-looping method defines its own `PAGE_SIZE` constant matching the Slack API's per-method max. Don't unify them — different endpoints cap differently (search=20, replies=1000, users/channels=200).
 

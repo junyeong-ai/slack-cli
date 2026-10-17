@@ -170,9 +170,9 @@ slack-cli auth scopes          # 앱에 등록할 scope 목록
 ### 방법 1 — PKCE OAuth (브라우저 흐름, 권장)
 
 ```bash
-slack-cli auth login --client-id <client-id>
+slack-cli auth login --method pkce --client-id <client-id>
 # 또는 환경변수
-SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
+SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 
 `auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`(`--port`로 변경)에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 포트는 앱에 등록한 Redirect URL과 정확히 같아야 합니다. 터미널에서 실행할 때만 브라우저를 열고, 그 외(스크립트·CI)에는 URL을 출력합니다 — `--no-browser`로 항상 출력하게 할 수 있습니다. 사전 준비:
@@ -207,7 +207,7 @@ slack-cli auth login --method static --user-token xoxp-your-token
 slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
 
-`auth.test`로 토큰을 검증한 뒤 프로필이 저장됩니다. 붙여넣은 토큰은 만료·갱신 대상이 아닙니다.
+`auth.test`로 토큰을 검증한 뒤 프로필이 저장됩니다. 붙여넣은 토큰은 만료·갱신 메타데이터 없이 저장되며 자동 갱신되지 않습니다. Slack에서 만료되거나 폐기되면 새 토큰으로 교체하세요.
 
 **Bot Token Scopes** (`--bot-token`으로 봇 토큰을 함께 등록할 때):
 
@@ -241,6 +241,10 @@ slack-cli auth logout --all              # 모든 프로필 제거
 ```
 
 `--profile NAME`은 글로벌 플래그로 어느 위치에도 둘 수 있습니다.
+
+`SLACK_USER_TOKEN`과 `SLACK_BOT_TOKEN`은 `--profile`보다 우선합니다. 저장된 프로필을 사용하려면 두 환경 변수를 해제하세요. `SLACK_APP_TOKEN`은 독립적으로 적용됩니다.
+
+`auth status --verify --json`은 저장된 프로필을 확인합니다. 검증 실패는 종료 코드가 `0`이어도 `verified.error`에 표시되며, 저장된 프로필이 없으면 `{profiles: []}`를 반환합니다. 환경 토큰의 유효성을 확인하는 명령은 아닙니다.
 
 정적 로그인은 전달된 user/bot 토큰을 모두 검증하고 같은 워크스페이스인지 확인합니다. 로그아웃은 실행 시 선택된 인증만 제거하며, 동시에 새로 로그인한 인증은 보존합니다.
 
@@ -449,10 +453,10 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `0` | 성공 |
 | `1` | 일반 오류 |
 | `2` | 사용법 오류 (clap) |
-| `3` | 인증 오류 (재로그인 필요 — `invalid_auth`, `missing_scope` 등) |
-| `4` | 레이트리밋 (재시도 소진) |
+| `3` | 인증 오류 (오류 내용에 따라 자격 증명·프로필·권한 확인) |
+| `4` | 레이트리밋 |
 
-`--json` 모드의 런타임 실패는 stderr 로 `{"error": {"code", "message"}}` 봉투를 출력합니다. 사용법 오류(종료 코드 `2`)는 파싱 단계에서 발생하므로 clap 의 진단 텍스트가 그대로 출력됩니다 — 종료 코드만으로 구분하면 됩니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. stdout 은 항상 "파싱 가능한 데이터 또는 빈 값"을 유지합니다.
+`--json` 모드의 런타임 실패는 stderr 로 `{"error": {"code", "message"}}` 봉투를 출력합니다. 사용법 오류(종료 코드 `2`)는 파싱 단계에서 발생하므로 clap 의 진단 텍스트가 그대로 출력됩니다 — 종료 코드만으로 구분하면 됩니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. `--json`의 stdout에는 JSON 데이터가 출력되며, 이벤트 스트림은 NDJSON 형식입니다.
 
 ### search 옵션
 - `--limit <N>` — 총 결과 수 (1-100, 기본: `10`. 20개 단위 페이지로 자동 페이징)
@@ -589,9 +593,12 @@ done <<<"$batch"
 
 ## 문제 해결
 
-### 캐시 초기화
+### 캐시 갱신
 ```bash
-rm -rf "$(dirname "$(slack-cli config path)")/cache" && slack-cli cache refresh
+# 현재 인증의 사용자·채널 스냅샷 갱신
+slack-cli cache refresh
+# --data-dir 또는 [cache].data_path를 반영한 실제 DB 위치
+slack-cli cache path
 ```
 
 ### 권한 오류

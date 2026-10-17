@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1] - 2026-10-17
+
+### Documentation
+
+- Align README and skill guidance with environment-token precedence, stored-profile verification results, static token renewal and error handling.
+- Use explicit PKCE selection in browser-login examples, acknowledge events after handling them, and refresh caches without deleting unrelated profiles or assuming default paths.
+- Correct developer guidance for profile collision protection, credential readiness and complete directory pagination; clarify environment credential storage in the security policy.
+
 ## [0.19.0] - 2026-10-17
 
 ### Fixed

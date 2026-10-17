@@ -170,9 +170,9 @@ slack-cli auth scopes          # Scopes to register on your Slack app
 ### Method 1 — PKCE OAuth (browser flow, recommended)
 
 ```bash
-slack-cli auth login --client-id <client-id>
+slack-cli auth login --method pkce --client-id <client-id>
 # Or via env
-SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login
+SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 
 `auth login` briefly binds a callback server on `127.0.0.1:53682` (`--port` to change it), opens the Slack authorization page in your browser, and exchanges the code for a user token. The port has to match the Redirect URL registered on the app exactly. The browser opens only when the command is run from a terminal; anywhere else — a script, CI — the URL is printed instead, which `--no-browser` also forces. One-time setup:
@@ -207,7 +207,7 @@ slack-cli auth login --method static --user-token xoxp-your-token
 slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
 
-The token is validated via `auth.test` before the profile is persisted. Pasted tokens never expire and are never renewed.
+The token is validated via `auth.test` before the profile is persisted. Pasted tokens are stored without expiry or refresh metadata and are not renewed. Replace a token if Slack expires or revokes it.
 
 **Bot Token Scopes** (when registering a bot token with `--bot-token`):
 
@@ -241,6 +241,10 @@ slack-cli auth logout --all              # Remove every profile
 ```
 
 `--profile NAME` is a global flag — position-independent.
+
+`SLACK_USER_TOKEN` and `SLACK_BOT_TOKEN` take precedence even with `--profile`. Unset both to use a stored profile. `SLACK_APP_TOKEN` applies independently.
+
+`auth status --verify --json` inspects the stored profile. A verification failure appears in `verified.error` even when the report exits `0`; with no stored profiles, the response is `{profiles: []}`. It does not verify environment-token overrides.
 
 Static login validates every supplied user/bot token and requires the same workspace. Logout targets the authorizations selected at invocation; a concurrent new login is preserved.
 
@@ -462,10 +466,10 @@ The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`
 | `0` | Success |
 | `1` | Generic error |
 | `2` | Usage error (clap) |
-| `3` | Auth error (re-login needed — `invalid_auth`, `missing_scope`, …) |
-| `4` | Rate limited (retries exhausted) |
+| `3` | Auth error (inspect credentials, profile selection or permissions as directed) |
+| `4` | Rate limited |
 
-Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. stdout always stays "parseable data or empty".
+Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. In `--json` mode stdout carries JSON data; event streams use NDJSON.
 
 ### search Options
 - `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)
@@ -602,9 +606,12 @@ Acknowledge each event only after successful processing. `--metadata` identifies
 
 ## Troubleshooting
 
-### Reset Cache
+### Refresh Cache
 ```bash
-rm -rf "$(dirname "$(slack-cli config path)")/cache" && slack-cli cache refresh
+# Refresh user and channel snapshots for the current authorization
+slack-cli cache refresh
+# Actual DB location, including --data-dir or [cache].data_path
+slack-cli cache path
 ```
 
 ### Permission Errors

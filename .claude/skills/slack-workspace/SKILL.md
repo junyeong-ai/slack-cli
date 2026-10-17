@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.19.0"
+  version: "0.19.1"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -23,7 +23,7 @@ slack-cli send "#general" -t "Hello"
 ts=$(slack-cli send "#general" -t "Parent" --json | jq -r '.ts')
 slack-cli send "#general" -t "Reply" --thread "$ts"
 
-# Page through channel history until next_cursor is null
+# Fetch a history page, then request the next page when a cursor is present
 page=$(slack-cli messages "#general" --json)
 echo "$page" | jq '.messages[]'
 cursor=$(echo "$page" | jq -r '.next_cursor // empty')
@@ -35,13 +35,13 @@ slack-cli search "deploy plan changes" --sort timestamp --json
 
 ## Errors and exit codes
 
-stdout is always parseable data or empty. Runtime failures print to stderr — in `--json` mode as an `{"error": {"code", "message"}}` envelope. `code` is Slack's error string verbatim for API failures (`channel_not_found`, `missing_scope`, …), otherwise `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`.
+Use `--json` for machine-readable stdout; event streams use NDJSON. Runtime failures print to stderr — in `--json` mode as an `{"error": {"code", "message"}}` envelope. `code` is Slack's error string verbatim for API failures (`channel_not_found`, `missing_scope`, …), otherwise `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`.
 
 Usage errors are the one exception: they exit `2` from clap at parse time with plain diagnostic text, never the envelope — branch on the exit code alone.
 
-Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (re-run `slack-cli auth login`) · `4` rate-limited (back off before retrying).
+Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (inspect credentials, profile selection or permissions) · `4` rate-limited (back off before retrying).
 
-Rotating tokens renew themselves: the CLI exchanges an expiring token before use, so exit code `3` means the credential is genuinely spent, not merely old.
+Rotating tokens renew before use. Exit code `3` can also indicate missing app credentials, mismatched workspaces or a changed authorization; follow the specific error instead of always logging in again.
 
 ## Markdown: prefer `--markdown-text`
 
@@ -90,7 +90,8 @@ slack-cli delete <channel> <ts>
 slack-cli react      <channel> <ts> <emoji>
 slack-cli unreact    <channel> <ts> <emoji>
 slack-cli reactions  <channel> <ts> --json
-slack-cli pin   | unpin   <channel> <ts>
+slack-cli pin        <channel> <ts>
+slack-cli unpin      <channel> <ts>
 slack-cli pins  <channel> --json
 slack-cli bookmark   <channel> <title> <url> [--emoji <e>]
 slack-cli unbookmark <channel> <bookmark_id>
@@ -131,7 +132,7 @@ All three flags share one input vocabulary:
 | `@path.json` | Read JSON from a file |
 | anything else | Inline JSON literal |
 
-Shape is validated **before** any HTTP call:
+JSON source shapes are validated before the message request:
 
 - `--blocks` / `--attachments` must be a JSON **array**
 - `--metadata` must be a JSON **object** `{event_type: string, event_payload: object}` — both fields required
@@ -179,7 +180,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `search --json` → `{messages, files, channels, users}` object. Each `.messages[]` uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape.
 - `cache stats --json` → `{users: N, channels: N}`.
 - `search --capabilities --json` → `{is_ai_search_enabled}`. When false the workspace ranks by keyword whatever `--no-semantic` says.
-- `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot, app}, authorized_at}`. `app` is the Socket Mode app-level token and is `null` unless one has been registered. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null for tokens that do not expire. On `auth status --verify`, the `verified` object echoes the live `auth.test` shape (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`).
+- `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot, app}, authorized_at}`. `app` is the Socket Mode app-level token and is `null` unless one has been registered. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null when no expiry is recorded. With no stored profiles, the response is `{profiles: []}`. On `auth status --verify`, success adds the live `auth.test` shape under `verified` (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`). Verification failures instead appear as `verified.error` and the report still exits `0`; inspect that field. This command inspects stored profiles, not environment-token overrides.
 - `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
 - `auth scopes --json` → `{user: [...], bot: [...], app: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops. `app` is the app-level token's scope (`connections:write`), which is granted in the app's own configuration rather than by an authorization and is therefore never excludable.
 
@@ -230,16 +231,8 @@ not.**
 # Is anything collecting?  running:false means no daemon — say so, do not start one.
 slack-cli daemon status --json | jq '.running'
 
-# Take the next batch and mark it handled. Each --consumer keeps its own
-# position, so pick one name and keep using it.
-#
-# --ack marks the batch as it is emitted, which makes it at-most-once: if this
-# process dies after the events are printed but before they are acted on, they
-# do not come back. Leave --ack off while working, and acknowledge with
-# `events ack --through <seq>` once the work is actually done.
-slack-cli events pull --consumer assistant --limit 20 --ack --json
-
-# Look without consuming (the same batch comes back next time).
+# Read pending events using one stable consumer name.
+# Acknowledge each event with `events ack --through <seq>` after handling it.
 slack-cli events pull --consumer assistant --limit 20 --json
 ```
 
@@ -290,11 +283,12 @@ is nothing to pull — report that rather than retrying.
 
 ## Multi-workspace
 
+`SLACK_USER_TOKEN` and `SLACK_BOT_TOKEN` override stored installation credentials even with `--profile`. Unset both before selecting a stored workspace. `SLACK_APP_TOKEN` is independent and can accompany a stored profile.
+
 Event stores belong to an API endpoint, profile, workspace and user. Keep the
 same profile and installation credentials for the daemon and its consumers.
 Environment credentials are verified on first use; their identity binding then
 allows local reads without Slack. A replacement token for the same owner keeps
 the store, while a different workspace or user starts a separate one.
 
-
-`slack-cli --profile <name> <command>` runs a single command against a specific stored workspace. The flag is global, position-independent.
+`slack-cli --profile <name> <command>` selects a stored workspace for one command when no environment user/bot tokens are set. The flag is global, position-independent.
