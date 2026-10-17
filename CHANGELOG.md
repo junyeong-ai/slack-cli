@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.7] - 2026-10-17
+
+### Fixed
+
+- Pin installer signature verification to the exact release tag selected for download, matching self-update verification and rejecting signatures from another release.
+
+### Documentation
+
+- Align manual signature verification, metadata retry guidance and stored-event consumption instructions with the implementation.
+- Scope PKCE and credential-resolution guidance to the CLI's authentication paths.
+
 ## [0.19.6] - 2026-10-17
 
 ### Fixed

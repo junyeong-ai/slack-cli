@@ -162,13 +162,8 @@ download_binary() {
     local checksum_url
     local binary_path
 
-    if [ -n "$version" ]; then
-        archive="slack-cli-v${version}-${target}.tar.gz"
-        url="https://github.com/$REPO/releases/download/v${version}/${archive}"
-    else
-        archive="slack-cli-${target}.tar.gz"
-        url="https://github.com/$REPO/releases/latest/download/${archive}"
-    fi
+    archive="slack-cli-v${version}-${target}.tar.gz"
+    url="https://github.com/$REPO/releases/download/v${version}/${archive}"
     checksum_url="${url}.sha256"
 
     BINARY_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/slack-cli-install.XXXXXX")
@@ -207,7 +202,7 @@ download_binary() {
     fi
     echo "   ✅ SHA-256 verified" >&2
 
-    verify_signature "$url" "$archive" || {
+    verify_signature "$url" "$archive" "$version" || {
         rm -rf "$BINARY_TMP_DIR"
         return 2
     }
@@ -235,6 +230,7 @@ download_binary() {
 verify_signature() {
     local url="$1"
     local archive="$2"
+    local version="$3"
 
     if ! command -v cosign >/dev/null; then
         echo "ℹ️  cosign not found; skipping signature verification (SHA-256 already checked)" >&2
@@ -251,7 +247,7 @@ verify_signature() {
 
     if ! cosign verify-blob \
         --bundle "$BINARY_TMP_DIR/${archive}.bundle" \
-        --certificate-identity-regexp "^https://github.com/$REPO/\.github/workflows/release\.yml@refs/tags/" \
+        --certificate-identity "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/v${version}" \
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
         "$BINARY_TMP_DIR/$archive" >&2; then
         echo "❌ Signature verification failed for $archive" >&2

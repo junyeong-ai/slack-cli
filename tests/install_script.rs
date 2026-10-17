@@ -41,6 +41,40 @@ prepare_skill_source v1.2.3
 }
 
 #[test]
+fn release_downloads_verify_the_selected_tag_and_reject_another_tags_signature() {
+    run(r#"
+TMPDIR="$TEST_ROOT"
+mkdir -p "$TEST_ROOT/source"
+printf '%s\n' '#!/bin/sh' 'echo slack-cli 1.2.3+build.4' > "$TEST_ROOT/source/slack-cli"
+chmod +x "$TEST_ROOT/source/slack-cli"
+tar -C "$TEST_ROOT/source" -czf "$TEST_ROOT/release.tar.gz" slack-cli
+curl() {
+    local name="${2##*/}"
+    case "$name" in
+        *.sha256) compute_sha256 "$TEST_ROOT/release.tar.gz" > "$name" ;;
+        *.bundle) printf signed > "$name" ;;
+        *) cp "$TEST_ROOT/release.tar.gz" "$name" ;;
+    esac
+}
+cosign() {
+    local identity=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --certificate-identity) identity="$2"; shift ;;
+        esac
+        shift
+    done
+    [ "$identity" = "https://github.com/junyeong-ai/slack-cli/.github/workflows/release.yml@refs/tags/v$SIGNED_RELEASE" ]
+}
+SIGNED_RELEASE=1.2.3+build.4
+downloaded=$(download_binary 1.2.3+build.4 test)
+[ -x "$downloaded" ]
+SIGNED_RELEASE=9.9.9
+if download_binary 1.2.3+build.4 test; then exit 1; fi
+"#);
+}
+
+#[test]
 fn a_missing_release_skill_is_not_replaced_with_main() {
     run(r#"
 curl() { printf '%s\n' "$2" >> "$TEST_ROOT/requests"; return 22; }

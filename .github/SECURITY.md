@@ -12,7 +12,7 @@ sigstore signatures published with each release.
 any refresh tokens — to `auth.json` in the platform config directory, with mode
 `0600` and its parent directory tightened to `0700` on Unix. The file is
 rewritten atomically and guarded by an advisory lock so concurrent invocations
-cannot interleave writes. On Windows, files inherit the platform configuration directory ACL. Permissions are re-tightened on every read, and a
+cannot interleave writes. On Windows, files inherit the platform configuration directory ACL. On Unix, permissions are re-tightened on every read, and a
 loosening is reported on stderr.
 
 Environment token overrides are kept in memory and are not persisted to the auth store.
@@ -71,14 +71,14 @@ Every release publishes:
 - A SLSA Level 3 provenance attestation (`slack-cli.intoto.jsonl`).
 
 Verify a downloaded archive with `cosign`. The identity is pinned to the
-tag-triggered release workflow, so a signature produced by any other workflow
-or branch fails:
+release workflow and the exact tag being installed, so a signature from another
+workflow, branch or release tag fails:
 
 ```sh
 cosign verify-blob \
     --bundle slack-cli-v<version>-<target>.tar.gz.bundle \
-    --certificate-identity-regexp \
-        "^https://github.com/junyeong-ai/slack-cli/\.github/workflows/release\.yml@refs/tags/" \
+    --certificate-identity \
+        "https://github.com/junyeong-ai/slack-cli/.github/workflows/release.yml@refs/tags/v<version>" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     slack-cli-v<version>-<target>.tar.gz
 ```

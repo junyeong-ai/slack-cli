@@ -26,7 +26,7 @@ messages.update(channel, ts, payload)         // edit (no thread routing)
 - `into_post_json` adds `thread_ts` only on send; `into_update_json` never carries thread routing.
 - New send/update fields belong on `MessagePayload`, not on call sites.
 
-Metadata is a first-class field on `MessagePayload` and on `SlackMessage`. `conversations.history` and `conversations.replies` always request `include_all_metadata=true` so round-tripping idempotency markers needs no extra flag.
+Metadata is a first-class field on `MessagePayload` and on `SlackMessage`. `conversations.history` and `conversations.replies` always request `include_all_metadata=true` so round-tripping correlation metadata needs no extra flag. Metadata does not prevent duplicate sends.
 
 ## API call flow (core.rs)
 

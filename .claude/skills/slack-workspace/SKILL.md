@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.19.6"
+  version: "0.19.7"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -41,7 +41,7 @@ Usage errors are the one exception: they exit `2` from clap at parse time with p
 
 Exit codes: `0` ok · `1` generic · `2` usage · `3` auth (inspect credentials, profile selection or permissions) · `4` rate-limited (back off before retrying).
 
-Rotating tokens renew before use. Exit code `3` can also indicate missing app credentials, mismatched workspaces or a changed authorization; follow the specific error instead of always logging in again.
+Stored PKCE credentials renew before use. Environment tokens are managed by the caller. Exit code `3` can also indicate missing app credentials, mismatched workspaces or a changed authorization; follow the specific error instead of always logging in again.
 
 ## Markdown: prefer `--markdown-text`
 
@@ -98,7 +98,7 @@ slack-cli unbookmark <channel> <bookmark_id>
 slack-cli bookmarks  <channel> --json
 slack-cli emoji [--query <q>] --json
 
-# Real-time events (only when a daemon is running — see below)
+# Collected events (requires a spool/archive log — see below)
 slack-cli events pull [--consumer NAME] [--limit N] [--ack] [--follow] --json
 slack-cli events ack --consumer NAME --through <seq>
 slack-cli events stats --json
@@ -228,13 +228,16 @@ the user reacted to. **Reading them is the agent's job; running the daemon is
 not.**
 
 ```bash
-# Is anything collecting?  running:false means no daemon — say so, do not start one.
+# Check collection. A stopped daemon adds no new events; retained events remain readable.
 slack-cli daemon status --json | jq '.running'
 
 # Read pending events using one stable consumer name.
 # Acknowledge each event with `events ack --through <seq>` after handling it.
 slack-cli events pull --consumer assistant --limit 20 --json
 ```
+
+When `running` is false, report that collection has stopped and read any pending
+retained events. Do not start a daemon unless the user requests it.
 
 The first pull registers its consumer even when no events exist. Reuse the same
 consumer name; an unacknowledged position holds spool pruning until ack, subject

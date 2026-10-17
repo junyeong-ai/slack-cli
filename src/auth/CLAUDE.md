@@ -60,7 +60,7 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 ## Invariants
 
 1. **Tokens never reach `config.toml` or logs.** `SecretString` auto-zeroizes on drop and masks `Debug`. Tracing macros only see metadata, never token values.
-2. **`Authenticator::token_for` is the only token-resolution path.** Env tokens take precedence and are never renewed — their lifetime belongs to the caller. Otherwise the profile is resolved via `AuthState::resolve`, then the credential's `readiness` decides.
+2. **`Authenticator` owns token resolution.** Env tokens take precedence for requests and are never renewed — their lifetime belongs to the caller. Stored profiles resolve via `AuthState::resolve`, then the credential's `readiness` decides. Profile inspection and logout use their dedicated authenticator paths to retain their stored-profile and authorization boundaries.
 3. **Only a lock holder can write.** `AuthStore::write` takes `&StoreGuard`, so a state read before the lock was acquired cannot be written after another process has committed its own. `Authenticator::load` re-reads under the lock before persisting a schema upgrade for the same reason.
 4. **Every mutation is one cross-process transaction.** `transact` and `renew` take the store lock, re-read from disk, apply, write, and only then swap the in-memory copy. Re-reading under the lock is what makes concurrent invocations safe: Slack revokes a refresh token once it is used, so a sibling process that renewed a moment ago has already written the successor, and this process adopts it instead of spending a token that is gone.
 5. **The lock is acquired on the blocking pool.** Waiting on another process is unbounded; doing it on a runtime worker would strand the task that is meant to release the lock.
@@ -74,7 +74,7 @@ Renewal is driven only by the recorded expiry — never by reacting to an API er
 
 ## The browser flow is always PKCE
 
-Slack rejects a loopback redirect that omits PKCE — *Must use PKCE to redirect to a non-web URI* — and rejects bot scopes on one outright — *Bot scopes are not allowed when redirecting to a non-web URI*. Every address a CLI can receive a callback on is such a URI, so there is no confidential-client variant to pick: the authorize URL always carries `code_challenge`/`S256` and `user_scope` alone, and the exchange sends `client_id` with no secret. Tokens from this flow always rotate. A bot token reaches the CLI only by being pasted into `--method static`.
+For PKCE-enabled apps, Slack treats loopback callbacks as desktop redirects, which require PKCE and reject bot scopes. The CLI's authorize URL always carries `code_challenge`/`S256` and `user_scope` alone, and the exchange sends `client_id` with no secret. Tokens from this flow always rotate. A bot token reaches the CLI only by being pasted into `--method static`. See [Slack's PKCE requirements](https://docs.slack.dev/authentication/using-pkce/).
 
 This is RFC 8252 (BCP 212) as Slack enforces it: a distributed CLI cannot keep a client secret, so it authorizes as a public client.
 

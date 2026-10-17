@@ -50,7 +50,7 @@ slack-cli send "#general" -t "공지사항입니다"           # 전송 (텍스�
 slack-cli send "#general" --markdown-text "**볼드**"    # 전송 (표준 Markdown, Slack이 렌더링)
 slack-cli send U123ABCDEF -t "DM by user-id"           # 유저 ID → DM 자동 해석
 slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + 폴백 텍스트
-slack-cli send "#general" -m @meta.json -t "deploy done" # 멱등 metadata 첨부
+slack-cli send "#general" -m @meta.json -t "deploy done" # 추적용 metadata 첨부
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
 slack-cli update "#general" 1234.5678 -t "수정됨"       # 수정 (text/markdown_text/blocks/attachments/metadata)
 slack-cli delete "#general" 1234.5678                   # 삭제

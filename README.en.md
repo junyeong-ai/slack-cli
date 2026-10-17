@@ -50,7 +50,7 @@ slack-cli send "#general" -t "Announcement"             # Send (text)
 slack-cli send "#general" --markdown-text "**bold**"    # Send (standard Markdown, rendered by Slack)
 slack-cli send U123ABCDEF -t "DM by user-id"            # User ID → DM auto-resolution
 slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + fallback text
-slack-cli send "#general" -m @meta.json -t "deploy done" # Attach idempotent metadata
+slack-cli send "#general" -m @meta.json -t "deploy done" # Attach correlation metadata
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
 slack-cli update "#general" 1234.5678 -t "Edited"       # Update (text/markdown_text/blocks/attachments/metadata)
 slack-cli delete "#general" 1234.5678                   # Delete
