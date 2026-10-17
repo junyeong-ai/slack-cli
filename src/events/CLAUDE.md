@@ -59,6 +59,8 @@ refetchable — and exactly wrong here, since Socket Mode never replays.
 `db::migrate` applies steps forward and **refuses a database written by a newer
 build** rather than rebuilding it.
 
+Event periods use checked conversions shared with configuration validation. The store validates retention seconds before opening its database; recovery checks both duration and date ranges before reading state or calling Slack.
+
 A consumer is registered at its first pull, even when the log is empty. Registration and batch selection share a transaction; spool pruning includes its unacknowledged position immediately. Age and size limits still apply.
 
 ## Retention is a capability, not a branch

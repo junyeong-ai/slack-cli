@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.6] - 2026-10-17
+
+### Fixed
+
+- Reject event retention periods that cannot be represented as signed seconds before opening the event log, preventing overflow from shortening retention or deleting retained events.
+- Validate recovery duration and date ranges with checked arithmetic, returning configuration errors instead of panicking on out-of-range backfill periods.
+
 ## [0.19.5] - 2026-10-17
 
 ### Fixed

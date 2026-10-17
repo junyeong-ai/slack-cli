@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 
 use super::envelope::{EVENT_SCHEMA, Event, EventKind, EventSource};
 use super::state::EventState;
@@ -65,7 +65,7 @@ pub(super) async fn recover_batch(
     // in between reported rather than dropped in silence.
     let horizon = format!(
         "{}.000000",
-        (Utc::now() - Duration::hours(config.backfill_max_age_hours)).timestamp()
+        config.backfill_horizon(Utc::now())?.timestamp()
     );
     let limit = config.backfill_max_channels;
     let (gaps, watched, threads) = state
@@ -310,6 +310,7 @@ fn from_history(channel: &str, team_id: Option<&str>, message: SlackMessage) -> 
 mod tests {
     use super::*;
     use crate::events::envelope::from_event_callback;
+    use chrono::Duration;
     use serde_json::json;
 
     #[tokio::test]

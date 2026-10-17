@@ -464,6 +464,25 @@ pub fn default_sink(name: &str) -> SinkConfig {
 }
 
 impl EventsConfig {
+    pub(crate) fn retention_seconds(&self) -> Result<i64> {
+        i64::try_from(self.retention_days)
+            .ok()
+            .and_then(|days| days.checked_mul(86_400))
+            .context("events.retention_days exceeds the supported seconds range")
+    }
+
+    pub(crate) fn backfill_horizon(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<chrono::DateTime<chrono::Utc>> {
+        chrono::Duration::try_hours(self.backfill_max_age_hours)
+            .filter(|_| self.backfill_max_age_hours > 0)
+            .and_then(|duration| now.checked_sub_signed(duration))
+            .context(
+                "events.backfill_max_age_hours must be positive and fit the supported date range",
+            )
+    }
+
     /// Every way an events configuration can be wrong, refused at load.
     ///
     /// A daemon runs unattended for days, so a rule that names a sink that
@@ -491,11 +510,15 @@ impl EventsConfig {
                  until a consumer acknowledges them"
             );
         }
+        self.retention_seconds()?;
         if self.backfill && (self.backfill_max_channels == 0 || self.backfill_max_age_hours <= 0) {
             anyhow::bail!(
                 "events.backfill_max_channels and events.backfill_max_age_hours must be \
                  greater than zero while events.backfill is enabled"
             );
+        }
+        if self.backfill {
+            self.backfill_horizon(chrono::Utc::now())?;
         }
 
         let sinks = self.effective_sinks();
@@ -1037,6 +1060,49 @@ mod tests {
 
     fn paths() -> AppPaths {
         AppPaths::resolve().unwrap()
+    }
+
+    #[test]
+    fn event_periods_outside_the_calculation_range_are_rejected_at_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for (field, value) in [
+            ("retention_days", 106_751_991_167_301_i64),
+            ("retention_days", 213_503_982_334_602),
+            ("backfill_max_age_hours", i64::MAX),
+            ("backfill_max_age_hours", 3_000_000_000),
+        ] {
+            std::fs::write(&path, format!("[events]\n{field} = {value}\n")).unwrap();
+            let error = Config::load(&paths(), Some(path.clone()), None).unwrap_err();
+            assert!(error.to_string().contains(field), "{error}");
+        }
+    }
+
+    #[test]
+    fn event_periods_preserve_representable_and_disabled_settings() {
+        let now = chrono::DateTime::from_timestamp(1_792_200_000, 0).unwrap();
+        let mut config = EventsConfig::default();
+        assert_eq!(config.retention_seconds().unwrap(), 7 * 86_400);
+        assert_eq!(
+            config.backfill_horizon(now).unwrap(),
+            now - chrono::Duration::hours(24)
+        );
+        config.retention_days = (i64::MAX / 86_400) as u64;
+        assert!(config.validate().is_ok());
+        config.retention_days = 0;
+        assert_eq!(config.retention_seconds().unwrap(), 0);
+        assert!(config.validate().is_ok());
+        config.mode = EventRetention::Archive;
+        assert!(config.validate().is_err());
+        config.mode = EventRetention::Spool;
+        for hours in [i64::MIN, 0, 3_000_000_000, i64::MAX] {
+            config.backfill_max_age_hours = hours;
+            assert!(config.backfill_horizon(now).is_err());
+            config.backfill = true;
+            assert!(config.validate().is_err());
+            config.backfill = false;
+            assert!(config.validate().is_ok());
+        }
     }
 
     mod auth_config {

@@ -184,12 +184,13 @@ pub struct SqliteStore {
     pool: Pool<SqliteConnectionManager>,
     mode: EventRetention,
     store_body: bool,
-    retention_days: u64,
+    retention_seconds: i64,
     max_bytes: u64,
 }
 
 impl SqliteStore {
     pub fn open(path: &Path, config: &EventsConfig) -> Result<Self> {
+        let retention_seconds = config.retention_seconds()?;
         let pool = db::open_pool(path)?;
         let mut conn = pool.get()?;
         db::migrate(&mut conn, "event log", SCHEMA_VERSION, STEPS)?;
@@ -199,7 +200,7 @@ impl SqliteStore {
             pool,
             mode: config.mode,
             store_body: config.store_body,
-            retention_days: config.retention_days,
+            retention_seconds,
             max_bytes: config.max_bytes,
         })
     }
@@ -370,10 +371,9 @@ impl EventStore for SqliteStore {
             )?;
         }
 
-        let horizon = (self.retention_days * 86_400) as i64;
         outcome.expired = conn.execute(
             "DELETE FROM event WHERE received_at < unixepoch() - ?1",
-            params![horizon],
+            params![self.retention_seconds],
         )?;
 
         // The backstop. Retention is expressed in days, and a busy workspace
@@ -498,6 +498,30 @@ mod tests {
         assert_eq!(store.append(&event("1")).unwrap().seq, 1);
         assert_eq!(store.append(&event("2")).unwrap().seq, 2);
         assert_eq!(store.stats().unwrap().events, 0);
+    }
+
+    #[test]
+    fn an_unrepresentable_retention_period_cannot_change_an_existing_log() {
+        let (store, dir) = store(EventRetention::Archive);
+        store.append(&event("1700000000.000100")).unwrap();
+        drop(store);
+        for days in [106_751_991_167_301, 213_503_982_334_602, u64::MAX] {
+            let invalid = EventsConfig {
+                retention_days: days,
+                ..config(EventRetention::Archive)
+            };
+            let unopened = dir.path().join("unopened/events.db");
+            assert!(SqliteStore::open(&unopened, &invalid).is_err());
+            assert!(!unopened.parent().unwrap().exists());
+            assert!(SqliteStore::open(&dir.path().join("events.db"), &invalid).is_err());
+            let store = SqliteStore::open(
+                &dir.path().join("events.db"),
+                &config(EventRetention::Archive),
+            )
+            .unwrap();
+            assert_eq!(store.stats().unwrap().events, 1);
+            assert_eq!(store.prune().unwrap().total(), 0);
+        }
     }
 
     /// The commands that read events back must fail where someone can read
