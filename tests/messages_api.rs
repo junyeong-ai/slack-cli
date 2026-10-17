@@ -76,6 +76,45 @@ async fn test_client(server: &MockServer) -> (SlackClient, tempfile::TempDir) {
 }
 
 #[tokio::test]
+async fn malformed_response_envelopes_cannot_acknowledge_writes_or_revocation() {
+    let server = MockServer::start().await;
+    let (client, _store) = test_client(&server).await;
+    for response in [
+        json!({"token": "xoxp-response-canary"}),
+        json!(null),
+        json!([]),
+        json!({"ok": null}),
+        json!({"ok": "true"}),
+        json!({"ok": "false"}),
+        json!({"ok": 1}),
+    ] {
+        server.reset().await;
+        for endpoint in ["chat.delete", "auth.revoke"] {
+            Mock::given(path(format!("/{endpoint}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(response.clone()))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        let deleted = client.messages.delete("C123", "1700000000.000100").await;
+        let revoked = client.auth.revoke("xoxp-test-user").await;
+        for (endpoint, error) in [
+            ("chat.delete", deleted.err()),
+            ("auth.revoke", revoked.err()),
+        ] {
+            let error = error.unwrap_or_else(|| panic!("{endpoint} accepted {response}"));
+            let message = error.to_string();
+            assert!(
+                message.contains(endpoint) && message.contains("ok"),
+                "{message}"
+            );
+            assert!(!message.contains("xoxp-response-canary"), "{message}");
+        }
+        server.verify().await;
+    }
+}
+
+#[tokio::test]
 async fn send_posts_blocks_metadata_and_thread() {
     let server = MockServer::start().await;
     let (responder, mut rx) = capture(json!({

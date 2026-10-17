@@ -323,7 +323,13 @@ impl SlackCore {
             let json_response: Value = serde_json::from_str(&response_text)
                 .map_err(|e| anyhow::anyhow!("Failed to parse JSON response: {}", e))?;
 
-            if let Some(false) = json_response.get("ok").and_then(|v| v.as_bool()) {
+            let ok = json_response
+                .get("ok")
+                .and_then(Value::as_bool)
+                .with_context(|| {
+                    format!("Invalid Slack API response for {method}: expected a boolean ok field")
+                })?;
+            if !ok {
                 let code = json_response
                     .get("error")
                     .and_then(|e| e.as_str())

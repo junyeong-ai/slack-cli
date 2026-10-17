@@ -37,10 +37,12 @@ SlackCore::api_call(method, params)
   → method-level rate gate           shared cooldown + governor, every attempt
   → HTTP via reqwest                 Query, Json or Form encoding
   → retry on HTTP 429                respect Retry-After header
-  → parse JSON, check `"ok"` field   Err on ok=false with the API's error string
+  → parse JSON, require boolean ok  true succeeds; false returns the API error
 ```
 
 Rate gates are shared by calls on one `SlackCore`; they do not coordinate independent CLI processes. A 429 defers subsequent calls to the same method, including retries. Transport errors and 5xx responses are returned without automatic replay because a write may already have taken effect.
+
+Missing or non-boolean `ok` is an invalid response, not an acknowledgement. Return an error without replaying the request or including response content. Successful warnings and unknown fields remain valid.
 
 Effective rate = `min(config.connection.rate_limit_per_minute, per-method rate)`. The per-method rate is the ceiling; user config can only lower it.
 
