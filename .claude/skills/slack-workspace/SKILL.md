@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.14.0"
+  version: "0.14.1"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
