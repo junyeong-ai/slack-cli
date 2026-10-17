@@ -22,11 +22,15 @@ drop and masks `Debug` output. They are never written to `config.toml`, never
 logged, and are masked in every command's output.
 
 Never commit `auth.json`, and treat it as equivalent to the tokens themselves.
-`slack-cli auth logout` revokes each token in the profile with Slack before
+`slack-cli auth logout` revokes the profile's user and bot tokens with Slack before
 removing it, unless `--keep-remote` is passed. Revocation is best effort: a
 token that can no longer be presented — expired, with its refresh token
 already spent — is reported and skipped rather than blocking the local
 removal.
+
+App-level tokens are removed locally with the profile. Revoke them separately
+in the Slack app settings when needed. Logout selects stored profile credentials
+for revocation, independently of environment overrides.
 
 ## Updating in place
 

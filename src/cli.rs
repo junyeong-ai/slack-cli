@@ -421,7 +421,7 @@ pub enum AuthAction {
 
         #[arg(
             long,
-            help = "App-level token (xapp-...) for Socket Mode; on its own it attaches to the resolved profile"
+            help = "Non-rotating app-level token (xapp-...) for Socket Mode; on its own it attaches to the resolved profile"
         )]
         app_token: Option<String>,
 

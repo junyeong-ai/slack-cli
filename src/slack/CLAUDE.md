@@ -61,7 +61,7 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 
 `MethodScopes` on each entry of `API_METHODS` records what a token must carry for *this CLI's* use of the method. Where the CLI always sends an optional argument that widens the requirement, the scope behind it belongs there too: `include_all_metadata` on conversation reads pulls in `metadata.message:read` for bot tokens — Slack supports that scope on no other kind — and the default `email` output field pulls in `users:read.email`.
 
-`MethodScopes` carries a third field, `app`, for the same reason `TokenPolicy` carries a fourth variant: an app-level scope belongs to a different namespace and is never part of an OAuth grant. Declaring `connections:write` under `user` or `bot` would union it into what `auth login` asks Slack for, and Slack refuses a grant that mixes the two — the failure `metadata.message:read` once caused. `MethodScopes::installation` and `::app_level` are the constructors that make the axis explicit.
+`MethodScopes` carries a third field, `app`, for the same reason `TokenPolicy` carries a fourth variant: app-level scopes are separate from user/bot installation grants. Declaring `connections:write` under `user` or `bot` would union it into what `auth login` asks Slack for, which Slack refuses. `MethodScopes::installation` and `::app_level` make the axis explicit.
 
 `slack::scopes::required(kind)` is the union over every method the kind can reach, so a scope can never drift from the methods that need it. `tests/documented_scopes.rs` holds both READMEs to the same source.
 

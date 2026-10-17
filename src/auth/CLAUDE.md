@@ -41,7 +41,9 @@ auth/
 
 A `Credential` is a token plus everything needed to keep it alive: `refresh_token`, `expires_at`, and the `scopes` it was granted. `TokenSet` holds at most one per `TokenKind`. Scopes live on the credential, never on the profile — Slack's bot and user scope namespaces are distinct and must not be merged.
 
-`TokenKind::App` is a third axis rather than a third installation credential. The `xapp-` token is minted in the Slack app's own configuration, is issued by no OAuth grant, never expires, and answers only `apps.connections.open`. `TokenKind::OAUTH` is the pair an authorization can grant, and every scope derivation runs over it — `TokenKind::ALL` exists for storage and display. `auth login --app-token` on its own attaches to the resolved profile instead of creating one, because there is no `auth.test` an app-level token can answer and so no workspace it could name.
+`TokenKind::App` is separate from user/bot installation credentials and authorizes `apps.connections.open`. `TokenKind::OAUTH` names the pair requested by this CLI's installation flow; `TokenKind::ALL` exists for storage and display. `auth login --app-token` accepts non-rotating `xapp-` tokens and attaches to an existing profile when used alone, because `auth.test` cannot establish an app token's workspace.
+
+Slack also supports rotating `xoxe.xapp-` tokens. The CLI does not store or refresh their renewal credentials. Callers may supply a current access token through `SLACK_APP_TOKEN`, manage renewal externally and restart the daemon with its replacement. Environment values are captured once per process. See [Slack's app-level token lifecycle](https://docs.slack.dev/authentication/tokens/#rotating-app-level-tokens).
 
 `Credential::readiness(now)` is the single decision point:
 

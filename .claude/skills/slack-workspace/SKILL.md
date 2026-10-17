@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.19.3"
+  version: "0.19.4"
 description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
@@ -182,7 +182,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `search --capabilities --json` → `{is_ai_search_enabled}`. When false the workspace ranks by keyword whatever `--no-semantic` says.
 - `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot, app}, authorized_at}`. `app` is the Socket Mode app-level token and is `null` unless one has been registered. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null when no expiry is recorded. With no stored profiles, the response is `{profiles: []}`. On `auth status --verify`, success adds the live `auth.test` shape under `verified` (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`). Verification failures instead appear as `verified.error` and the report still exits `0`; inspect that field. This command inspects stored profiles, not environment-token overrides.
 - `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
-- `auth scopes --json` → `{user: [...], bot: [...], app: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops. `app` is the app-level token's scope (`connections:write`), which is granted in the app's own configuration rather than by an authorization and is therefore never excludable.
+- `auth scopes --json` → `{user: [...], bot: [...], app: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops. `app` contains the Socket Mode scope (`connections:write`), separate from the CLI's user/bot installation request and therefore never excludable.
 
 ## Message metadata and retries
 
@@ -283,7 +283,7 @@ is nothing to pull — report that rather than retrying.
 
 ## Multi-workspace
 
-`SLACK_USER_TOKEN` and `SLACK_BOT_TOKEN` override stored installation credentials even with `--profile`. Unset both before selecting a stored workspace. `SLACK_APP_TOKEN` is independent and can accompany a stored profile.
+`SLACK_USER_TOKEN` and `SLACK_BOT_TOKEN` override stored installation credentials even with `--profile`. Unset both before selecting a stored workspace. `SLACK_APP_TOKEN` is independent and can accompany a stored profile. Environment tokens are never renewed by the CLI. For rotating app tokens (`xoxe.xapp-`), a human or service must manage renewal and restart the daemon with the replacement; stored app-token login supports non-rotating `xapp-` only.
 
 Event stores belong to an API endpoint, profile, workspace and user. Keep the
 same profile and installation credentials for the daemon and its consumers.

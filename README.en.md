@@ -366,7 +366,7 @@ A command that needs an excluded scope is refused by Slack, and the CLI names th
 |---|---|
 | `SLACK_USER_TOKEN` | Bypass stored profiles and use this token directly (CI / headless) |
 | `SLACK_BOT_TOKEN` | Same, bot token |
-| `SLACK_APP_TOKEN` | App-level token (`xapp-`) for the Socket Mode connection. It never displaces a stored user or bot token. Running on `SLACK_USER_TOKEN` stores events under an `env` namespace rather than a profile's |
+| `SLACK_APP_TOKEN` | Current app-level access token (`xapp-` or `xoxe.xapp-`) for Socket Mode; renewed externally when needed. It never displaces a stored user or bot token. Running on `SLACK_USER_TOKEN` stores events under an `env` namespace rather than a profile's |
 | `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`; outranks `config.toml [auth]`) |
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
@@ -497,7 +497,7 @@ Opens the WebSocket Slack pushes events down, and forwards only what a rule matc
 ### App setup
 
 1. Turn on **Socket Mode**.
-2. Under **Basic Information → App-Level Tokens**, create a token with the `connections:write` scope (it starts with `xapp-`).
+2. Under **Basic Information → App-Level Tokens**, create a token with the `connections:write` scope. Non-rotating tokens start with `xapp-`; rotating tokens start with `xoxe.xapp-` (see the lifecycle limits below).
 3. Under **Event Subscriptions → Subscribe to events on behalf of users**, add `message.channels`, `message.groups`, `message.im`, `message.mpim`, `reaction_added` and `reaction_removed`. These are **user events**, not bot events — that is what delivers the conversations you can see without inviting a bot to every channel.
 4. Register the token:
 
@@ -509,7 +509,9 @@ slack-cli auth login --app-token xapp-1-A0000-000-abc
 export SLACK_APP_TOKEN=xapp-1-A0000-000-abc
 ```
 
-No OAuth grant issues an app-level token, so the browser flow cannot produce one. `connections:write` is never mixed into a user or bot scope request — Slack refuses the whole authorization when it is.
+The browser login does not create app-level tokens. `connections:write` stays separate from its user/bot scope request.
+
+`auth login --app-token` stores only non-rotating `xapp-` tokens. Slack also supports [rotating app-level tokens](https://docs.slack.dev/authentication/tokens/#rotating-app-level-tokens), whose access tokens expire after 12 hours. The CLI does not store or renew their refresh credentials: supply a current access token through `SLACK_APP_TOKEN`, manage renewal externally and restart the daemon with the replacement. Changing the environment does not update an already-running process.
 
 ```bash
 slack-cli watch                     # foreground. Stores nothing, and goes to stdout rather than the configured sinks

@@ -353,7 +353,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 |---|---|
 | `SLACK_USER_TOKEN` | 저장된 프로필을 무시하고 이 토큰을 직접 사용 (CI/headless) |
 | `SLACK_BOT_TOKEN` | 위와 동일, bot 토큰 |
-| `SLACK_APP_TOKEN` | Socket Mode 연결에 쓸 app-level 토큰 (`xapp-`). 저장된 user/bot 토큰을 대체하지 않습니다. `SLACK_USER_TOKEN`으로 실행하면 이벤트는 프로필이 아니라 `env` 네임스페이스에 저장됩니다 |
+| `SLACK_APP_TOKEN` | Socket Mode 연결에 쓸 현재 유효한 app-level 액세스 토큰 (`xapp-` 또는 `xoxe.xapp-`). 필요한 갱신은 외부에서 관리합니다. 저장된 user/bot 토큰을 대체하지 않습니다. `SLACK_USER_TOKEN`으로 실행하면 이벤트는 프로필이 아니라 `env` 네임스페이스에 저장됩니다 |
 | `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`, `config.toml [auth]`보다 우선) |
 | `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
@@ -484,7 +484,7 @@ Slack이 이벤트를 밀어주는 WebSocket 연결을 열고, 규칙에 걸린 
 ### 앱 설정
 
 1. **Socket Mode**를 켭니다.
-2. **Basic Information → App-Level Tokens**에서 `connections:write` scope로 토큰을 만듭니다 (`xapp-`로 시작).
+2. **Basic Information → App-Level Tokens**에서 `connections:write` scope로 토큰을 만듭니다. 비회전형은 `xapp-`, 회전형은 `xoxe.xapp-`로 시작합니다. 아래 수명 주기와 지원 범위를 확인하세요.
 3. **Event Subscriptions → Subscribe to events on behalf of users**에 `message.channels`, `message.groups`, `message.im`, `message.mpim`, `reaction_added`, `reaction_removed`를 등록합니다. 봇 이벤트가 아니라 **사용자 대행 이벤트**입니다 — 그래야 봇을 채널마다 초대하지 않고도 내가 보는 대화가 그대로 옵니다.
 4. 토큰을 등록합니다:
 
@@ -496,7 +496,9 @@ slack-cli auth login --app-token xapp-1-A0000-000-abc
 export SLACK_APP_TOKEN=xapp-1-A0000-000-abc
 ```
 
-app-level 토큰은 OAuth로 발급되지 않으므로 `auth login`의 브라우저 흐름이 만들어내지 않습니다. `connections:write`는 user/bot scope 요청에 절대 섞이지 않습니다 — 섞이면 Slack이 인가 전체를 거부합니다.
+브라우저 로그인은 app-level 토큰을 만들지 않습니다. `connections:write`는 브라우저 로그인의 user/bot scope 요청과 분리됩니다.
+
+`auth login --app-token`은 비회전형 `xapp-` 토큰만 저장합니다. Slack은 액세스 토큰이 12시간 후 만료되는 [회전형 app-level 토큰](https://docs.slack.dev/authentication/tokens/#rotating-app-level-tokens)도 지원합니다. 이 CLI는 해당 갱신 자격 증명을 저장하거나 갱신하지 않습니다. 현재 유효한 액세스 토큰을 `SLACK_APP_TOKEN`으로 전달하고, 외부에서 갱신한 후 교체된 토큰으로 데몬을 재시작하세요. 환경변수를 바꿔도 이미 실행 중인 프로세스에는 반영되지 않습니다.
 
 ```bash
 slack-cli watch                     # 포그라운드. 저장하지 않고, 설정된 싱크 대신 stdout으로

@@ -133,9 +133,8 @@ const SEARCH: MethodScopes = MethodScopes::installation(
     ],
 );
 const SEARCH_CAPABILITIES: MethodScopes = MethodScopes::shared(&["search:read.public"]);
-/// The one scope an app-level token can hold. It authorizes opening a Socket
-/// Mode connection and nothing else, which is why it never joins an OAuth
-/// request — Slack refuses a grant that mixes it with installation scopes.
+/// The app-level scope this CLI needs for Socket Mode, separate from
+/// user/bot installation scopes.
 const SOCKET_MODE: MethodScopes = MethodScopes::app_level(&["connections:write"]);
 
 /// Every Slack method this CLI calls, with the request shape, token policy,

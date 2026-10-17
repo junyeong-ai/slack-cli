@@ -10,9 +10,9 @@ const RENEWAL_WINDOW: Duration = Duration::minutes(120);
 
 /// One Slack access token together with everything needed to keep it alive.
 ///
-/// `expires_at` is `None` for non-rotating tokens: those never expire and are
-/// never renewed. When it is `Some`, `refresh_token` is what exchanges the
-/// expiring token for a fresh pair.
+/// `expires_at = None` means no expiry is recorded, so no renewal is attempted.
+/// It does not guarantee that Slack will continue to accept the token.
+/// A recorded expiry and refresh token allow renewal before use.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credential {
     #[serde(with = "secret::required")]
@@ -45,8 +45,7 @@ pub enum Readiness {
 }
 
 impl Credential {
-    /// A credential that never expires — a pasted token, or one issued by an
-    /// app without token rotation.
+    /// A credential with no recorded expiry or refresh mechanism.
     pub fn permanent(token: Secret, scopes: Vec<String>) -> Self {
         Self {
             token,
@@ -60,8 +59,8 @@ impl Credential {
         self.expires_at.is_some()
     }
 
-    /// Whether the token itself is still accepted by Slack, independent of
-    /// whether it is due for renewal.
+    /// Whether the recorded expiry permits use, independently of renewal timing.
+    /// Revocation and unrecorded expiry are determined by Slack.
     pub fn is_live(&self, now: DateTime<Utc>) -> bool {
         self.expires_at.is_none_or(|expiry| now < expiry)
     }
@@ -81,11 +80,9 @@ impl Credential {
 }
 
 /// The three token axes a Slack app hands out. `User` and `Bot` are
-/// installation credentials issued by OAuth; `App` is the app-level token
-/// (`xapp-`) minted in the app's own configuration, which authorizes nothing
-/// in a workspace and only opens a Socket Mode connection. It is a separate
-/// kind rather than a flag because it is acquired, stored and renewed by
-/// different rules: no OAuth grant issues it and it never rotates.
+/// installation credentials issued by OAuth; `App` authorizes app-level APIs,
+/// including the Socket Mode connection. This CLI keeps its resolution and
+/// lifecycle separate from the user/bot installation grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenKind {
@@ -97,7 +94,7 @@ pub enum TokenKind {
 impl TokenKind {
     pub const ALL: [Self; 3] = [Self::User, Self::Bot, Self::App];
 
-    /// The kinds an OAuth authorization can grant. `App` is absent by
+    /// The kinds the CLI's installation authorization can grant. `App` is absent by
     /// construction: asking Slack for an app-level scope in an installation
     /// grant fails the whole request, so the OAuth surface derives from this
     /// list and never from `ALL`.

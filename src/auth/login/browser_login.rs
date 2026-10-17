@@ -53,8 +53,7 @@ pub async fn run(request: Request) -> Result<Profile> {
         tokens: TokenSet {
             user: response.user.map(|token| token.into_credential(issued_at)),
             bot: response.bot.map(|token| token.into_credential(issued_at)),
-            // A browser flow can never produce one: Slack mints app-level
-            // tokens in the app's own configuration, not through OAuth.
+            // This installation authorization does not issue app credentials.
             app: None,
         },
         client: Some(request.client),

@@ -121,10 +121,11 @@ on — but only one of them should be wired up at a time.
    duplicating it, and each half sees a partial workspace. `DaemonLock` refuses
    a second process for the same profile. Different profiles and machines have
    separate locks, so the operator must assign each daemon its own Slack app.
-2. **The daemon never holds a token.** Every call goes through
-   `Authenticator::token_for`, so the 12-hour PKCE rotation is handled by the
-   existing cross-process transaction. Caching a token at startup would work
-   for twelve hours and then stop.
+2. **The daemon resolves credentials through the authenticator.** Every call
+   goes through `Authenticator::token_for`, so stored PKCE user credentials
+   renew through the existing cross-process transaction. Environment tokens
+   are captured once and never renewed; restart with the replacement when
+   externally managed credentials rotate.
 3. **Deduplication is by content, not by delivery.** `Event::dedupe_key` is
    derived from the channel and timestamp, so a redelivered envelope and a
    backfilled message collapse onto the same key. Keying on `event_id` would

@@ -9,8 +9,8 @@ pub const APP_SCOPE: &str = "connections:write";
 /// what the installation has excluded. An excluded scope costs the commands
 /// that need it; `SlackCore` names it when Slack refuses the call.
 ///
-/// Panics on `TokenKind::App`: exclusions apply to an authorization request,
-/// and an app-level token is never part of one. A caller reaching here with
+/// Panics on `TokenKind::App`: exclusions apply to the CLI's installation
+/// authorization request, which contains no app-level scopes. A caller reaching here with
 /// the app kind has confused the two axes, which is a bug rather than a
 /// configuration to honour.
 pub fn requested(kind: TokenKind, excluded: &[String]) -> Vec<&'static str> {

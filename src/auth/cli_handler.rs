@@ -199,9 +199,10 @@ fn validate_app_token(token: &Secret) -> Result<()> {
         return Ok(());
     }
     Err(anyhow!(
-        "--app-token expects an app-level token starting with `xapp-`. \
+        "--app-token expects a non-rotating app-level token starting with `xapp-`. \
          Create one under Basic Information \u{2192} App-Level Tokens with the \
-         connections:write scope"
+         connections:write scope. Supply rotating access tokens through \
+         SLACK_APP_TOKEN and manage renewal externally"
     ))
 }
 

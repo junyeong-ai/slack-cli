@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.4] - 2026-10-17
+
+### Fixed
+
+- Recheck recorded token expiry after failed renewal and state-lock waits, refusing credentials that expired during those waits while preserving the renewal error.
+
+### Documentation
+
+- Align README, skill and developer guidance with rotating app-level tokens: stored login accepts non-rotating `xapp-` tokens; `SLACK_APP_TOKEN` may supply externally managed rotating access tokens and requires a daemon restart on replacement.
+- Clarify logout revocation boundaries and distinguish missing expiry metadata from a guarantee of token validity.
+
 ## [0.19.3] - 2026-10-17
 
 ### Fixed

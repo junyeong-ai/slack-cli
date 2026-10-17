@@ -75,11 +75,8 @@ impl Authenticator {
     /// The token to send, with the kind it came from: a caller that gets a
     /// scope refusal from Slack needs the kind to name what the method wanted.
     pub async fn token_for(&self, policy: TokenPolicy) -> Result<(Secret, TokenKind), AuthError> {
-        // The app axis is resolved first and on its own terms. An app-level
-        // token is not an installation credential — no OAuth grant issues it,
-        // it never rotates, and it answers no workspace call — so neither the
-        // env-override shortcut for installation tokens nor the renewal path
-        // below has anything to say about it.
+        // App credentials use their own environment/profile resolution and
+        // do not enter this CLI's user/bot renewal flow.
         if policy == TokenPolicy::AppRequired {
             return self.app_token().await.map(|token| (token, TokenKind::App));
         }
@@ -207,7 +204,7 @@ impl Authenticator {
         }
         let now = Utc::now();
 
-        let (current, still_live, refresh_token, client) = {
+        let (current, refresh_token, client) = {
             let profile = state
                 .profiles
                 .get(name)
@@ -236,8 +233,7 @@ impl Authenticator {
             }
 
             (
-                credential.token.clone(),
-                credential.is_live(now),
+                credential.clone(),
                 credential
                     .refresh_token
                     .clone()
@@ -251,7 +247,6 @@ impl Authenticator {
                 .keep_using(
                     state,
                     current,
-                    still_live,
                     AuthError::ClientUnknown {
                         profile: name.to_string(),
                         kind,
@@ -276,7 +271,6 @@ impl Authenticator {
                     .keep_using(
                         state,
                         current,
-                        still_live,
                         AuthError::RenewalFailed {
                             profile: name.to_string(),
                             kind,
@@ -290,9 +284,8 @@ impl Authenticator {
         let issued = match kind {
             TokenKind::User => response.user,
             TokenKind::Bot => response.bot,
-            // Unreachable: an app-level token records no expiry, so it is
-            // always `Ready` and never enters this path. Reported rather than
-            // panicked so a future credential shape cannot crash a daemon.
+            // Stored app credentials carry no expiry or refresh metadata.
+            // This exchange only handles installation credentials.
             TokenKind::App => None,
         };
         let Some(issued) = issued else {
@@ -300,7 +293,6 @@ impl Authenticator {
                 .keep_using(
                     state,
                     current,
-                    still_live,
                     AuthError::RenewalMismatch {
                         profile: name.to_string(),
                         kind,
@@ -326,26 +318,24 @@ impl Authenticator {
         Ok(token)
     }
 
-    /// Renewal could not complete. A credential only enters the renewal
-    /// window while it is still valid, so the command runs on the token it
-    /// already holds and the next invocation retries. Once the token is
-    /// genuinely spent, the failure is the answer.
+    /// A failed renewal may reuse the credential only while its recorded
+    /// expiry still permits use, checked after the network and state-lock waits.
     async fn keep_using(
         &self,
         state: AuthState,
-        token: Secret,
-        still_live: bool,
+        credential: Credential,
         reason: AuthError,
     ) -> Result<Secret, AuthError> {
-        if !still_live {
+        let mut snapshot = self.state.write().await;
+        if !credential.is_live(Utc::now()) {
             return Err(reason);
         }
         tracing::warn!(
             error = %reason,
             "could not renew the Slack token; continuing with the one still in date"
         );
-        *self.state.write().await = state;
-        Ok(token)
+        *snapshot = state;
+        Ok(credential.token)
     }
 
     /// Whether the environment is supplying the installation tokens, in which
@@ -533,5 +523,47 @@ impl Authenticator {
             Ok(())
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    #[tokio::test]
+    async fn renewal_failure_checks_expiry_at_the_fallback_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = Authenticator::load(AuthLoadOptions {
+            store_path: dir.path().join("auth.json"),
+            api_base_url: "http://127.0.0.1".into(),
+            overrides: EnvOverrides::default(),
+            explicit_profile: None,
+        })
+        .await
+        .unwrap();
+        for minutes in [-1, 1] {
+            let expires_at = Utc::now() + Duration::minutes(minutes);
+            let mut credential =
+                Credential::permanent(super::super::secret::new("xoxe-current"), vec![]);
+            credential.expires_at = Some(expires_at);
+            let previously_live = credential.is_live(expires_at - Duration::seconds(1));
+            assert!(previously_live);
+            let result = auth
+                .keep_using(
+                    AuthState::default(),
+                    credential,
+                    AuthError::ClientUnknown {
+                        profile: "test".into(),
+                        kind: TokenKind::User,
+                    },
+                )
+                .await;
+            if minutes < 0 {
+                assert!(matches!(result, Err(AuthError::ClientUnknown { .. })));
+            } else {
+                assert_eq!(result.unwrap().expose_secret(), "xoxe-current");
+            }
+        }
     }
 }

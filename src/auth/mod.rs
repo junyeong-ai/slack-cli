@@ -23,8 +23,7 @@ pub use policy::TokenPolicy;
 
 use credential::Credential as AppCredential;
 
-/// The stored form of an app-level token. It never expires and carries the one
-/// scope it can hold, so it is built here rather than at each call site.
+/// An app credential with the Socket Mode scope and no recorded expiry or refresh metadata.
 pub fn app_credential(token: secret::Secret) -> AppCredential {
     AppCredential::permanent(token, vec![crate::slack::scopes::APP_SCOPE.to_string()])
 }
