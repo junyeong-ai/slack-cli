@@ -56,3 +56,11 @@ The remaining CI checks are `cargo check` at the `rust-version` declared in
 `zizmor .github` (policy in `.github/zizmor.yml`),
 `bash -n scripts/install.sh scripts/uninstall.sh` and
 `shellcheck scripts/install.sh scripts/uninstall.sh`.
+
+A ruleset on `main` requires the pull-request jobs by name: `test (…)`,
+`Minimum supported Rust`, `rustfmt`, `clippy`, `actionlint`, `zizmor` and
+`cargo-deny`. Renaming one of those jobs, or filtering when it runs, leaves
+every pull request waiting on a check that never reports; update the ruleset
+in the same change. Dependabot's non-major updates merge on their own once
+those checks pass (`dependabot-auto-merge.yml`), after the three-day cooldown
+in `.github/dependabot.yml`. Repository admins bypass the ruleset.

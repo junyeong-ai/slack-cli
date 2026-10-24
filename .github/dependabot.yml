@@ -8,11 +8,16 @@ updates:
       time: "06:00"
       timezone: Asia/Seoul
     open-pull-requests-limit: 10
+    # Non-major updates merge on their own once the required checks pass, so
+    # a release waits three days for a compromised version to be reported
+    # and yanked. Security updates are not held back.
+    cooldown:
+      default-days: 3
     labels:
       - dependencies
       - rust
     commit-message:
-      prefix: "chore(deps)"
+      prefix: chore
       include: scope
     groups:
       cargo-minor-patch:
@@ -31,11 +36,13 @@ updates:
       time: "06:00"
       timezone: Asia/Seoul
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 3
     labels:
       - dependencies
       - github-actions
     commit-message:
-      prefix: "chore(deps)"
+      prefix: chore
       include: scope
     groups:
       gha-minor-patch:

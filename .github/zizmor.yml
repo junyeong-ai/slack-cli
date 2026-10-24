@@ -8,5 +8,7 @@ rules:
     # actionlint rejects the `$/` form; revisit when it accepts it.
     disable: true
   dependabot-cooldown:
-    # Updates are adopted as soon as they are published.
-    disable: true
+    config:
+      # The hold before an auto-merged update is picked up; zizmor's default
+      # is seven days.
+      days: 3

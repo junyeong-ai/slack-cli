@@ -1,0 +1,32 @@
+name: Dependabot auto-merge
+
+# Queues a non-major Dependabot update to merge once the checks the `main`
+# ruleset requires have passed. A major update waits for a person. Nothing
+# from the pull request is checked out or run here.
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: Queue auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'junyeong-ai/slack-cli'
+    runs-on: ubuntu-latest
+    # Dependabot runs start with a read-only token; these are the scopes
+    # enabling auto-merge needs.
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read the update
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Enable auto-merge
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

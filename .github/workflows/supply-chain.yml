@@ -9,13 +9,10 @@ on:
       - Cargo.lock
       - deny.toml
       - .github/workflows/supply-chain.yml
+  # Unfiltered: cargo-deny is a required check, and a check a filtered run
+  # never reports holds the pull request open.
   pull_request:
     branches: [main]
-    paths:
-      - Cargo.toml
-      - Cargo.lock
-      - deny.toml
-      - .github/workflows/supply-chain.yml
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
