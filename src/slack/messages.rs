@@ -299,9 +299,9 @@ impl SlackMessageClient {
         self.page("conversations.history", params).await
     }
 
-    /// One page of a thread. Slack starts every page with the parent and its
-    /// cursor walks toward older replies; the parent is kept on the first
-    /// page only, so collected pages hold it once.
+    /// One page of a thread. Without `oldest`, Slack's first page holds the
+    /// latest replies and its cursor walks toward older ones; every page starts
+    /// with the parent, which is kept on the first page only.
     pub async fn replies(
         &self,
         channel: &str,
@@ -319,14 +319,15 @@ impl SlackMessageClient {
     }
 
     /// Replies after `oldest`, oldest first, read until `limit` or the end of
-    /// the thread, and whether the end was reached.
+    /// the thread, and whether Slack reported the end.
     ///
-    /// `oldest` is what makes this usable for recovery: without it the pages
-    /// start at the latest replies, never at the part a disconnect missed.
-    /// Each page restarts from the newest reply already read instead of
-    /// following Slack's cursor, which skips one reply at every page boundary
-    /// once `oldest` is set. The parent Slack repeats on every page is not a
-    /// reply and is dropped.
+    /// With `oldest` set, Slack returns the earliest replies after it, which
+    /// is the part a disconnect missed. Each page restarts from the newest
+    /// reply already read instead of following Slack's cursor, which skips one
+    /// reply at every page boundary once `oldest` is set. Slack's `oldest` is
+    /// inclusive and every page repeats the parent, so only replies after the
+    /// last one read count. A page that adds none while Slack still reports
+    /// more stops the read as incomplete rather than looping on it.
     pub(crate) async fn replies_with_completion(
         &self,
         channel: &str,
@@ -346,14 +347,15 @@ impl SlackMessageClient {
                 .into_iter()
                 .filter(|message| message.ts != thread_ts && message.ts.as_str() > from.as_str())
                 .collect();
-            let ended = next_cursor.is_none() || fresh.is_empty();
+            let exhausted = next_cursor.is_none();
+            let stalled = fresh.is_empty();
             if let Some(newest) = fresh.iter().map(|message| message.ts.clone()).max() {
                 from = newest;
             }
             all_messages.append(&mut fresh);
 
-            if ended || all_messages.len() >= limit {
-                let complete = ended && all_messages.len() <= limit;
+            if exhausted || stalled || all_messages.len() >= limit {
+                let complete = exhausted && all_messages.len() <= limit;
                 all_messages.truncate(limit);
                 return Ok((all_messages, complete));
             }

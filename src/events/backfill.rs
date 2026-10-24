@@ -114,11 +114,7 @@ pub(super) async fn recover_batch(
                         .execute(move |state| state.advance_thread_cursor(&channel, &root, &cutoff))
                         .await?;
                 }
-                let through = messages
-                    .iter()
-                    .filter(|message| message.ts.as_str() > oldest)
-                    .map(|message| message.ts.clone())
-                    .max();
+                let through = messages.iter().map(|message| message.ts.clone()).max();
                 if complete || through.is_some() {
                     batch.threads.push((
                         thread.channel.clone(),
@@ -126,19 +122,11 @@ pub(super) async fn recover_batch(
                         if complete { None } else { through },
                     ));
                 }
-                for message in messages {
-                    // Slack returns a thread's parent alongside its replies and
-                    // treats `oldest` inclusively, so the cursor is enforced
-                    // here too. Without it every reconnect would re-deliver at
-                    // least the message the thread hangs off, and once the
-                    // deduplication layers lapsed, the whole thread with it.
-                    if message.ts.as_str() <= oldest {
-                        continue;
-                    }
-                    batch
-                        .events
-                        .push(from_history(&thread.channel, team_id, message));
-                }
+                batch.events.extend(
+                    messages
+                        .into_iter()
+                        .map(|message| from_history(&thread.channel, team_id, message)),
+                );
             }
             Err(err) => {
                 tracing::warn!(
@@ -388,6 +376,30 @@ mod tests {
         let read: Vec<String> = messages.into_iter().map(|message| message.ts).collect();
         assert_eq!(read, replies);
         assert!(complete);
+
+        server.reset().await;
+        Mock::given(path("/conversations.replies"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "messages": [
+                    {"ts": "1700000000.000000", "text": "parent"},
+                    {"ts": "1700000008.000000", "text": "the reply at oldest"}
+                ],
+                "response_metadata": {"next_cursor": "more"},
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (messages, complete) = slack
+            .messages
+            .replies_with_completion("C1", "1700000000.000000", 50, "1700000008.000000")
+            .await
+            .unwrap();
+        assert!(messages.is_empty());
+        assert!(
+            !complete,
+            "a page that adds nothing while Slack reports more is not the end"
+        );
     }
 
     #[tokio::test]
