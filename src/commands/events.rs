@@ -187,9 +187,8 @@ async fn handle_events_action(
                 .execute(move |runtime| runtime.store.ack(&name, through))
                 .await?;
             if as_json {
-                println!(
-                    "{}",
-                    serde_json::json!({ "consumer": consumer, "acked_seq": through, "pending": pending })
+                format::print_json(
+                    &serde_json::json!({ "consumer": consumer, "acked_seq": through, "pending": pending }),
                 );
             } else {
                 println!("✓ {consumer} acknowledged through {through} ({pending} pending)");
@@ -239,10 +238,7 @@ fn stop_daemon(runtime: &events::EventRuntime, as_json: bool) -> Result<()> {
     runtime.state.request_stop()?;
 
     if as_json {
-        println!(
-            "{}",
-            serde_json::json!({ "stopped": true, "pid": status.pid })
-        );
+        format::print_json(&serde_json::json!({ "stopped": true, "pid": status.pid }));
     } else {
         println!("✓ Asked the daemon (pid {}) to stop", status.pid);
     }

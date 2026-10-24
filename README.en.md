@@ -471,7 +471,7 @@ The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`
 | `3` | Auth error (inspect credentials, profile selection or permissions as directed) |
 | `4` | Rate limited |
 
-Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. In `--json` mode stdout carries JSON data; event streams use NDJSON.
+Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. In `--json` mode stdout carries one JSON document, on a single line when piped and indented on a terminal; event streams use NDJSON.
 
 ### search Options
 - `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)

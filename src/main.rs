@@ -200,7 +200,7 @@ async fn run(cli: Cli) -> Result<()> {
             let result = slack.messages.send(&id, payload, thread.as_deref()).await?;
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                format::print_json(&result);
             } else {
                 println!("✓ Sent: {}", result.ts);
             }
@@ -216,7 +216,7 @@ async fn run(cli: Cli) -> Result<()> {
             let result = slack.messages.update(&id, &ts, payload).await?;
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                format::print_json(&result);
             } else {
                 println!("✓ Updated: {}", result.ts);
             }
@@ -227,7 +227,7 @@ async fn run(cli: Cli) -> Result<()> {
             let result = slack.messages.delete(&id, &ts).await?;
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                format::print_json(&result);
             } else {
                 println!("✓ Deleted: {}", result.ts);
             }
@@ -238,7 +238,7 @@ async fn run(cli: Cli) -> Result<()> {
             let link = slack.messages.permalink(&id, &ts).await?;
 
             if cli.json {
-                println!("{}", serde_json::json!({ "permalink": link }));
+                format::print_json(&serde_json::json!({ "permalink": link }));
             } else {
                 println!("{}", link);
             }
@@ -364,7 +364,7 @@ async fn run(cli: Cli) -> Result<()> {
             slack.reactions.add(&id, &ts, &emoji).await?;
 
             if cli.json {
-                println!("{{\"ok\": true}}");
+                format::print_json(&serde_json::json!({ "ok": true }));
             } else {
                 println!("✓ Added :{}: reaction", emoji.trim_matches(':'));
             }
@@ -375,7 +375,7 @@ async fn run(cli: Cli) -> Result<()> {
             slack.reactions.remove(&id, &ts, &emoji).await?;
 
             if cli.json {
-                println!("{{\"ok\": true}}");
+                format::print_json(&serde_json::json!({ "ok": true }));
             } else {
                 println!("✓ Removed :{}: reaction", emoji.trim_matches(':'));
             }
@@ -401,7 +401,7 @@ async fn run(cli: Cli) -> Result<()> {
             slack.pins.add(&id, &ts).await?;
 
             if cli.json {
-                println!("{{\"ok\": true}}");
+                format::print_json(&serde_json::json!({ "ok": true }));
             } else {
                 println!("✓ Pinned message");
             }
@@ -412,7 +412,7 @@ async fn run(cli: Cli) -> Result<()> {
             slack.pins.remove(&id, &ts).await?;
 
             if cli.json {
-                println!("{{\"ok\": true}}");
+                format::print_json(&serde_json::json!({ "ok": true }));
             } else {
                 println!("✓ Unpinned message");
             }
@@ -437,7 +437,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?;
 
             if cli.json {
-                println!("{}", serde_json::to_string_pretty(&bookmark)?);
+                format::print_json(&bookmark);
             } else {
                 println!("✓ Added bookmark: {} (id: {})", bookmark.title, bookmark.id);
             }
@@ -451,7 +451,7 @@ async fn run(cli: Cli) -> Result<()> {
             slack.bookmarks.remove(&id, &bookmark_id).await?;
 
             if cli.json {
-                println!("{{\"ok\": true}}");
+                format::print_json(&serde_json::json!({ "ok": true }));
             } else {
                 println!("✓ Removed bookmark");
             }
@@ -471,9 +471,8 @@ async fn run(cli: Cli) -> Result<()> {
             CacheAction::Stats => {
                 let (users, channels) = cache.execute(|cache| cache.get_counts()).await?;
                 if cli.json {
-                    println!(
-                        "{}",
-                        serde_json::json!({ "users": users, "channels": channels })
+                    format::print_json(
+                        &serde_json::json!({ "users": users, "channels": channels }),
                     );
                 } else {
                     println!("Users: {}, Channels: {}", users, channels);
@@ -872,7 +871,7 @@ async fn refresh_cache(
     }
 
     if json {
-        println!("{{\"status\": \"ok\"}}");
+        format::print_json(&serde_json::json!({ "ok": true }));
     } else {
         println!("✓ Cache refreshed");
     }

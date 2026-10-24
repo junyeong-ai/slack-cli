@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::format::{ChannelField, MessageField, UserField};
+use crate::format::{ChannelField, MessageField, UserField, print_json};
 use crate::paths::{self, AppPaths};
 use crate::slack::ConversationType;
 
@@ -899,7 +899,7 @@ impl Config {
 
     pub fn show(&self, paths: &AppPaths, as_json: bool) -> Result<()> {
         if as_json {
-            println!("{}", serde_json::to_string_pretty(self)?);
+            print_json(self);
             return Ok(());
         }
 

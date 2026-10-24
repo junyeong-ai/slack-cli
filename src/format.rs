@@ -10,6 +10,7 @@ use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
+use std::io::IsTerminal;
 
 /// A field `users` can print. `--expand` and `[output].users_fields` share
 /// this vocabulary, so a misspelled name is refused instead of printing nothing.
@@ -149,9 +150,21 @@ impl MessageField {
     }
 }
 
+/// Writes one JSON document to stdout: indented for a terminal, a single line
+/// for a pipe, which is how a program or an agent reads it.
+pub fn print_json<T: Serialize + ?Sized>(value: &T) {
+    let json = if std::io::stdout().is_terminal() {
+        serde_json::to_string_pretty(value)
+    } else {
+        serde_json::to_string(value)
+    }
+    .expect("output values serialize to JSON");
+    println!("{json}");
+}
+
 pub fn print_path(path: &std::path::Path, as_json: bool) {
     if as_json {
-        println!("{}", json!({ "path": path.display().to_string() }));
+        print_json(&json!({ "path": path.display().to_string() }));
     } else {
         println!("{}", path.display());
     }
@@ -169,10 +182,7 @@ pub fn print_users(users: &[SlackUser], fields: &[UserField], as_json: bool) {
                 Value::Object(row)
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&rows).unwrap_or_default()
-        );
+        print_json(&rows);
         return;
     }
 
@@ -254,10 +264,7 @@ pub fn print_channels(channels: &[SlackChannel], fields: &[ChannelField], as_jso
                 Value::Object(row)
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&rows).unwrap_or_default()
-        );
+        print_json(&rows);
         return;
     }
 
@@ -348,10 +355,7 @@ pub fn print_messages(
 
     if as_json {
         let projected = project_messages(messages, &allowed, cache);
-        match serde_json::to_string_pretty(&projected) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing messages: {}", e),
-        }
+        print_json(&projected);
         return;
     }
 
@@ -377,10 +381,7 @@ pub fn print_history(
             "messages": project_messages(messages, &allowed, cache),
             "next_cursor": next_cursor,
         });
-        match serde_json::to_string_pretty(&envelope) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing messages: {}", e),
-        }
+        print_json(&envelope);
         return;
     }
 
@@ -571,10 +572,7 @@ fn render_attachment(att: &Value) {
 
 pub fn print_members(member_ids: &[String], cache: &crate::cache::SqliteCache, as_json: bool) {
     if as_json {
-        match serde_json::to_string_pretty(member_ids) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing members: {}", e),
-        }
+        print_json(member_ids);
         return;
     }
 
@@ -596,10 +594,7 @@ pub fn print_members(member_ids: &[String], cache: &crate::cache::SqliteCache, a
 
 pub fn print_reactions(reactions: &MessageReactions, as_json: bool) {
     if as_json {
-        match serde_json::to_string_pretty(reactions) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing reactions: {}", e),
-        }
+        print_json(reactions);
         return;
     }
 
@@ -615,10 +610,7 @@ pub fn print_reactions(reactions: &MessageReactions, as_json: bool) {
 
 pub fn print_emoji(emoji: &[CustomEmoji], as_json: bool) {
     if as_json {
-        match serde_json::to_string_pretty(emoji) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing emoji: {}", e),
-        }
+        print_json(emoji);
         return;
     }
 
@@ -642,10 +634,7 @@ pub fn print_emoji(emoji: &[CustomEmoji], as_json: bool) {
 
 pub fn print_pins(pins: &[PinnedMessage], as_json: bool) {
     if as_json {
-        match serde_json::to_string_pretty(pins) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing pins: {}", e),
-        }
+        print_json(pins);
         return;
     }
 
@@ -667,10 +656,7 @@ pub fn print_pins(pins: &[PinnedMessage], as_json: bool) {
 
 pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) {
     if as_json {
-        match serde_json::to_string_pretty(bookmarks) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing bookmarks: {}", e),
-        }
+        print_json(bookmarks);
         return;
     }
 
@@ -687,10 +673,7 @@ pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) {
 
 pub fn print_search_capabilities(capabilities: &SearchCapabilities, as_json: bool) {
     if as_json {
-        println!(
-            "{}",
-            json!({ "is_ai_search_enabled": capabilities.is_ai_search_enabled })
-        );
+        print_json(&json!({ "is_ai_search_enabled": capabilities.is_ai_search_enabled }));
         return;
     }
 
@@ -706,10 +689,7 @@ pub fn print_search_capabilities(capabilities: &SearchCapabilities, as_json: boo
 
 pub fn print_search_results(results: &SearchResults, as_json: bool) {
     if as_json {
-        match serde_json::to_string_pretty(results) {
-            Ok(json) => println!("{}", json),
-            Err(e) => eprintln!("Error serializing search results: {}", e),
-        }
+        print_json(results);
         return;
     }
 
@@ -778,17 +758,14 @@ pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
     });
 
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "action": outcome.action.as_str(),
-                "from": outcome.from,
-                "to": outcome.to,
-                "target": outcome.target,
-                "binary": outcome.binary.display().to_string(),
-                "signature": signature,
-            })
-        );
+        print_json(&json!({
+            "action": outcome.action.as_str(),
+            "from": outcome.from,
+            "to": outcome.to,
+            "target": outcome.target,
+            "binary": outcome.binary.display().to_string(),
+            "signature": signature,
+        }));
         return;
     }
 
@@ -821,8 +798,8 @@ pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
 }
 
 /// One JSON object per line, which is what a consuming process reads. Not
-/// `to_string_pretty`: a pulled batch is a stream of records, and a record
-/// that spans lines cannot be read one at a time.
+/// `print_json`, which indents for a terminal: a pulled batch is a stream of
+/// records, and a record that spans lines cannot be read one at a time.
 pub fn print_events(events: &[Event], as_json: bool) {
     if as_json {
         for event in events {
@@ -871,20 +848,17 @@ pub fn print_event_stats(
     as_json: bool,
 ) {
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "profile": profile,
-                "mode": mode,
-                "durable": caps.durable,
-                "replayable": caps.replayable,
-                "events": stats.events,
-                "bytes": stats.bytes,
-                "oldest": stats.oldest,
-                "newest": stats.newest,
-                "consumers": stats.consumers,
-            })
-        );
+        print_json(&json!({
+            "profile": profile,
+            "mode": mode,
+            "durable": caps.durable,
+            "replayable": caps.replayable,
+            "events": stats.events,
+            "bytes": stats.bytes,
+            "oldest": stats.oldest,
+            "newest": stats.newest,
+            "consumers": stats.consumers,
+        }));
         return;
     }
 
@@ -933,7 +907,7 @@ pub fn print_daemon_status(
     // otherwise report a working daemon as absent.
     let Some(status) = status else {
         if as_json {
-            println!("{}", json!({ "running": false, "profile": profile }));
+            print_json(&json!({ "running": false, "profile": profile }));
         } else {
             println!("profile : {profile}");
             println!(
@@ -947,28 +921,25 @@ pub fn print_daemon_status(
     let beating = age <= stale_after;
 
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "running": running,
-                "profile": profile,
-                "pid": status.pid,
-                "connected": status.connected && running && beating,
-                "started_at": status.started_at,
-                "heartbeat_at": status.heartbeat_at,
-                "heartbeat_age_seconds": age,
-                "counters": {
-                    "received": status.counters.received,
-                    "matched": status.counters.matched,
-                    "stored": status.counters.stored,
-                    "dropped": status.counters.dropped,
-                    "delivered": status.counters.delivered,
-                    "failed": status.counters.failed,
-                    "reconnects": status.counters.reconnects,
-                    "backfilled": status.counters.backfilled,
-                },
-            })
-        );
+        print_json(&json!({
+            "running": running,
+            "profile": profile,
+            "pid": status.pid,
+            "connected": status.connected && running && beating,
+            "started_at": status.started_at,
+            "heartbeat_at": status.heartbeat_at,
+            "heartbeat_age_seconds": age,
+            "counters": {
+                "received": status.counters.received,
+                "matched": status.counters.matched,
+                "stored": status.counters.stored,
+                "dropped": status.counters.dropped,
+                "delivered": status.counters.delivered,
+                "failed": status.counters.failed,
+                "reconnects": status.counters.reconnects,
+                "backfilled": status.counters.backfilled,
+            },
+        }));
         return;
     }
 
@@ -1021,15 +992,12 @@ pub fn print_daemon_status(
 
 pub fn print_prune_outcome(outcome: &PruneOutcome, as_json: bool) {
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "removed": outcome.total(),
-                "acknowledged": outcome.acknowledged,
-                "expired": outcome.expired,
-                "over_budget": outcome.over_budget,
-            })
-        );
+        print_json(&json!({
+            "removed": outcome.total(),
+            "acknowledged": outcome.acknowledged,
+            "expired": outcome.expired,
+            "over_budget": outcome.over_budget,
+        }));
         return;
     }
 

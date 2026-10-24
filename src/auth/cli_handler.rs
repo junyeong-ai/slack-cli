@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::cli::AuthAction;
 use crate::config::{AuthConfig, Config};
+use crate::format::print_json;
 use crate::slack::{SlackClient, scopes};
 
 use super::Authenticator;
@@ -180,10 +181,7 @@ async fn attach_app_token(
         .await?;
 
     if json {
-        println!(
-            "{}",
-            json!({ "profile": name, "attached": TokenKind::App.as_str() })
-        );
+        print_json(&json!({ "profile": name, "attached": TokenKind::App.as_str() }));
     } else {
         println!("\u{2713} Added app-level token to profile {name}");
     }
@@ -324,7 +322,7 @@ fn print_scopes(excluded: &[String], json: bool) {
     // excludable and the full requirement is always what to register.
     let app = scopes::required(TokenKind::App);
     if json {
-        println!("{}", json!({ "user": user, "bot": bot, "app": app }));
+        print_json(&json!({ "user": user, "bot": bot, "app": app }));
     } else {
         println!("User Token Scopes:");
         println!("  {}", user.join(" "));
@@ -337,16 +335,13 @@ fn print_scopes(excluded: &[String], json: bool) {
 
 fn print_login_result(profile_name: &str, profile: &Profile, json: bool) {
     if json {
-        println!(
-            "{}",
-            json!({
-                "profile": profile_name,
-                "team_id": profile.workspace.team_id,
-                "team_name": profile.workspace.team_name,
-                "method": profile.method.as_str(),
-                "tokens": token_kinds(&profile.tokens),
-            })
-        );
+        print_json(&json!({
+            "profile": profile_name,
+            "team_id": profile.workspace.team_id,
+            "team_name": profile.workspace.team_name,
+            "method": profile.method.as_str(),
+            "tokens": token_kinds(&profile.tokens),
+        }));
     } else {
         println!(
             "✓ Logged in to {} via {} (profile: {})",
@@ -467,7 +462,7 @@ fn emit_logout_result(json: bool, outcome: LogoutOutcome) {
                 "active_profile": new_active,
             }),
         };
-        println!("{payload}");
+        print_json(&payload);
         return;
     }
 
@@ -538,7 +533,7 @@ async fn status(
     let snapshot = authenticator.snapshot().await;
     if snapshot.profiles.is_empty() {
         if json {
-            println!("{}", json!({"profiles": []}));
+            print_json(&json!({"profiles": []}));
         } else {
             println!("No profiles configured. Run: slack-cli auth login");
         }
@@ -614,7 +609,7 @@ fn print_status_json(
         }
         None => {}
     }
-    println!("{payload}");
+    print_json(&payload);
 }
 
 fn print_status_text(name: &str, profile: &Profile, verification: Verification) {
@@ -656,7 +651,7 @@ async fn list_profiles(authenticator: &Authenticator, json: bool) -> Result<()> 
                 })
             })
             .collect();
-        println!("{}", json!({"profiles": payload}));
+        print_json(&json!({"profiles": payload}));
     } else if snapshot.profiles.is_empty() {
         println!("No profiles configured. Run: slack-cli auth login");
     } else {
@@ -682,7 +677,7 @@ async fn set_active(name: String, authenticator: &Authenticator, json: bool) -> 
     let name = non_blank(name).context("profile name must not be blank")?;
     authenticator.set_active(&name).await?;
     if json {
-        println!("{}", json!({"active": name}));
+        print_json(&json!({"active": name}));
     } else {
         println!("✓ Active profile: {name}");
     }
