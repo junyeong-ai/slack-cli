@@ -305,7 +305,7 @@ channel_types = ["public_channel", "private_channel"]
 [output]
 users_fields    = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
-messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "metadata"]
+messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "files", "metadata"]
                                # Allowed: the same names as each command's --expand
 
 # Unknown keys are rejected (not silently ignored). Stale keys from prior
@@ -458,7 +458,7 @@ At least one of `text` / `markdown_text` / `blocks` / `attachments` must be prov
   - Computed: `date`, `user_name`
   - Response: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
 
-The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. The default output is intentionally compact so AI agents pay no extra context tax; rich fields are opt-in via `--expand`.
+The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `files`, `metadata`. `files` carries only `{id, name, title, mimetype, size, mode, permalink}` per shared file, and a message that only shares a file has empty `text`. The default output is intentionally compact so AI agents pay no extra context tax; rich fields are opt-in via `--expand`.
 
 `messages --json` and `thread --json` emit a `{messages: [...], next_cursor}` envelope. When `next_cursor` is not `null`, pass it back via `--cursor` for the next page. A thread reads oldest first, and its first page leads with the parent.
 

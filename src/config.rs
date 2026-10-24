@@ -107,6 +107,7 @@ fn default_messages_fields() -> Vec<MessageField> {
         MessageField::ThreadTs,
         MessageField::ReplyCount,
         MessageField::Subtype,
+        MessageField::Files,
         MessageField::Metadata,
     ]
 }

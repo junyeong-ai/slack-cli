@@ -1,6 +1,6 @@
 use crate::cache::SqliteCache;
 use crate::events::{DaemonStatus, Event, PruneOutcome, StoreCaps, StoreStats};
-use crate::slack::types::{SlackChannel, SlackMessage, SlackUser};
+use crate::slack::types::{MessageFile, SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{
     Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchCapabilities, SearchResults,
 };
@@ -116,6 +116,7 @@ pub enum MessageField {
     Edited,
     Blocks,
     Attachments,
+    Files,
     Permalink,
     Metadata,
     Date,
@@ -142,6 +143,7 @@ impl MessageField {
             Self::Edited => "edited",
             Self::Blocks => "blocks",
             Self::Attachments => "attachments",
+            Self::Files => "files",
             Self::Permalink => "permalink",
             Self::Metadata => "metadata",
             Self::Date => "date",
@@ -432,6 +434,9 @@ fn render_messages(
                 render_attachment(att);
             }
         }
+        for file in msg.files.iter().flatten() {
+            render_file(file);
+        }
 
         if let Some(count) = msg.reply_count {
             println!("  └─ {} replies", count);
@@ -474,6 +479,18 @@ fn resolve_user_name(user_id: &str, cache: Option<&SqliteCache>) -> Option<Strin
         .ok()
         .flatten()
         .and_then(|u| u.profile.and_then(|p| p.real_name))
+}
+
+fn render_file(file: &MessageFile) {
+    let label = file
+        .title
+        .as_deref()
+        .or(file.name.as_deref())
+        .unwrap_or(&file.id);
+    match file.mimetype.as_deref().or(file.mode.as_deref()) {
+        Some(kind) => println!("  [file] {label} ({kind})"),
+        None => println!("  [file] {label}"),
+    }
 }
 
 fn render_attachment(att: &Value) {
@@ -1021,7 +1038,9 @@ pub fn format_epoch(seconds: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::slack::types::{EditedInfo, MessageChannel, MessageMetadata, SlackMessage};
+    use crate::slack::types::{
+        EditedInfo, MessageChannel, MessageFile, MessageMetadata, SlackMessage,
+    };
 
     fn sample_message_with_blocks_and_metadata() -> SlackMessage {
         SlackMessage {
@@ -1042,6 +1061,7 @@ mod tests {
             edited: None,
             blocks: Some(vec![json!({"type": "section"})]),
             attachments: None,
+            files: None,
             permalink: Some("https://acme.slack.com/archives/C123/p1".into()),
             metadata: Some(MessageMetadata {
                 event_type: "deploy_done".into(),
@@ -1108,6 +1128,15 @@ mod tests {
             }),
             blocks: Some(vec![]),
             attachments: Some(vec![]),
+            files: Some(vec![MessageFile {
+                id: "F1".into(),
+                name: None,
+                title: None,
+                mimetype: None,
+                size: None,
+                mode: Some("tombstone".into()),
+                permalink: None,
+            }]),
             permalink: Some("https://acme.slack.com/archives/C1/p1".into()),
             metadata: Some(MessageMetadata {
                 event_type: "deploy_done".into(),

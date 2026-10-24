@@ -184,10 +184,33 @@ pub struct SlackMessage {
     pub blocks: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub files: Option<Vec<MessageFile>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permalink: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub metadata: Option<MessageMetadata>,
+}
+
+/// A file shared in a message, reduced to what identifies it. Slack's file
+/// object also carries a dozen thumbnail and download URLs; `mode` is kept
+/// because a deleted (`tombstone`) or plan-limited (`hidden_by_limit`) file
+/// arrives without a name or permalink.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageFile {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mimetype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub permalink: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,6 +262,46 @@ mod tests {
         let channel = msg.channel.unwrap();
         assert_eq!(channel.id, "C048DJ9BWGK");
         assert_eq!(channel.name, None);
+    }
+
+    #[test]
+    fn message_files_keep_what_identifies_them() {
+        let msg: SlackMessage = serde_json::from_value(json!({
+            "ts": "1700000000.000100",
+            "text": "",
+            "files": [
+                {
+                    "id": "F1",
+                    "name": "report.pdf",
+                    "title": "Q3 report",
+                    "mimetype": "application/pdf",
+                    "size": 52341,
+                    "mode": "hosted",
+                    "permalink": "https://acme.slack.com/files/U1/F1/report.pdf",
+                    "url_private": "https://files.slack.com/files-pri/T1-F1/report.pdf",
+                    "thumb_pdf": "https://files.slack.com/files-tmb/T1-F1/report_thumb_pdf.png"
+                },
+                {"id": "F2", "mode": "tombstone"}
+            ],
+        }))
+        .unwrap();
+
+        let out = serde_json::to_value(&msg).unwrap();
+        assert_eq!(
+            out["files"],
+            json!([
+                {
+                    "id": "F1",
+                    "name": "report.pdf",
+                    "title": "Q3 report",
+                    "mimetype": "application/pdf",
+                    "size": 52341,
+                    "mode": "hosted",
+                    "permalink": "https://acme.slack.com/files/U1/F1/report.pdf"
+                },
+                {"id": "F2", "mode": "tombstone"}
+            ])
+        );
     }
 
     #[test]
