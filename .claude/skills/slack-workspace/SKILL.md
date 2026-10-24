@@ -69,7 +69,8 @@ Inside `-t` text or Block Kit `text` objects, Markdown renders literally (e.g. `
 ## Commands
 
 ```bash
-# Lookups (cache-backed; one-time `cache refresh` after login)
+# Lookups (cache-backed; one-time `cache refresh` after login). An empty result can
+# predate a new user or channel: run `slack-cli cache refresh users|channels` once and retry.
 slack-cli users    <query>   [--id U1,U2] [--expand FIELDS] [--limit N] --json
 slack-cli channels <query>   [--id C1,C2] [--expand FIELDS] [--limit N] --json
 slack-cli members  <channel>

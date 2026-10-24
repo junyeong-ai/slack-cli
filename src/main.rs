@@ -660,7 +660,8 @@ async fn resolve_channel(
     match name_matches.as_slice() {
         [channel] => Ok(channel.id.clone()),
         [] => anyhow::bail!(
-            "Channel not found: {}. Use an exact channel name or an ID from `slack-cli channels`.",
+            "Channel not found in the local cache: {}. Use an exact channel name or a channel ID; \
+             a channel created since the last refresh needs `slack-cli cache refresh channels` first.",
             input
         ),
         _ => anyhow::bail!(
