@@ -900,7 +900,7 @@ impl Config {
 
     pub fn show(&self, paths: &AppPaths, as_json: bool) -> Result<()> {
         if as_json {
-            print_json(self);
+            print_json(&serde_json::to_value(self)?);
             return Ok(());
         }
 
