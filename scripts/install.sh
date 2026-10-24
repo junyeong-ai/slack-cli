@@ -697,6 +697,6 @@ main() {
     echo "" >&2
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "$SCRIPT_PATH" == "$0" ]]; then
     main
 fi

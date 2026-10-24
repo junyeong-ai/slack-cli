@@ -307,3 +307,11 @@ trap - EXIT
 acquire_install_lock
 "#);
 }
+
+#[test]
+fn piping_the_script_into_bash_runs_the_installer() {
+    run(r#"
+if SLACK_CLI_VERSION=not-a-version bash < "$INSTALL_SCRIPT" 2> "$TEST_ROOT/piped.log"; then exit 1; fi
+grep -q 'Invalid release version: not-a-version' "$TEST_ROOT/piped.log" || { cat "$TEST_ROOT/piped.log" >&2; exit 1; }
+"#);
+}
