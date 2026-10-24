@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.20.3] - 2026-10-24
 
 ### Changed
 
@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A command that logs a warning, such as a rate-limit retry, while its stderr is a closed pipe exits with its usual status instead of aborting. 0.20.1 covered only the error message.
 - When `SSL_CERT_FILE` or `SSL_CERT_DIR` is set but no certificate can be read from it, the switch to the bundled Mozilla roots is a warning instead of a debug message.
 - An invalid `RUST_LOG` is ignored as a whole and reported as a warning, a JSON record under `--json`, instead of in a plain-text line that kept its valid directives.
+- The event loop in the bundled skill and the READMEs answers a mention posted with a file, a thread reply also sent to the channel, and a `/me` message. It answered only messages without a subtype and acknowledged the rest unanswered.
 - `curl … | bash`, the documented way to run `install.sh`, stopped at `BASH_SOURCE[0]: unbound variable` before installing anything. It has failed since 0.14.0; running the script from a file was unaffected.
 
 ## [0.20.2] - 2026-10-24
