@@ -474,7 +474,7 @@ At least one of `text` / `markdown_text` / `blocks` / `attachments` must be prov
 
 The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `files`, `metadata`. `files` carries only `{id, name, title, mimetype, size, mode, permalink}` per shared file, and a message that only shares a file has empty `text`. The default output is intentionally compact so AI agents pay no extra context tax; rich fields are opt-in via `--expand`.
 
-`messages --json` and `thread --json` emit a `{messages: [...], next_cursor}` envelope. When `next_cursor` is not `null`, pass it back via `--cursor` for the next page. A thread reads oldest first, and its first page leads with the parent.
+`messages --json` and `thread --json` emit a `{messages: [...], next_cursor}` envelope. When `next_cursor` is not `null`, pass it back via `--cursor` for the next page. For a thread only the first page leads with the parent, `next_cursor` continues toward earlier replies, and `--limit` counts replies. Collect every page, then sort by `ts`.
 
 ### Exit Codes & Error Output
 

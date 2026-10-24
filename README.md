@@ -461,7 +461,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 
 `messages_fields` 기본값(lean): `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `files`, `metadata`. `files`는 공유된 파일마다 `{id, name, title, mimetype, size, mode, permalink}`만 담으며, 파일만 올린 메시지는 `text`가 비어 있습니다. AI 에이전트 컨텍스트 절약을 위해 기본 출력은 가볍게 유지하며, 풍부한 필드는 `--expand` 로 명시 opt-in 합니다.
 
-`messages --json`과 `thread --json` 출력은 `{messages: [...], next_cursor}` 봉투입니다. `next_cursor` 가 `null` 이 아니면 같은 명령에 `--cursor` 로 넘겨 다음 페이지를 조회합니다. 스레드는 오래된 순이고 첫 페이지가 부모 메시지로 시작합니다.
+`messages --json`과 `thread --json` 출력은 `{messages: [...], next_cursor}` 봉투입니다. `next_cursor` 가 `null` 이 아니면 같은 명령에 `--cursor` 로 넘겨 다음 페이지를 조회합니다. 스레드는 첫 페이지만 부모 메시지로 시작하고, `next_cursor`는 더 이른 답글로 이어지며, `--limit`은 답글 수입니다. 페이지를 모두 모은 뒤 `ts`로 정렬하세요.
 
 ### 종료 코드 & 오류 출력
 

@@ -471,7 +471,10 @@ async fn a_truncated_thread_reports_the_cursor_to_its_next_page() {
         .and(query_param("cursor", "page-2"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "ok": true,
-            "messages": [{"ts": "1700000000.000300", "user": "U789", "text": "latest"}],
+            "messages": [
+                {"ts": "1700000000.000100", "user": "U123", "text": "parent"},
+                {"ts": "1700000000.000050", "user": "U789", "text": "older"}
+            ],
             "response_metadata": {"next_cursor": ""},
         })))
         .with_priority(1)
@@ -504,7 +507,8 @@ async fn a_truncated_thread_reports_the_cursor_to_its_next_page() {
         .replies("C123", "1700000000.000100", 2, cursor.as_deref())
         .await
         .unwrap();
-    assert_eq!(rest[0].text, "latest");
+    assert_eq!(rest.len(), 1, "the repeated parent is dropped");
+    assert_eq!(rest[0].text, "older");
     assert_eq!(cursor, None);
 }
 

@@ -177,7 +177,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `dm --json` → `{channel}`.
 - `upload --json` → `{id, title}`. Slack shares the file asynchronously, so it can take a moment to appear in the channel.
 - `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, files, metadata`, plus `--expand`. Fields a message lacks are omitted. `files` lists `{id, name, title, mimetype, size, mode, permalink}` per shared file; a message that only shares a file has empty `text`, and `mode: "tombstone"` marks a deleted one.
-- `thread --json` → the same envelope, oldest first; the first page leads with the parent. A non-null `next_cursor` means the thread continues — follow it before summarizing.
+- `thread --json` → the same envelope. Only the first page leads with the parent; `next_cursor` continues toward earlier replies, and `--limit` counts replies. A non-null `next_cursor` means the thread continues: collect every page and sort by `ts` before summarizing.
 - `send --json`, `update --json`, `delete --json` → `{channel, ts}`.
 - `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `unschedule` with `--json` → `{ok: true}`.
 - `cache refresh --json` → `{ok: true, unreadable: [{type, scope}]}`. Each listed conversation type was skipped because the token lacks `scope`; names of that type cannot resolve.

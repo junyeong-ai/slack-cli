@@ -299,8 +299,9 @@ impl SlackMessageClient {
         self.page("conversations.history", params).await
     }
 
-    /// One page of a thread, oldest first; the first page leads with the
-    /// parent.
+    /// One page of a thread. Slack starts every page with the parent and its
+    /// cursor walks toward older replies; the parent is kept on the first
+    /// page only, so collected pages hold it once.
     pub async fn replies(
         &self,
         channel: &str,
@@ -308,8 +309,13 @@ impl SlackMessageClient {
         limit: usize,
         cursor: Option<&str>,
     ) -> Result<(Vec<SlackMessage>, Option<String>)> {
-        self.replies_page(channel, thread_ts, limit, None, cursor)
-            .await
+        let (mut messages, next_cursor) = self
+            .replies_page(channel, thread_ts, limit, None, cursor)
+            .await?;
+        if cursor.is_some() {
+            messages.retain(|message| message.ts != thread_ts);
+        }
+        Ok((messages, next_cursor))
     }
 
     /// Replies in a thread, oldest first, read until `limit` or the end of
