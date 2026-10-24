@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-10-24
+
+### Changed
+
+- In `--json` mode every stderr line is a JSON object: log records with `level` and `fields`, `auth login`'s `{"authorize_url", "browser_opened"}`, and on a runtime failure the error envelope as the last line. A rate-limit or token-renewal warning used to arrive as colored text ahead of the envelope.
+- Progress messages such as `Fetching users...` are whole lines, so a warning logged during the fetch no longer lands in the middle of one.
+
+### Fixed
+
+- Logs are colored only when stderr is a terminal, and `NO_COLOR` turns color off. Pipes, files and service-manager logs no longer receive escape codes.
+- A command whose stderr is a closed pipe exits with its usual status instead of aborting.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added
