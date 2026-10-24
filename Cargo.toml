@@ -30,7 +30,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive", "env"] }
-tokio = { version = "1.53.3", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync", "fs", "net", "io-util", "process", "signal"] }
+tokio = { version = "1.54.1", default-features = false, features = ["macros", "rt-multi-thread", "time", "sync", "fs", "net", "io-util", "process", "signal"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_urlencoded = "0.7.1"
@@ -48,20 +48,20 @@ dotenvy = "0.15.7"
 toml = "1.1.8"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-uuid = { version = "1.28.0", features = ["v4"] }
+uuid = { version = "1.29.0", features = ["v4"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 sha2 = "0.11.1"
 base64 = "0.23.1"
 rand = "0.10.3"
 rpassword = "7.5.4"
 etcetera = "0.11.0"
-open = "5.4.4"
+open = "5.4.5"
 tempfile = "3.27.0"
 url = "2.5.8"
 
 [dev-dependencies]
-tokio = { version = "1.53.3", default-features = false, features = ["test-util"] }
-rstest = "0.27.0"
+tokio = { version = "1.54.1", default-features = false, features = ["test-util"] }
+rstest = "0.28.0"
 wiremock = "0.6.5"
 
 [profile.release]
