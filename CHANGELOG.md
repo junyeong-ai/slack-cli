@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2] - 2026-10-24
+
+### Fixed
+
+- On a Linux system without CA certificates, such as a minimal container, every command that loads credentials failed with `failed to create OAuth client: builder error`, including ones that make no request. Such a system now trusts the Mozilla roots built into the binary; `SSL_CERT_FILE` and `SSL_CERT_DIR` still choose the system's.
+- Socket Mode trusts the operating system's certificate store like every other connection, instead of only the Mozilla roots built into the binary, so a root installed on the system also applies to the daemon.
+
 ## [0.20.1] - 2026-10-24
 
 ### Changed

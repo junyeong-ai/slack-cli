@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.20.1"
+  version: "0.20.2"
 description: Searches, reads and posts Slack messages with the slack-cli command — channel history, threads, workspace search, users and channels, DMs, scheduled messages, file uploads, reactions, pins, bookmarks, and events collected by its Socket Mode daemon. Use when a task involves Slack, such as finding or summarizing a discussion, replying in a thread, posting, editing, deleting or scheduling a message, sending a DM, sharing a file, looking up a person or channel, or handling mentions.
 allowed-tools: Bash(slack-cli users *), Bash(slack-cli channels *), Bash(slack-cli members *), Bash(slack-cli messages *), Bash(slack-cli thread *), Bash(slack-cli search *), Bash(slack-cli permalink *), Bash(slack-cli reactions *), Bash(slack-cli pins *), Bash(slack-cli bookmarks *), Bash(slack-cli emoji *), Bash(slack-cli scheduled *), Bash(slack-cli events pull *), Bash(slack-cli events ack *), Bash(slack-cli events stats *), Bash(slack-cli daemon status *), Bash(slack-cli cache *), Bash(slack-cli auth status *), Bash(slack-cli auth profiles *), Bash(slack-cli auth scopes *), Bash(jq *)
 ---
