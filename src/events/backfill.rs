@@ -102,12 +102,7 @@ pub(super) async fn recover_batch(
         }
         match slack
             .messages
-            .replies_with_completion(
-                &thread.channel,
-                &thread.thread_ts,
-                THREAD_LIMIT,
-                Some(oldest),
-            )
+            .replies_with_completion(&thread.channel, &thread.thread_ts, THREAD_LIMIT, oldest)
             .await
         {
             Ok((messages, complete)) => {
@@ -312,6 +307,88 @@ mod tests {
     use crate::events::envelope::from_event_callback;
     use chrono::Duration;
     use serde_json::json;
+
+    /// Slack serves at most `PAGE` replies a request and, when `oldest` is
+    /// set, its cursor skips the first reply of the next page. Reading by
+    /// `oldest` alone must still collect every reply once, in order.
+    #[tokio::test]
+    async fn thread_recovery_reads_every_reply_despite_a_skipping_cursor() {
+        use crate::auth::{AuthLoadOptions, Authenticator, EnvOverrides};
+        use crate::config::{Config, SlackAppDistribution};
+        use std::sync::Arc;
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+        const PAGE: usize = 3;
+        struct SkippingReplies {
+            replies: Vec<String>,
+        }
+        impl Respond for SkippingReplies {
+            fn respond(&self, request: &Request) -> ResponseTemplate {
+                let query = |key: &str| {
+                    request
+                        .url
+                        .query_pairs()
+                        .find(|(name, _)| name == key)
+                        .map(|(_, value)| value.into_owned())
+                };
+                let oldest = query("oldest").unwrap_or_default();
+                let mut after: Vec<&String> = self
+                    .replies
+                    .iter()
+                    .filter(|ts| ts.as_str() > oldest.as_str())
+                    .collect();
+                if query("cursor").is_some() {
+                    after.remove(0);
+                }
+                let page: Vec<_> = after.iter().take(PAGE).collect();
+                let mut messages = vec![json!({"ts": "1700000000.000000", "text": "parent"})];
+                messages.extend(page.iter().map(|ts| json!({"ts": ts, "text": "reply"})));
+                let cursor = if after.len() > PAGE { "next" } else { "" };
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "ok": true,
+                    "messages": messages,
+                    "response_metadata": {"next_cursor": cursor},
+                }))
+            }
+        }
+
+        let server = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config.connection.api_base_url = server.uri();
+        config.connection.app_distribution = SlackAppDistribution::MarketplaceOrInternal;
+        config.connection.rate_limit_per_minute = 600;
+        let auth = Authenticator::load(AuthLoadOptions {
+            store_path: dir.path().join("auth.json"),
+            api_base_url: server.uri(),
+            explicit_profile: None,
+            overrides: EnvOverrides {
+                user_token: Some(secrecy::SecretString::from("xoxp-test")),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        let slack = SlackClient::new(config, Arc::new(auth)).unwrap();
+        let replies: Vec<String> = (1..=8).map(|n| format!("1700000{n:03}.000000")).collect();
+        Mock::given(path("/conversations.replies"))
+            .respond_with(SkippingReplies {
+                replies: replies.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        let (messages, complete) = slack
+            .messages
+            .replies_with_completion("C1", "1700000000.000000", 50, "1700000000.000000")
+            .await
+            .unwrap();
+
+        let read: Vec<String> = messages.into_iter().map(|message| message.ts).collect();
+        assert_eq!(read, replies);
+        assert!(complete);
+    }
 
     #[tokio::test]
     async fn partial_thread_pages_advance_only_the_processed_recovery_prefix() {

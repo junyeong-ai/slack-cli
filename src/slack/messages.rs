@@ -318,39 +318,46 @@ impl SlackMessageClient {
         Ok((messages, next_cursor))
     }
 
-    /// Replies in a thread, oldest first, read until `limit` or the end of
+    /// Replies after `oldest`, oldest first, read until `limit` or the end of
     /// the thread, and whether the end was reached.
     ///
     /// `oldest` is what makes this usable for recovery: without it the pages
-    /// start at the top of the thread, so a caller asking for `limit` messages
-    /// gets the oldest ones — which for a long thread is the part it has
-    /// already seen, never the part it missed.
+    /// start at the latest replies, never at the part a disconnect missed.
+    /// Each page restarts from the newest reply already read instead of
+    /// following Slack's cursor, which skips one reply at every page boundary
+    /// once `oldest` is set. The parent Slack repeats on every page is not a
+    /// reply and is dropped.
     pub(crate) async fn replies_with_completion(
         &self,
         channel: &str,
         thread_ts: &str,
         limit: usize,
-        oldest: Option<&str>,
+        oldest: &str,
     ) -> Result<(Vec<SlackMessage>, bool)> {
         let mut all_messages = Vec::new();
-        let mut cursor: Option<String> = None;
+        let mut from = oldest.to_owned();
         let page_limit = limit.min(REPLIES_PAGE_SIZE);
 
         loop {
-            let (mut page_messages, next_cursor) = self
-                .replies_page(channel, thread_ts, page_limit, oldest, cursor.as_deref())
+            let (page, next_cursor) = self
+                .replies_page(channel, thread_ts, page_limit, Some(&from), None)
                 .await?;
-            all_messages.append(&mut page_messages);
-            cursor = next_cursor;
+            let mut fresh: Vec<SlackMessage> = page
+                .into_iter()
+                .filter(|message| message.ts != thread_ts && message.ts.as_str() > from.as_str())
+                .collect();
+            let ended = next_cursor.is_none() || fresh.is_empty();
+            if let Some(newest) = fresh.iter().map(|message| message.ts.clone()).max() {
+                from = newest;
+            }
+            all_messages.append(&mut fresh);
 
-            if cursor.is_none() || all_messages.len() >= limit {
-                break;
+            if ended || all_messages.len() >= limit {
+                let complete = ended && all_messages.len() <= limit;
+                all_messages.truncate(limit);
+                return Ok((all_messages, complete));
             }
         }
-
-        let complete = cursor.is_none() && all_messages.len() <= limit;
-        all_messages.truncate(limit);
-        Ok((all_messages, complete))
     }
 
     async fn replies_page(

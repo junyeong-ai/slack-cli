@@ -146,7 +146,9 @@ on — but only one of them should be wired up at a time.
    read starts from a stored position and never from the beginning: `oldest` on
    the request so the pages cover the missed tail rather than the seen head,
    and a client-side check on the way back, because Slack treats `oldest`
-   inclusively and returns a thread's parent regardless.
+   inclusively and returns a thread's parent regardless. Thread pages advance
+   by `oldest` as well, never by Slack's cursor: once `oldest` is set, that
+   cursor skips the first reply of every later page.
 
    The age bound is a **clamp on the read, not a filter on the channel**. A
    cursor older than the horizon means the read starts at the horizon and the
