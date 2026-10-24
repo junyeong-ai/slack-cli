@@ -761,11 +761,11 @@ fn channel_not_found(input: &str, fetched_now: Option<&[ConversationType]>) -> a
     match fetched_now {
         Some([]) => anyhow::anyhow!(
             "Channel not found: {input}. The channel list was fetched just now; \
-             use an exact channel name or a channel ID."
+             use an exact channel name or a channel ID. Archived channels resolve by ID only."
         ),
         Some(unreadable) => anyhow::anyhow!(
             "Channel not found: {input}. The channel list was fetched just now without {}; \
-             use an exact channel name or a channel ID.",
+             use an exact channel name or a channel ID. Archived channels resolve by ID only.",
             unreadable
                 .iter()
                 .map(|kind| unreadable_note(*kind))
@@ -775,7 +775,8 @@ fn channel_not_found(input: &str, fetched_now: Option<&[ConversationType]>) -> a
         None => anyhow::anyhow!(
             "Channel not found in the local cache: {input}. Use an exact channel name or a \
              channel ID; `slack-cli cache refresh channels` fetches channels created since the \
-             last refresh and reports conversation types this token may not list."
+             last refresh and reports conversation types this token may not list. Archived \
+             channels resolve by ID only."
         ),
     }
 }
