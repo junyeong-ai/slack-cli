@@ -203,49 +203,29 @@ impl SlackMessageClient {
             params["latest"] = json!(latest);
         }
 
-        let mut response = self
-            .core
-            .api_call_in_conversation("conversations.history", params, "channel")
-            .await?;
-
-        let raw_messages = response
-            .get_mut("messages")
-            .and_then(|v| v.as_array_mut())
-            .map(std::mem::take)
-            .ok_or_else(|| anyhow!("Missing messages in conversations.history response"))?;
-
-        let messages = raw_messages
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<Result<Vec<SlackMessage>, _>>()?;
-
-        let next_cursor = response["response_metadata"]["next_cursor"]
-            .as_str()
-            .filter(|c| !c.is_empty())
-            .map(|c| c.to_string());
-
-        Ok((messages, next_cursor))
+        self.page("conversations.history", params).await
     }
 
-    /// Replies in a thread, oldest first.
-    ///
-    /// `oldest` is what makes this usable for recovery: without it the pages
-    /// start at the top of the thread, so a caller asking for `limit` messages
-    /// gets the oldest ones — which for a long thread is the part it has
-    /// already seen, never the part it missed.
+    /// One page of a thread, oldest first; the first page leads with the
+    /// parent.
     pub async fn replies(
         &self,
         channel: &str,
         thread_ts: &str,
         limit: usize,
-        oldest: Option<&str>,
-    ) -> Result<Vec<SlackMessage>> {
-        Ok(self
-            .replies_with_completion(channel, thread_ts, limit, oldest)
-            .await?
-            .0)
+        cursor: Option<&str>,
+    ) -> Result<(Vec<SlackMessage>, Option<String>)> {
+        self.replies_page(channel, thread_ts, limit, None, cursor)
+            .await
     }
 
+    /// Replies in a thread, oldest first, read until `limit` or the end of
+    /// the thread, and whether the end was reached.
+    ///
+    /// `oldest` is what makes this usable for recovery: without it the pages
+    /// start at the top of the thread, so a caller asking for `limit` messages
+    /// gets the oldest ones — which for a long thread is the part it has
+    /// already seen, never the part it missed.
     pub(crate) async fn replies_with_completion(
         &self,
         channel: &str,
@@ -258,42 +238,11 @@ impl SlackMessageClient {
         let page_limit = limit.min(REPLIES_PAGE_SIZE);
 
         loop {
-            let mut params = json!({
-                "channel": channel,
-                "ts": thread_ts,
-                "limit": page_limit,
-                "include_all_metadata": true,
-            });
-
-            if let Some(oldest) = oldest {
-                params["oldest"] = json!(oldest);
-            }
-            if let Some(c) = &cursor {
-                params["cursor"] = json!(c);
-            }
-
-            let mut response = self
-                .core
-                .api_call_in_conversation("conversations.replies", params, "channel")
+            let (mut page_messages, next_cursor) = self
+                .replies_page(channel, thread_ts, page_limit, oldest, cursor.as_deref())
                 .await?;
-
-            let raw_messages = response
-                .get_mut("messages")
-                .and_then(|v| v.as_array_mut())
-                .map(std::mem::take)
-                .ok_or_else(|| anyhow!("Missing messages in conversations.replies response"))?;
-
-            let mut page_messages = raw_messages
-                .into_iter()
-                .map(serde_json::from_value)
-                .collect::<Result<Vec<SlackMessage>, _>>()?;
-
             all_messages.append(&mut page_messages);
-
-            cursor = response["response_metadata"]["next_cursor"]
-                .as_str()
-                .filter(|c| !c.is_empty())
-                .map(ToOwned::to_owned);
+            cursor = next_cursor;
 
             if cursor.is_none() || all_messages.len() >= limit {
                 break;
@@ -303,6 +252,60 @@ impl SlackMessageClient {
         let complete = cursor.is_none() && all_messages.len() <= limit;
         all_messages.truncate(limit);
         Ok((all_messages, complete))
+    }
+
+    async fn replies_page(
+        &self,
+        channel: &str,
+        thread_ts: &str,
+        limit: usize,
+        oldest: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<SlackMessage>, Option<String>)> {
+        let mut params = json!({
+            "channel": channel,
+            "ts": thread_ts,
+            "limit": limit,
+            "include_all_metadata": true,
+        });
+
+        if let Some(oldest) = oldest {
+            params["oldest"] = json!(oldest);
+        }
+        if let Some(cursor) = cursor {
+            params["cursor"] = json!(cursor);
+        }
+
+        self.page("conversations.replies", params).await
+    }
+
+    async fn page(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<(Vec<SlackMessage>, Option<String>)> {
+        let mut response = self
+            .core
+            .api_call_in_conversation(method, params, "channel")
+            .await?;
+
+        let raw_messages = response
+            .get_mut("messages")
+            .and_then(|v| v.as_array_mut())
+            .map(std::mem::take)
+            .ok_or_else(|| anyhow!("Missing messages in {method} response"))?;
+
+        let messages = raw_messages
+            .into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<Vec<SlackMessage>, _>>()?;
+
+        let next_cursor = response["response_metadata"]["next_cursor"]
+            .as_str()
+            .filter(|c| !c.is_empty())
+            .map(ToOwned::to_owned);
+
+        Ok((messages, next_cursor))
     }
 }
 

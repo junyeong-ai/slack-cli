@@ -437,7 +437,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 
 ### messages/thread 옵션
 - `--limit <N>` — 결과 제한 (기본: `15`)
-- `--cursor <cursor>` — (messages 전용) 이전 응답의 `next_cursor` 로 다음 페이지 조회
+- `--cursor <cursor>` — 이전 응답의 `next_cursor` 로 다음 페이지 조회
 - `--oldest <date>` — (messages 전용) 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--latest <date>` — (messages 전용) 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--exclude-bots` — 봇 메시지 제외 (messages·thread 공통)
@@ -447,7 +447,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 
 `messages_fields` 기본값(lean): `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. AI 에이전트 컨텍스트 절약을 위해 기본 출력은 가볍게 유지하며, 풍부한 필드는 `--expand` 로 명시 opt-in 합니다.
 
-`messages --json` 출력은 `{messages: [...], next_cursor}` 봉투입니다. `next_cursor` 가 `null` 이 아니면 같은 명령에 `--cursor` 로 넘겨 다음 페이지를 조회합니다. `thread --json` 은 `--limit` 까지 내부 페이징하므로 배열 그대로입니다.
+`messages --json`과 `thread --json` 출력은 `{messages: [...], next_cursor}` 봉투입니다. `next_cursor` 가 `null` 이 아니면 같은 명령에 `--cursor` 로 넘겨 다음 페이지를 조회합니다. 스레드는 오래된 순이고 첫 페이지가 부모 메시지로 시작합니다.
 
 ### 종료 코드 & 오류 출력
 

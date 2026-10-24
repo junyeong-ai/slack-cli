@@ -450,7 +450,7 @@ At least one of `text` / `markdown_text` / `blocks` / `attachments` must be prov
 
 ### messages/thread Options
 - `--limit <N>` — Limit results (default: `15`)
-- `--cursor <cursor>` — (messages only) Fetch the next page using `next_cursor` from the previous response
+- `--cursor <cursor>` — Fetch the next page using `next_cursor` from the previous response
 - `--oldest <date>` — (messages only) Start time (Unix timestamp or YYYY-MM-DD)
 - `--latest <date>` — (messages only) End time (Unix timestamp or YYYY-MM-DD)
 - `--exclude-bots` — Exclude bot messages (messages and thread)
@@ -460,7 +460,7 @@ At least one of `text` / `markdown_text` / `blocks` / `attachments` must be prov
 
 The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`, `thread_ts`, `reply_count`, `subtype`, `metadata`. The default output is intentionally compact so AI agents pay no extra context tax; rich fields are opt-in via `--expand`.
 
-`messages --json` emits a `{messages: [...], next_cursor}` envelope. When `next_cursor` is not `null`, pass it back via `--cursor` for the next page. `thread --json` paginates internally up to `--limit`, so it stays a bare array.
+`messages --json` and `thread --json` emit a `{messages: [...], next_cursor}` envelope. When `next_cursor` is not `null`, pass it back via `--cursor` for the next page. A thread reads oldest first, and its first page leads with the parent.
 
 ### Exit Codes & Error Output
 

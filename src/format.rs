@@ -345,29 +345,10 @@ fn channel_cell(ch: &SlackChannel, field: ChannelField) -> String {
     }
 }
 
-pub fn print_messages(
-    messages: &[SlackMessage],
-    as_json: bool,
-    fields: &[MessageField],
-    cache: Option<&SqliteCache>,
-) {
-    let allowed = field_names(fields);
-
-    if as_json {
-        let projected = project_messages(messages, &allowed, cache);
-        print_json(&projected);
-        return;
-    }
-
-    render_messages(messages, &allowed, cache);
-}
-
-/// One page of `conversations.history` plus the cursor to the next page.
-/// The JSON shape is an envelope — `{messages, next_cursor}` with a null
-/// cursor on the last page — because following the cursor is the caller's
-/// job for this command. Internally-paginating commands (`thread`) keep the
-/// bare array shape of `print_messages`.
-pub fn print_history(
+/// One page of a channel's history or a thread plus the cursor to the next
+/// page: `{messages, next_cursor}` with a null cursor on the last page, so a
+/// reader can tell a complete conversation from a truncated one.
+pub fn print_message_page(
     messages: &[SlackMessage],
     next_cursor: Option<&str>,
     as_json: bool,

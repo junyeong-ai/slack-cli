@@ -76,7 +76,7 @@ slack-cli members  <channel>
 
 # Reading
 slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
-slack-cli thread   <channel> <ts> [--limit N] [--exclude-bots] [--expand FIELDS] --json
+slack-cli thread   <channel> <ts> [--limit N] [--cursor C] [--exclude-bots] [--expand FIELDS] --json
 slack-cli search   <query>   [filters…] --json
 slack-cli search   --capabilities --json
 slack-cli permalink <channel> <ts> --json
@@ -169,7 +169,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `channels --json` → array, same model (default `id, name, type, members`). Member count is `members`, not `num_members`. `type` is a display string (`Public`, `Private`, `DM`, `Group`) — not the API's `channel_types` tokens.
 - `members --json` → array of user-id strings (`["U123", "U456", ...]`), not user objects.
 - `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, metadata`, plus `--expand`. Fields a message lacks are omitted.
-- `thread --json` → bare array of message objects (paginates internally up to `--limit`); same field model as `messages`.
+- `thread --json` → the same envelope, oldest first; the first page leads with the parent. A non-null `next_cursor` means the thread continues — follow it before summarizing.
 - `send --json`, `update --json`, `delete --json` → `{channel, ts}`.
 - `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `cache refresh` with `--json` → `{ok: true}`.
 - `permalink --json` → `{permalink}`. Non-JSON output is the URL alone.

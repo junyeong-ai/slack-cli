@@ -51,6 +51,10 @@ async fn test_client(server: &MockServer) -> (SlackClient, tempfile::TempDir) {
     let mut config = Config::default();
     config.connection.api_base_url = server.uri();
     config.connection.rate_limit_per_minute = 600;
+    // Slack's throttle is not under test here; the default distribution allows
+    // one history or replies request a minute.
+    config.connection.app_distribution =
+        slack_cli::config::SlackAppDistribution::MarketplaceOrInternal;
     config.retry.initial_delay_ms = 1;
     config.retry.max_delay_ms = 10;
 
@@ -366,6 +370,51 @@ async fn history_surfaces_next_cursor() {
 }
 
 #[tokio::test]
+async fn a_truncated_thread_reports_the_cursor_to_its_next_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.replies"))
+        .and(query_param("cursor", "page-2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "messages": [{"ts": "1700000000.000300", "user": "U789", "text": "latest"}],
+            "response_metadata": {"next_cursor": ""},
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.replies"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "messages": [
+                {"ts": "1700000000.000100", "user": "U123", "text": "parent"},
+                {"ts": "1700000000.000200", "user": "U456", "text": "reply"}
+            ],
+            "response_metadata": {"next_cursor": "page-2"},
+        })))
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let (first, cursor) = client
+        .messages
+        .replies("C123", "1700000000.000100", 2, None)
+        .await
+        .unwrap();
+    assert_eq!(first.len(), 2);
+    assert_eq!(cursor.as_deref(), Some("page-2"));
+
+    let (rest, cursor) = client
+        .messages
+        .replies("C123", "1700000000.000100", 2, cursor.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(rest[0].text, "latest");
+    assert_eq!(cursor, None);
+}
+
+#[tokio::test]
 async fn api_error_surfaces_slack_error_code_as_typed_error() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -413,12 +462,13 @@ async fn replies_always_requests_include_all_metadata() {
         .await;
 
     let (client, _store) = test_client(&server).await;
-    let messages = client
+    let (messages, next_cursor) = client
         .messages
         .replies("C123", "1700000000.000100", 50, None)
         .await
         .unwrap();
     assert_eq!(messages.len(), 2);
+    assert_eq!(next_cursor, None);
 }
 
 #[tokio::test]

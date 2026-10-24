@@ -273,7 +273,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
 
             let fields = merge_fields(&config.output.messages_fields, expand.as_deref());
-            format::print_history(
+            format::print_message_page(
                 &messages,
                 next_cursor.as_deref(),
                 cli.json,
@@ -286,16 +286,26 @@ async fn run(cli: Cli) -> Result<()> {
             channel,
             ts,
             limit,
+            cursor,
             exclude_bots,
             expand,
         } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
-            let mut messages = slack.messages.replies(&id, &ts, limit, None).await?;
+            let (mut messages, next_cursor) = slack
+                .messages
+                .replies(&id, &ts, limit, cursor.as_deref())
+                .await?;
             if exclude_bots {
                 messages.retain(|m| m.bot_id.is_none());
             }
             let fields = merge_fields(&config.output.messages_fields, expand.as_deref());
-            format::print_messages(&messages, cli.json, &fields, Some(&cache));
+            format::print_message_page(
+                &messages,
+                next_cursor.as_deref(),
+                cli.json,
+                &fields,
+                Some(&cache),
+            );
         }
 
         Command::Members { channel } => {

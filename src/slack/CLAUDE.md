@@ -93,8 +93,8 @@ Pagination follows the operation:
 
 | Shape | Used by | Caller responsibility |
 |---|---|---|
-| Returns `(Vec<T>, Option<cursor>)` | `messages.history` | Caller decides whether to follow cursor |
-| Loops internally to a user `limit` | `search.context`, `messages.replies` | Caller passes a total cap; method owns the loop |
+| Returns `(Vec<T>, Option<cursor>)` | `messages.history`, `messages.replies` | Caller decides whether to follow cursor |
+| Loops internally to a user `limit` | `search.context`, `messages.replies_with_completion` (event recovery) | Caller passes a total cap; method owns the loop |
 | Fetches every page | `users.list`, `channels.list`, `channels.members` | Directory lists populate complete cache snapshots; members returns the complete member list |
 
 Each internally-looping method defines its own `PAGE_SIZE` constant matching the Slack API's per-method max. Don't unify them — different endpoints cap differently (search=20, replies=1000, users/channels=200).

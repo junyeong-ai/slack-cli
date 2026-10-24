@@ -161,6 +161,8 @@ pub enum Command {
         ts: String,
         #[arg(long, default_value = "15")]
         limit: usize,
+        #[arg(long)]
+        cursor: Option<String>,
         #[arg(long, help = "Exclude bot-authored replies")]
         exclude_bots: bool,
         #[arg(
