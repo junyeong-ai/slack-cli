@@ -686,7 +686,44 @@ async fn upload_sends_bytes_without_the_token_and_shares_into_the_thread() {
         .find(|request| request.url.path() == "/upload/F01")
         .unwrap();
     assert_eq!(upload.body, b"hello");
+    assert_eq!(upload.headers.get("content-length").unwrap(), "5");
     assert!(upload.headers.get("authorization").is_none());
+}
+
+#[tokio::test]
+async fn upload_checks_the_file_and_target_before_reserving() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/conversations.list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "channels": [],
+            "response_metadata": {"next_cursor": ""},
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(path("/files.getUploadURLExternal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let (client, store) = test_client(&server).await;
+    let err = client
+        .files
+        .upload("C123", store.path(), UploadOptions::default())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not a regular file"), "{err}");
+
+    let report = store.path().join("report.md");
+    std::fs::write(&report, "hello").unwrap();
+    let err = client
+        .files
+        .upload("U0000ALICE", &report, UploadOptions::default())
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("No existing DM"), "{err}");
 }
 
 #[tokio::test]

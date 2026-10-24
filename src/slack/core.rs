@@ -153,6 +153,19 @@ impl SlackCore {
             .await
     }
 
+    /// The conversation `method` would act on for `target`: a user ID becomes
+    /// that user's existing DM with the token the method selects, and any
+    /// other target is returned unchanged. For a caller that must know the
+    /// conversation before it commits to other work.
+    pub(crate) async fn conversation_for(&self, method: &str, target: &str) -> Result<String> {
+        if !super::is_user_id(target) {
+            return Ok(target.to_owned());
+        }
+        let config = lookup_config(method)?;
+        let (token, kind) = self.auth.token_for(config.token_policy).await?;
+        self.dm_for(target, token.expose_secret(), kind).await
+    }
+
     async fn dm_for(&self, user: &str, token: &str, kind: TokenKind) -> Result<String> {
         let config = lookup_config("conversations.list")?;
         let mut cursor = None;
@@ -196,10 +209,16 @@ impl SlackCore {
     /// Sends file bytes to the URL `files.getUploadURLExternal` issued. That
     /// URL authorizes the upload itself, so no token is attached, and like
     /// every write it is not replayed after an unknown outcome.
-    pub(crate) async fn send_upload(&self, url: &str, content: reqwest::Body) -> Result<()> {
+    pub(crate) async fn send_upload(
+        &self,
+        url: &str,
+        content: reqwest::Body,
+        length: u64,
+    ) -> Result<()> {
         let response = self
             .http
             .post(url)
+            .header(reqwest::header::CONTENT_LENGTH, length)
             .body(content)
             .send()
             .await

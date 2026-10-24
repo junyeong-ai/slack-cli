@@ -33,8 +33,10 @@ impl SlackFileClient {
     }
 
     /// Slack's external upload: reserve an upload URL, stream the file there,
-    /// then complete the upload into `channel`. A reservation that is never
-    /// completed is discarded by Slack, so a failure leaves nothing behind.
+    /// then complete the upload into `channel`. The target and the file are
+    /// checked before anything is reserved, the byte count is the reserved
+    /// length, and a reservation that is never completed is discarded by
+    /// Slack, so a failure leaves nothing behind.
     pub async fn upload(
         &self,
         channel: &str,
@@ -48,11 +50,18 @@ impl SlackFileClient {
         let file = tokio::fs::File::open(path)
             .await
             .with_context(|| format!("failed to open {}", path.display()))?;
-        let length = file
+        let metadata = file
             .metadata()
             .await
-            .with_context(|| format!("failed to read {}", path.display()))?
-            .len();
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        if !metadata.is_file() {
+            anyhow::bail!("{} is not a regular file", path.display());
+        }
+        let length = metadata.len();
+        let channel = self
+            .core
+            .conversation_for("files.completeUploadExternal", channel)
+            .await?;
 
         let mut reservation = json!({ "filename": filename, "length": length });
         if let Some(alt_txt) = options.alt_txt {
@@ -69,7 +78,9 @@ impl SlackFileClient {
             .as_str()
             .context("Missing file_id in files.getUploadURLExternal response")?;
 
-        self.core.send_upload(upload_url, file.into()).await?;
+        self.core
+            .send_upload(upload_url, file.into(), length)
+            .await?;
 
         let mut shared = json!({ "id": file_id });
         if let Some(title) = options.title {
@@ -87,7 +98,7 @@ impl SlackFileClient {
         }
         let mut response = self
             .core
-            .api_call_in_conversation("files.completeUploadExternal", completion, "channel_id")
+            .api_call("files.completeUploadExternal", completion)
             .await?;
         let files = response
             .get_mut("files")
