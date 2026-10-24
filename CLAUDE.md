@@ -51,8 +51,7 @@ RUST_LOG=debug cargo run -- users "john"
 
 - **Database work leaves the async runtime.** Use `SqliteCache::execute`, `EventState::execute` or `EventRuntime::execute` for synchronous database operations from async code. Keep pool connections and transactions inside the blocking operation; never carry them across an await. Event preparation and commit remain separate from asynchronous sink delivery.
 
-The remaining CI checks are the MSRV check in `.github/workflows/test.yml`,
-`cargo deny --all-features --locked check`, `actionlint`,
+The remaining CI checks are `cargo check` at the `rust-version` declared in
+`Cargo.toml`, `cargo deny --all-features --locked check`, `actionlint`,
 `bash -n scripts/install.sh scripts/uninstall.sh` and
-`shellcheck scripts/install.sh scripts/uninstall.sh`. The MSRV is declared in
-`Cargo.toml`; keep this check aligned with `.github/workflows/test.yml`.
+`shellcheck scripts/install.sh scripts/uninstall.sh`.
