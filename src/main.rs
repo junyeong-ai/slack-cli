@@ -724,12 +724,15 @@ async fn resolve_channel(
         .execute(move |cache| cache.search_channels(&query, 2))
         .await?;
 
+    let mut fetched_now = None;
     if channels.is_empty() {
-        ensure_channels_cache(slack, cache, json).await?;
-        let query = name.to_owned();
-        channels = cache
-            .execute(move |cache| cache.search_channels(&query, 2))
-            .await?;
+        fetched_now = ensure_channels_cache(slack, cache, json).await?;
+        if fetched_now.is_some() {
+            let query = name.to_owned();
+            channels = cache
+                .execute(move |cache| cache.search_channels(&query, 2))
+                .await?;
+        }
     }
 
     let name_matches: Vec<&slack::SlackChannel> = channels
@@ -743,14 +746,36 @@ async fn resolve_channel(
 
     match name_matches.as_slice() {
         [channel] => Ok(channel.id.clone()),
-        [] => anyhow::bail!(
-            "Channel not found in the local cache: {}. Use an exact channel name or a channel ID; \
-             a channel created since the last refresh needs `slack-cli cache refresh channels` first.",
-            input
-        ),
+        [] => Err(channel_not_found(input, fetched_now.as_deref())),
         _ => anyhow::bail!(
             "Channel name is ambiguous: {}. Use a channel ID from `slack-cli channels`.",
             input
+        ),
+    }
+}
+
+/// What to do about a name the directory does not hold. A directory fetched
+/// during this command is current, so refreshing it again cannot help; what
+/// it lacks is what the token may not list.
+fn channel_not_found(input: &str, fetched_now: Option<&[ConversationType]>) -> anyhow::Error {
+    match fetched_now {
+        Some([]) => anyhow::anyhow!(
+            "Channel not found: {input}. The channel list was fetched just now; \
+             use an exact channel name or a channel ID."
+        ),
+        Some(unreadable) => anyhow::anyhow!(
+            "Channel not found: {input}. The channel list was fetched just now without {}; \
+             use an exact channel name or a channel ID.",
+            unreadable
+                .iter()
+                .map(|kind| unreadable_note(*kind))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        None => anyhow::anyhow!(
+            "Channel not found in the local cache: {input}. Use an exact channel name or a \
+             channel ID; `slack-cli cache refresh channels` fetches channels created since the \
+             last refresh and reports conversation types this token may not list."
         ),
     }
 }
@@ -773,32 +798,39 @@ async fn ensure_users_cache(
     Ok(())
 }
 
+/// Fetches the channel directory when no snapshot exists, returning the
+/// conversation types Slack refused; `None` when a snapshot was already there.
 async fn ensure_channels_cache(
     slack: &slack::SlackClient,
     cache: &cache::SqliteCache,
     json: bool,
-) -> Result<()> {
-    if !cache.execute(|cache| cache.has_channels_snapshot()).await? {
-        if !json {
-            eprint!("Fetching channels... ");
-        }
-        let directory = slack.channels.list().await?;
-        cache.save_channels(directory.channels).await?;
-        if !json {
-            eprintln!("done");
-            report_unreadable(&directory.unreadable);
-        }
+) -> Result<Option<Vec<ConversationType>>> {
+    if cache.execute(|cache| cache.has_channels_snapshot()).await? {
+        return Ok(None);
     }
-    Ok(())
+    if !json {
+        eprint!("Fetching channels... ");
+    }
+    let directory = slack.channels.list().await?;
+    cache.save_channels(directory.channels).await?;
+    if !json {
+        eprintln!("done");
+        report_unreadable(&directory.unreadable);
+    }
+    Ok(Some(directory.unreadable))
+}
+
+fn unreadable_note(kind: ConversationType) -> String {
+    format!(
+        "{} conversations (the token lacks {})",
+        kind.as_api_str(),
+        kind.read_scope()
+    )
 }
 
 fn report_unreadable(unreadable: &[ConversationType]) {
     for kind in unreadable {
-        eprintln!(
-            "Skipped {} conversations: the token lacks {}",
-            kind.as_api_str(),
-            kind.read_scope()
-        );
+        eprintln!("Skipped {}", unreadable_note(*kind));
     }
 }
 

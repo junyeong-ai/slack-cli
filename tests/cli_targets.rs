@@ -93,6 +93,21 @@ async fn a_token_without_private_channel_access_still_targets_public_channels() 
         .mount(&server)
         .await;
 
+    let fresh = tempfile::tempdir().unwrap();
+    let missing = command(fresh.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .args(["send", "#private-team", "--text", "hello"])
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1), "{missing:?}");
+    let error: serde_json::Value = serde_json::from_slice(&missing.stderr).unwrap();
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("fetched just now") && message.contains("groups:read"),
+        "{message}"
+    );
+
     let sent = command(dir.path(), &server)
         .env("SLACK_USER_TOKEN", "xoxp-test")
         .args(["send", "#general", "--text", "hello"])
