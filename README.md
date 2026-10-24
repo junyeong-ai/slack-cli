@@ -184,7 +184,7 @@ slack-cli auth login --method pkce --client-id <client-id>
 SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 
-`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`(`--port`로 변경)에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 포트는 앱에 등록한 Redirect URL과 정확히 같아야 합니다. 터미널에서 실행할 때만 브라우저를 열고, 그 외(스크립트·CI)에는 URL을 출력합니다 — `--no-browser`로 항상 출력하게 할 수 있습니다. 스크립트에서는 방식을 고를 수 없으므로 `--method pkce`를 지정하세요. 사전 준비:
+`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`(`--port`로 변경)에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 포트는 앱에 등록한 Redirect URL과 정확히 같아야 합니다. 터미널에서 실행할 때만 브라우저를 열고, 그 외(스크립트·CI)에는 URL을 출력합니다 — `--no-browser`로 항상 출력하게 할 수 있습니다. 터미널에서는 PKCE가 기본이고, 그 밖에서는 `--method pkce`를 지정해야 합니다. 사전 준비:
 
 1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성
 2. **OAuth & Permissions** → User Token Scopes에 아래 항목 추가
@@ -300,8 +300,8 @@ ttl_channels_hours = 168
 refresh_threshold_percent = 10 # TTL의 10% 시점부터 stale 경고
 channel_types = ["public_channel", "private_channel"]
                                # 캐시할 conversation 타입. 토큰이 목록을 볼 수 없는
-                               # 타입(예: groups:read 없는 private_channel)은 건너뜁니다. `cache refresh`와
-                               # 그 타입의 이름을 찾지 못한 오류가 건너뛴 타입을 알립니다.
+                               # 타입(예: groups:read 없는 private_channel)은 건너뛰고,
+                               # `cache refresh`가 건너뛴 타입을 알립니다.
                                # 허용 값: public_channel, private_channel, mpim, im
 # data_path = "~/other/place"   # 캐시 위치 (기본: 설정 디렉터리의 cache/)
 
@@ -383,7 +383,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `NO_COLOR` | 비어 있지 않으면 로그에 색을 쓰지 않음. 색은 stderr가 터미널일 때만 쓰입니다 |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | (Linux) 시스템 대신 신뢰할 CA 인증서 파일과 디렉터리. 인증서를 하나도 읽지 못하면 경고를 남기고 내장 Mozilla 루트 인증서를 신뢰 |
 
-작업 디렉터리에 `.env` 파일이 있으면 위 변수들을 거기서 읽습니다.
+작업 디렉터리의 `.env` 파일, 거기에 없으면 가장 가까운 상위 디렉터리의 `.env` 파일에서 환경에 설정되지 않은 위 변수들을 읽습니다.
 
 Slack, OAuth, 릴리스 다운로드, Socket Mode를 포함한 모든 연결은 운영체제의 인증서 저장소를 신뢰합니다. 사내 프록시의 루트 인증서처럼 시스템에 설치한 인증서가 모든 연결에 똑같이 적용됩니다. 최소 컨테이너처럼 CA 인증서가 하나도 없는 Linux 시스템에서는 바이너리에 내장된 Mozilla 루트 인증서를 신뢰합니다.
 
@@ -593,12 +593,14 @@ stdout 싱크가 시간 초과되거나 쓰기에 실패하면 해당 프로세�
 
 ```bash
 set -euo pipefail
+# 사람이 쓴 메시지(일반, 파일 첨부, 채널에도 보낸 스레드 답글)에만 답합니다.
+# 수정·삭제·반응·채널 알림 이벤트도 규칙에 걸립니다.
+written='.kind == "message" and ((.subtype // "") | IN("", "file_share", "thread_broadcast", "me_message"))'
 batch=$(slack-cli events pull --consumer agent --limit 20 --json)
 while IFS= read -r event; do
     [ -n "$event" ] || continue
     seq=$(jq -er '.seq' <<<"$event")
-    # 반응·수정·삭제 이벤트도 규칙에 걸리지만 답장하지 않습니다.
-    if jq -e '.kind == "message" and .subtype == null' <<<"$event" >/dev/null; then
+    if jq -e "$written" <<<"$event" >/dev/null; then
         ts=$(jq -er '.thread_ts // .ts' <<<"$event")
         ch=$(jq -er '.channel' <<<"$event")
         id=$(jq -er '.id' <<<"$event")

@@ -135,6 +135,11 @@ slack-cli auth scopes --json
 3. Page `thread <channel> <ts> --json` the same way for the messages whose `reply_count` matters.
 4. Sort what you collected by `ts` before summarizing, and cite with `permalink`.
 
+Under the default `app_distribution = "commercial_external"`, Slack serves
+`messages` and `thread` 15 messages a call and one call a minute, so a long
+history costs minutes. Narrow it with `--oldest`/`--latest`, or find the
+messages with `search` first; exit `4` means wait before the next call.
+
 ## JSON sources for `--blocks`, `--attachments`, `--metadata`
 
 All three flags share one input vocabulary:
@@ -251,13 +256,17 @@ to the configured age and size limits.
 read it with `jq -c .` or a `while read` loop, never `jq '.[]'`.
 
 Each line is `{schema: "slack-cli.event/1", id, seq, kind, source, channel, ts,
-thread_ts, user, subtype, text, reaction, matched: [rule names], received_at, …}`.
-`kind` is `message` / `reaction_added` / `reaction_removed`; a reaction carries
-`reaction` and `item_user`, and `subtype` marks an edit (`message_changed`) or a
-deletion (`message_deleted`). `source` is `socket` (live) or `backfill` (read
-back after a disconnect). `text` is absent unless the installation sets
-`events.store_body = true`; fetch the conversation with
-`slack-cli thread <channel> <thread_ts // ts>` when you need it.
+thread_ts, user, subtype, text, reaction, matched: [rule names], received_at,
+…}`. `kind` is `message` / `reaction_added` / `reaction_removed`; a reaction
+carries `reaction` and `item_user`. `subtype` is Slack's own: absent for a plain
+message; `file_share`, `thread_broadcast` and `me_message` for one a person
+posted with a file, sent from a thread to the channel, or wrote with `/me`;
+`message_changed` and `message_deleted` for an edit and a deletion;
+`bot_message` for an integration's post; and a notice such as `channel_join`
+otherwise. `source` is
+`socket` (live) or `backfill` (read back after a disconnect). `text` is absent
+unless the installation sets `events.store_body = true`; fetch the conversation
+with `slack-cli thread <channel> <thread_ts // ts>` when you need it.
 
 Events can be delivered again after a restart, so deduplicate on `id`. Pull
 without `--ack` and acknowledge with `events ack --through <seq>` once the work
@@ -270,12 +279,14 @@ and carry the event id so a repeat is visible:
 
 ```bash
 set -euo pipefail
+# What someone wrote: plain, with a file, or a thread reply also sent to the
+# channel. Edits, deletions, reactions and channel notices match rules too.
+written='.kind == "message" and ((.subtype // "") | IN("", "file_share", "thread_broadcast", "me_message"))'
 batch=$(slack-cli events pull --consumer assistant --limit 20 --json)
 while IFS= read -r event; do
     [ -n "$event" ] || continue
     seq=$(jq -er '.seq' <<<"$event")
-    # Reactions, edits and deletions match rules too; they get no reply.
-    if jq -e '.kind == "message" and .subtype == null' <<<"$event" >/dev/null; then
+    if jq -e "$written" <<<"$event" >/dev/null; then
         ts=$(jq -er '.thread_ts // .ts' <<<"$event")
         ch=$(jq -er '.channel' <<<"$event")
         id=$(jq -er '.id' <<<"$event")
@@ -291,17 +302,19 @@ done <<<"$batch"
 `events.mode = "stream"`, the daemon is streaming to a sink instead and there
 is nothing to pull — report that rather than retrying.
 
-> Writes use the profile's bot token when it holds one, otherwise the user
-> token; reads prefer the user token, and `search` requires it (`auth status
-> --json` → `tokens` shows which are held). A message sent with a user token
-> goes out **under the user's own name**, with no bot badge. Do not send on
-> someone's behalf unless they asked for exactly that; show a draft in the
-> current conversation when sending has not been requested.
+> A command uses the profile's bot token when it holds one, otherwise the user
+> token, except that conversation reads (`messages`, `thread`, `members`, the
+> channel directory) prefer the user token and `search` requires it (`auth
+> status --json` → `tokens` shows which are held). A read made with the bot
+> token can be refused in a conversation the bot cannot see. A message sent with
+> a user token goes out **under the user's own name**, with no bot badge. Do not
+> send on someone's behalf unless they asked for exactly that; show a draft in
+> the current conversation when sending has not been requested.
 
 ## Multi-workspace
 
-`SLACK_USER_TOKEN` and `SLACK_BOT_TOKEN` override the profile's credentials, even with `--profile`; unset both before selecting a profile. A `.env` file in the working directory is loaded first, so one that sets them takes over without a word. `SLACK_APP_TOKEN` is independent and can accompany a profile.
+`SLACK_USER_TOKEN` and `SLACK_BOT_TOKEN` override the profile's credentials, even with `--profile`; unset both before selecting a profile. A `.env` file in the working directory, or the nearest parent directory that has one, fills in whatever the environment does not set, so one that sets them takes over without a word. `SLACK_APP_TOKEN` is independent and can accompany a profile.
 
-`slack-cli --profile <name> <command>` (or `SLACK_PROFILE`) selects a profile for one command when no environment user/bot tokens are set. The flag is global and position-independent.
+`slack-cli <command> … --profile <name>` selects a profile for one command when no environment user/bot tokens are set; `SLACK_PROFILE` does the same for every command. Put the flag after the command: the pre-approved patterns start with `slack-cli <command>`, so `slack-cli --profile <name> <command>` asks for permission every time.
 
 Event stores belong to an API endpoint, profile, workspace and user: keep the same profile for the daemon and its consumers.

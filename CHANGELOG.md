@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - In `--json` mode every stderr line is a JSON object: log records with `level` and `fields`, `auth login`'s `{"authorize_url", "browser_opened"}`, and on a runtime failure the error envelope as the last line. A rate-limit or token-renewal warning used to arrive as colored text ahead of the envelope.
 - Progress messages such as `Fetching users...` are whole lines, so a warning logged during the fetch no longer lands in the middle of one.
-- The bundled `slack-workspace` skill pre-approves only reading commands. Sending, editing, deleting, scheduling, uploading and other writes now go through Claude Code's permission prompt.
+- The bundled `slack-workspace` skill pre-approves only commands that change nothing in Slack. Sending, editing, deleting, scheduling, uploading and other writes now go through Claude Code's permission prompt.
 
 ### Fixed
 

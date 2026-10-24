@@ -184,7 +184,7 @@ slack-cli auth login --method pkce --client-id <client-id>
 SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 
-`auth login` briefly binds a callback server on `127.0.0.1:53682` (`--port` to change it), opens the Slack authorization page in your browser, and exchanges the code for a user token. The port has to match the Redirect URL registered on the app exactly. The browser opens only when the command is run from a terminal; anywhere else — a script, CI — the URL is printed instead, which `--no-browser` also forces. A script cannot be asked which method to use, so pass `--method pkce`. One-time setup:
+`auth login` briefly binds a callback server on `127.0.0.1:53682` (`--port` to change it), opens the Slack authorization page in your browser, and exchanges the code for a user token. The port has to match the Redirect URL registered on the app exactly. The browser opens only when the command is run from a terminal; anywhere else — a script, CI — the URL is printed instead, which `--no-browser` also forces. PKCE is the default at a terminal; anywhere else, pass `--method pkce`. One-time setup:
 
 1. Create an app at [api.slack.com/apps](https://api.slack.com/apps)
 2. **OAuth & Permissions** → add the User Token Scopes below
@@ -311,8 +311,8 @@ ttl_channels_hours = 168
 refresh_threshold_percent = 10 # Warn as stale after 10% of TTL
 channel_types = ["public_channel", "private_channel"]
                                # Conversation types to cache. A type the token may not list
-                               # (e.g. private_channel without groups:read) is skipped; `cache refresh`
-                               # and the error for a name of that type report it.
+                               # (e.g. private_channel without groups:read) is skipped, and
+                               # `cache refresh` reports it.
                                # Allowed: public_channel, private_channel, mpim, im
 # data_path = "~/other/place"   # where the cache lives (default: cache/ under the config dir)
 
@@ -393,7 +393,7 @@ A command that needs an excluded scope is refused by Slack, and the CLI names th
 | `NO_COLOR` | When non-empty, logs carry no color. Color is used only when stderr is a terminal |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | (Linux) CA certificate file and directories to trust instead of the system's; if no certificate can be read from them, the bundled Mozilla roots are trusted with a warning |
 
-A `.env` file in the working directory supplies any of the above.
+A `.env` file in the working directory, or else the nearest parent directory that has one, supplies any of the above the environment does not set.
 
 Every connection, including Slack, OAuth, release downloads and Socket Mode, trusts the operating system's certificate store, so a root installed there, such as a corporate proxy's, applies to all of them. A Linux system with no CA certificates at all, such as a minimal container, trusts the Mozilla roots built into the binary.
 
@@ -603,12 +603,14 @@ Replying needs no new protocol — it is the CLI you already have:
 
 ```bash
 set -euo pipefail
+# What someone wrote: plain, with a file, or a thread reply also sent to the
+# channel. Edits, deletions, reactions and channel notices match rules too.
+written='.kind == "message" and ((.subtype // "") | IN("", "file_share", "thread_broadcast", "me_message"))'
 batch=$(slack-cli events pull --consumer agent --limit 20 --json)
 while IFS= read -r event; do
     [ -n "$event" ] || continue
     seq=$(jq -er '.seq' <<<"$event")
-    # Reactions, edits and deletions match rules too; they get no reply.
-    if jq -e '.kind == "message" and .subtype == null' <<<"$event" >/dev/null; then
+    if jq -e "$written" <<<"$event" >/dev/null; then
         ts=$(jq -er '.thread_ts // .ts' <<<"$event")
         ch=$(jq -er '.channel' <<<"$event")
         id=$(jq -er '.id' <<<"$event")

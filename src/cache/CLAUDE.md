@@ -13,9 +13,9 @@ Phase 2: FTS5 phrase MATCH          only if Phase 1 returned nothing
 
 LIKE searches substrings and ranks exact names first. FTS5 searches a quoted phrase only when LIKE returns no rows; it does not perform typo correction or approximate matching.
 
-## FTS5 query sanitization (mandatory)
+## FTS5 query sanitization
 
-Any user-supplied query MUST pass through `helpers::process_fts_query` before reaching `MATCH`. The helper:
+Every user-supplied query passes through `helpers::process_fts_query` before reaching `MATCH`: FTS5 reads `MATCH` input as query syntax, so raw input becomes operators, column filters or a syntax error. The helper:
 - trims surrounding whitespace and removes `*` and `%`
 - doubles embedded double quotes and wraps the remaining input as a literal phrase
 - returns an empty string when nothing remains after trimming and wildcard removal
