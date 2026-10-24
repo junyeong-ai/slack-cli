@@ -175,7 +175,8 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, files, metadata`, plus `--expand`. Fields a message lacks are omitted. `files` lists `{id, name, title, mimetype, size, mode, permalink}` per shared file; a message that only shares a file has empty `text`, and `mode: "tombstone"` marks a deleted one.
 - `thread --json` → the same envelope, oldest first; the first page leads with the parent. A non-null `next_cursor` means the thread continues — follow it before summarizing.
 - `send --json`, `update --json`, `delete --json` → `{channel, ts}`.
-- `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `unschedule`, `cache refresh` with `--json` → `{ok: true}`.
+- `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `unschedule` with `--json` → `{ok: true}`.
+- `cache refresh --json` → `{ok: true, unreadable: [{type, scope}]}`. Each listed conversation type was skipped because the token lacks `scope`; names of that type cannot resolve.
 - `schedule --json` → `{channel, scheduled_message_id, post_at}`. `scheduled --json` → array of `{id, channel_id, post_at, date_created, text}`.
 - `permalink --json` → `{permalink}`. Non-JSON output is the URL alone.
 - `reactions --json` → `{channel, ts, reactions: [{name, count, users}]}`.

@@ -11,7 +11,7 @@ use slack_cli::{
     config, format,
     paths::AppPaths,
     slack,
-    slack::{MessageMetadata, MessagePayload, SlackApiError},
+    slack::{ConversationType, MessageMetadata, MessagePayload, SlackApiError},
     update,
 };
 use std::io::Read;
@@ -739,13 +739,24 @@ async fn ensure_channels_cache(
         if !json {
             eprint!("Fetching channels... ");
         }
-        let channels = slack.channels.list().await?;
-        cache.save_channels(channels).await?;
+        let directory = slack.channels.list().await?;
+        cache.save_channels(directory.channels).await?;
         if !json {
             eprintln!("done");
+            report_unreadable(&directory.unreadable);
         }
     }
     Ok(())
+}
+
+fn report_unreadable(unreadable: &[ConversationType]) {
+    for kind in unreadable {
+        eprintln!(
+            "Skipped {} conversations: the token lacks {}",
+            kind.as_api_str(),
+            kind.read_scope()
+        );
+    }
 }
 
 fn parse_unix_seconds(input: &str) -> Result<i64> {
@@ -908,22 +919,31 @@ async fn refresh_cache(
         _ => {}
     }
 
+    let mut unreadable = Vec::new();
     match target {
         RefreshTarget::Channels | RefreshTarget::All => {
             if !json {
                 eprint!("Fetching channels... ");
             }
-            let channels = slack.channels.list().await?;
-            cache.save_channels(channels).await?;
+            let directory = slack.channels.list().await?;
+            cache.save_channels(directory.channels).await?;
+            unreadable = directory.unreadable;
             if !json {
                 eprintln!("✓");
+                report_unreadable(&unreadable);
             }
         }
         _ => {}
     }
 
     if json {
-        format::print_json(&serde_json::json!({ "ok": true }));
+        let unreadable: Vec<Value> = unreadable
+            .iter()
+            .map(
+                |kind| serde_json::json!({ "type": kind.as_api_str(), "scope": kind.read_scope() }),
+            )
+            .collect();
+        format::print_json(&serde_json::json!({ "ok": true, "unreadable": unreadable }));
     } else {
         println!("✓ Cache refreshed");
     }

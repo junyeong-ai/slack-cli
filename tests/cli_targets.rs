@@ -1,5 +1,5 @@
 use serde_json::json;
-use wiremock::matchers::{header, path};
+use wiremock::matchers::{header, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn command(dir: &std::path::Path, server: &MockServer) -> tokio::process::Command {
@@ -63,6 +63,78 @@ async fn invalid_date_filters_fail_before_any_slack_request() {
         );
     }
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_token_without_private_channel_access_still_targets_public_channels() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    Mock::given(path("/conversations.list"))
+        .and(query_param("types", "private_channel"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": false, "error": "missing_scope", "needed": "groups:read"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(path("/conversations.list"))
+        .and(query_param("types", "public_channel"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "channels": [{"id": "C00000001", "name": "general", "is_channel": true}],
+            "response_metadata": {"next_cursor": ""}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(path("/chat.postMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true, "channel": "C00000001", "ts": "1792200000.000001"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sent = command(dir.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .args(["send", "#general", "--text", "hello"])
+        .output()
+        .await
+        .unwrap();
+    assert!(sent.status.success(), "{sent:?}");
+
+    let refreshed = command(dir.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .args(["cache", "refresh", "channels"])
+        .output()
+        .await
+        .unwrap();
+    assert!(refreshed.status.success(), "{refreshed:?}");
+    let report: serde_json::Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    assert_eq!(
+        report["unreadable"],
+        json!([{"type": "private_channel", "scope": "groups:read"}])
+    );
+}
+
+#[tokio::test]
+async fn a_token_that_may_list_no_channel_type_reports_the_refusal() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    Mock::given(path("/conversations.list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": false, "error": "missing_scope"
+        })))
+        .mount(&server)
+        .await;
+
+    let output = command(dir.path(), &server)
+        .env("SLACK_USER_TOKEN", "xoxp-test")
+        .args(["send", "#general", "--text", "hello"])
+        .output()
+        .await
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"]["code"], "missing_scope");
 }
 
 #[tokio::test]
@@ -208,23 +280,26 @@ async fn static_login_validates_secondary_tokens_before_changing_the_store() {
 async fn empty_snapshots_replace_stale_rows_and_are_reused_without_refetching() {
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().unwrap();
-    for (endpoint, key, rows) in [
+    // One channel request per default conversation type (public, private).
+    for (endpoint, key, rows, requests) in [
         (
             "/conversations.list",
             "channels",
             json!([{"id":"C00000001","name":"removed","is_channel":true}]),
+            2,
         ),
         (
             "/users.list",
             "members",
             json!([{"id":"U00000001","name":"removed","is_bot":false}]),
+            1,
         ),
     ] {
         Mock::given(path(endpoint))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "ok":true,key:rows,"response_metadata":{"next_cursor":""}
             })))
-            .expect(1)
+            .expect(requests)
             .mount(&server)
             .await;
     }
@@ -237,15 +312,15 @@ async fn empty_snapshots_replace_stale_rows_and_are_reused_without_refetching() 
     assert!(initial.status.success(), "{initial:?}");
     server.verify().await;
     server.reset().await;
-    for (endpoint, key) in [
-        ("/conversations.list", "channels"),
-        ("/users.list", "members"),
+    for (endpoint, key, requests) in [
+        ("/conversations.list", "channels", 2),
+        ("/users.list", "members", 1),
     ] {
         Mock::given(path(endpoint))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "ok":true,key:[],"response_metadata":{"next_cursor":""}
             })))
-            .expect(1)
+            .expect(requests)
             .mount(&server)
             .await;
     }

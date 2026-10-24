@@ -301,8 +301,8 @@ ttl_users_hours = 168          # 1 week
 ttl_channels_hours = 168
 refresh_threshold_percent = 10 # Warn as stale after 10% of TTL
 channel_types = ["public_channel", "private_channel"]
-                               # Conversation types to cache.
-                               # Trim to match your token scopes (e.g. ["public_channel"] if no groups:read).
+                               # Conversation types to cache. A type the token may not list
+                               # (e.g. private_channel without groups:read) is skipped and reported.
                                # Allowed: public_channel, private_channel, mpim, im
 
 [output]

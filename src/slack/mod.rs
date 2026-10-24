@@ -18,6 +18,7 @@ pub mod users;
 pub use apps::SlackAppsClient;
 pub use auth::SlackAuthIdentity;
 pub use bookmarks::Bookmark;
+pub use channels::ChannelDirectory;
 pub use client::SlackClient;
 pub use emoji::CustomEmoji;
 pub use error::SlackApiError;

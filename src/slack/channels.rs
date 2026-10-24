@@ -1,12 +1,21 @@
 use anyhow::Result;
 use serde_json::json;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::core::SlackCore;
-use crate::slack::SlackChannel;
+use crate::slack::{ConversationType, SlackApiError, SlackChannel};
 
 const PAGE_SIZE: u32 = 200;
 const MEMBERS_PAGE_SIZE: u32 = 1000;
+
+/// The channels of every configured conversation type the token may list, and
+/// the types Slack refused. Each type needs its own scope, so a token without
+/// `groups:read` still resolves public channels by name.
+pub struct ChannelDirectory {
+    pub channels: Vec<SlackChannel>,
+    pub unreadable: Vec<ConversationType>,
+}
 
 pub struct SlackChannelClient {
     pub(crate) core: Arc<SlackCore>,
@@ -17,24 +26,48 @@ impl SlackChannelClient {
         Self { core }
     }
 
-    pub async fn list(&self) -> Result<Vec<SlackChannel>> {
+    /// Lists each configured type on its own. A type refused with
+    /// `missing_scope` is reported instead of failing the others; when every
+    /// type is refused, that refusal is the result.
+    pub async fn list(&self) -> Result<ChannelDirectory> {
+        let types = &self.core.config.cache.channel_types;
+        let mut channels = Vec::new();
+        let mut unreadable = Vec::new();
+        let mut refusal = None;
+
+        for &kind in types {
+            match self.list_kind(kind).await {
+                Ok(mut listed) => channels.append(&mut listed),
+                Err(err) if is_missing_scope(&err) => {
+                    unreadable.push(kind);
+                    refusal.get_or_insert(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        // A conversation converted between types while the lists were read
+        // appears in both; the directory is keyed by ID.
+        let mut seen = HashSet::new();
+        channels.retain(|channel| seen.insert(channel.id.clone()));
+
+        match refusal {
+            Some(err) if unreadable.len() == types.len() => Err(err),
+            _ => Ok(ChannelDirectory {
+                channels,
+                unreadable,
+            }),
+        }
+    }
+
+    async fn list_kind(&self, kind: ConversationType) -> Result<Vec<SlackChannel>> {
         let mut all_channels = Vec::new();
         let mut cursor: Option<String> = None;
-
-        let types = self
-            .core
-            .config
-            .cache
-            .channel_types
-            .iter()
-            .map(|t| t.as_api_str())
-            .collect::<Vec<_>>()
-            .join(",");
 
         loop {
             let mut params = json!({
                 "limit": PAGE_SIZE,
-                "types": types,
+                "types": kind.as_api_str(),
                 "exclude_archived": false,
             });
             if let Some(c) = &cursor {
@@ -119,4 +152,11 @@ impl SlackChannelClient {
 
         Ok(all_members)
     }
+}
+
+fn is_missing_scope(err: &anyhow::Error) -> bool {
+    matches!(
+        err.downcast_ref::<SlackApiError>(),
+        Some(SlackApiError::Api { code, .. }) if code == "missing_scope"
+    )
 }

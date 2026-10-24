@@ -290,8 +290,8 @@ ttl_users_hours = 168          # 1주일
 ttl_channels_hours = 168
 refresh_threshold_percent = 10 # TTL의 10% 시점부터 stale 경고
 channel_types = ["public_channel", "private_channel"]
-                               # 캐시할 conversation 타입.
-                               # 토큰 scope에 맞춰 조정 (public만 있으면 ["public_channel"]).
+                               # 캐시할 conversation 타입. 토큰이 목록을 볼 수 없는
+                               # 타입(예: groups:read 없는 private_channel)은 건너뛰고 알립니다.
                                # 허용 값: public_channel, private_channel, mpim, im
 
 [output]

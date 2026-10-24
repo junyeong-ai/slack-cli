@@ -35,6 +35,16 @@ impl ConversationType {
             Self::Im => "im",
         }
     }
+
+    /// The scope that lets a token list conversations of this type.
+    pub const fn read_scope(self) -> &'static str {
+        match self {
+            Self::PublicChannel => "channels:read",
+            Self::PrivateChannel => "groups:read",
+            Self::Mpim => "mpim:read",
+            Self::Im => "im:read",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
