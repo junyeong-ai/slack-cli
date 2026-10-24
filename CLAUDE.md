@@ -53,5 +53,6 @@ RUST_LOG=debug cargo run -- users "john"
 
 The remaining CI checks are `cargo check` at the `rust-version` declared in
 `Cargo.toml`, `cargo deny --all-features --locked check`, `actionlint`,
+`zizmor .github` (policy in `.github/zizmor.yml`),
 `bash -n scripts/install.sh scripts/uninstall.sh` and
 `shellcheck scripts/install.sh scripts/uninstall.sh`.

@@ -1,0 +1,12 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # slsa-verifier checks the generator's workflow ref, so it must be a tag.
+        slsa-framework/slsa-github-generator/*: ref-pin
+  self-repository:
+    # actionlint rejects the `$/` form; revisit when it accepts it.
+    disable: true
+  dependabot-cooldown:
+    # Updates are adopted as soon as they are published.
+    disable: true
