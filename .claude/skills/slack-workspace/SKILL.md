@@ -1,7 +1,7 @@
 ---
 name: slack-workspace
 metadata:
-  version: "0.19.8"
+  version: "0.20.0"
 description: Searches, reads and posts Slack messages with the slack-cli command — channel history, threads, workspace search, users and channels, reactions, pins, bookmarks, and events collected by its Socket Mode daemon. Use when a task involves Slack, such as finding or summarizing a discussion, replying in a thread, posting a message, looking up a person or channel, or handling mentions.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---

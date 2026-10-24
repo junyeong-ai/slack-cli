@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-10-24
+
+### Added
+
+- `schedule`, `scheduled` and `unschedule` hand a message to Slack to post later, list what this token scheduled, and cancel it. A time must name an instant (Unix seconds or RFC 3339 with an offset), and `--metadata` is refused because Slack never posts a scheduled message that carries it. Uses the existing `chat:write`.
+- `upload <channel> <path>` streams a file through Slack's external upload and shares it in a channel or thread (`--title`, `--comment`, `--thread`, `--alt-text`). Needs `files:write`.
+- `dm <user>[,<user>…]` prints the channel ID of the DM with one user or the group DM with up to eight, opening it with the token `send` uses. Needs `im:write` and `mpim:write`.
+- Messages carry a lean `files` list (`id, name, title, mimetype, size, mode, permalink`) by default, so a message that only shares a file no longer reads as empty text.
+- `thread` takes `--cursor`.
+
+### Changed
+
+- **Breaking:** `thread --json` returns the `{messages, next_cursor}` envelope `messages` uses instead of a bare array. Each call reads one page instead of looping internally, which under the commercial distribution's one-request-a-minute limit took minutes. Slack repeats the parent on every page; later pages now carry replies only.
+- **Breaking:** `--expand` and `config.toml [output].*_fields` accept only the documented field names. An unknown flag value exits `2` with the valid names, and an unknown config entry fails config loading instead of printing nothing; `config path` and `config edit` still run.
+- **Breaking:** `cache refresh --json` reports `{"ok": true, "unreadable": [{type, scope}]}` instead of `{"status": "ok"}`, the shape the other write acknowledgements use, plus the conversation types the token may not list.
+- `--json` writes one line when stdout is piped and indents on a terminal.
+- New scopes: `files:write`, `im:write` and `mpim:write`. Existing tokens keep working, and only `upload` and `dm` need them. Register them on the Slack app before the next `auth login`, or list the ones the app or workspace does not allow in `[auth].exclude_scopes`.
+- Dependencies, GitHub Actions and CI tools are updated to their latest releases. Workflows are audited with zizmor; release builds no longer restore caches, the release is published with the runner's `gh`, and the Codecov upload that never succeeded is removed.
+
+### Fixed
+
+- A token without one conversation type's scope, such as `groups:read`, still resolves channels of the other types: the directory lists each configured type separately and reports the refused ones.
+- A channel name that does not resolve says whether the directory was fetched during the command and which conversation types it lacks, instead of always suggesting a refresh. A name that belongs to an archived channel is answered with that channel's ID.
+- Event recovery reads a subscribed thread's missed replies by `oldest` instead of Slack's cursor, which skips the first reply of every later page once `oldest` is set; long threads lost one reply per page boundary. Slack's repeated parent no longer counts toward the recovery limit.
+- Writing output no longer panics. A reader that exits early, such as `| head`, ends the command with status `0`, and output that cannot be serialized fails the command with an error.
+
 ## [0.19.8] - 2026-10-17
 
 ### Fixed
