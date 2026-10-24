@@ -47,20 +47,26 @@ impl SlackFileClient {
             .file_name()
             .and_then(|name| name.to_str())
             .with_context(|| format!("{} does not name a file", path.display()))?;
-        let file = tokio::fs::File::open(path)
-            .await
-            .with_context(|| format!("failed to open {}", path.display()))?;
-        let metadata = file
-            .metadata()
+        // Checked by path before opening, because opening a FIFO waits for a
+        // writer. The length comes from the open handle, so the reservation
+        // describes the bytes that are sent.
+        let metadata = tokio::fs::metadata(path)
             .await
             .with_context(|| format!("failed to read {}", path.display()))?;
         if !metadata.is_file() {
             anyhow::bail!("{} is not a regular file", path.display());
         }
-        let length = metadata.len();
-        let channel = self
+        let file = tokio::fs::File::open(path)
+            .await
+            .with_context(|| format!("failed to open {}", path.display()))?;
+        let length = file
+            .metadata()
+            .await
+            .with_context(|| format!("failed to read {}", path.display()))?
+            .len();
+        let conversation = self
             .core
-            .conversation_for("files.completeUploadExternal", channel)
+            .conversation("files.completeUploadExternal", channel)
             .await?;
 
         let mut reservation = json!({ "filename": filename, "length": length });
@@ -69,7 +75,7 @@ impl SlackFileClient {
         }
         let reserved = self
             .core
-            .api_call("files.getUploadURLExternal", reservation)
+            .api_call_as(&conversation, "files.getUploadURLExternal", reservation)
             .await?;
         let upload_url = reserved["upload_url"]
             .as_str()
@@ -88,7 +94,7 @@ impl SlackFileClient {
         }
         let mut completion = json!({
             "files": Value::Array(vec![shared]).to_string(),
-            "channel_id": channel,
+            "channel_id": conversation.id,
         });
         if let Some(comment) = options.initial_comment {
             completion["initial_comment"] = json!(comment);
@@ -98,7 +104,7 @@ impl SlackFileClient {
         }
         let mut response = self
             .core
-            .api_call("files.completeUploadExternal", completion)
+            .api_call_as(&conversation, "files.completeUploadExternal", completion)
             .await?;
         let files = response
             .get_mut("files")

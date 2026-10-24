@@ -15,6 +15,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tracing::warn;
 
+use crate::auth::secret::Secret;
 use crate::auth::{Authenticator, TokenKind};
 use crate::config::{Config, SlackAppDistribution};
 use crate::slack::api_config::{
@@ -75,6 +76,15 @@ impl RateGate {
 /// invocation, so callers never observe the difference.
 const HTTP_POOL_MAX_IDLE_PER_HOST: usize = 10;
 const HTTP_POOL_IDLE_TIMEOUT_SECONDS: u64 = 90;
+
+/// A conversation resolved for a method, with the credential that resolved
+/// it. A user ID becomes that user's existing DM for this credential, and
+/// every call made through it with `api_call_as` acts as the same actor.
+pub(crate) struct Conversation {
+    pub(crate) id: String,
+    token: Secret,
+    kind: TokenKind,
+}
 
 pub struct SlackCore {
     pub(crate) config: Config,
@@ -139,31 +149,46 @@ impl SlackCore {
         mut params: Value,
         channel_field: &str,
     ) -> Result<Value> {
-        let config = lookup_config(method)?;
-        let (token, kind) = self.auth.token_for(config.token_policy).await?;
-        if let Some(user) = params
+        let Some(target) = params
             .get(channel_field)
             .and_then(Value::as_str)
-            .filter(|id| super::is_user_id(id))
-        {
-            let channel = self.dm_for(user, token.expose_secret(), kind).await?;
-            params[channel_field] = Value::String(channel);
-        }
-        self.dispatch(method, config, params, token.expose_secret(), Some(kind))
-            .await
+            .map(ToOwned::to_owned)
+        else {
+            return self.api_call(method, params).await;
+        };
+        let conversation = self.conversation(method, &target).await?;
+        params[channel_field] = Value::String(conversation.id.clone());
+        self.api_call_as(&conversation, method, params).await
     }
 
-    /// The conversation `method` would act on for `target`: a user ID becomes
-    /// that user's existing DM with the token the method selects, and any
-    /// other target is returned unchanged. For a caller that must know the
-    /// conversation before it commits to other work.
-    pub(crate) async fn conversation_for(&self, method: &str, target: &str) -> Result<String> {
-        if !super::is_user_id(target) {
-            return Ok(target.to_owned());
-        }
+    /// Resolves `target` with the credential `method` selects.
+    pub(crate) async fn conversation(&self, method: &str, target: &str) -> Result<Conversation> {
         let config = lookup_config(method)?;
         let (token, kind) = self.auth.token_for(config.token_policy).await?;
-        self.dm_for(target, token.expose_secret(), kind).await
+        let id = if super::is_user_id(target) {
+            self.dm_for(target, token.expose_secret(), kind).await?
+        } else {
+            target.to_owned()
+        };
+        Ok(Conversation { id, token, kind })
+    }
+
+    /// Calls `method` with the credential that resolved `conversation`.
+    pub(crate) async fn api_call_as(
+        &self,
+        conversation: &Conversation,
+        method: &str,
+        params: Value,
+    ) -> Result<Value> {
+        let config = lookup_config(method)?;
+        self.dispatch(
+            method,
+            config,
+            params,
+            conversation.token.expose_secret(),
+            Some(conversation.kind),
+        )
+        .await
     }
 
     async fn dm_for(&self, user: &str, token: &str, kind: TokenKind) -> Result<String> {
