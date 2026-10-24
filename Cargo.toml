@@ -64,6 +64,11 @@ tokio = { version = "1.54.1", default-features = false, features = ["test-util"]
 rstest = "0.28.0"
 wiremock = "0.6.5"
 
+[lints.clippy]
+# Command output goes through `outln!` and `format::print_json`, which return
+# a closed or failed stdout as an error where `println!` panics.
+print_stdout = "warn"
+
 [profile.release]
 opt-level = 3
 lto = true

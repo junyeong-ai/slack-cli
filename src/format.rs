@@ -11,7 +11,7 @@ use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 
 /// A field `users` can print. `--expand` and `[output].users_fields` share
 /// this vocabulary, so a misspelled name is refused instead of printing nothing.
@@ -153,27 +153,69 @@ impl MessageField {
     }
 }
 
+/// Why a command's output was not written. `Closed` is the reader leaving
+/// early, as `| head` does once it has what it wants; `main` exits 0 on it
+/// without a message.
+#[derive(Debug, thiserror::Error)]
+pub enum OutputError {
+    #[error("standard output was closed")]
+    Closed,
+    #[error("failed to write to standard output")]
+    Write(#[source] std::io::Error),
+    #[error("failed to serialize output")]
+    Serialize(#[from] serde_json::Error),
+}
+
+impl From<std::io::Error> for OutputError {
+    fn from(err: std::io::Error) -> Self {
+        if err.kind() == std::io::ErrorKind::BrokenPipe {
+            Self::Closed
+        } else {
+            Self::Write(err)
+        }
+    }
+}
+
+/// `println!` for command output, returning an `OutputError` where
+/// `println!` would panic.
+#[macro_export]
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        $crate::format::write_line(::std::format_args!($($arg)*))
+    };
+}
+
+#[doc(hidden)]
+pub fn write_line(line: std::fmt::Arguments<'_>) -> Result<(), OutputError> {
+    writeln!(std::io::stdout().lock(), "{line}")?;
+    Ok(())
+}
+
 /// Writes one JSON document to stdout: indented for a terminal, a single line
 /// for a pipe, which is how a program or an agent reads it.
-pub fn print_json<T: Serialize + ?Sized>(value: &T) {
+pub fn print_json<T: Serialize + ?Sized>(value: &T) -> Result<(), OutputError> {
     let json = if std::io::stdout().is_terminal() {
-        serde_json::to_string_pretty(value)
+        serde_json::to_string_pretty(value)?
     } else {
-        serde_json::to_string(value)
-    }
-    .expect("output values serialize to JSON");
-    println!("{json}");
+        serde_json::to_string(value)?
+    };
+    outln!("{json}")
 }
 
-pub fn print_path(path: &std::path::Path, as_json: bool) {
+pub fn print_path(path: &std::path::Path, as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(&json!({ "path": path.display().to_string() }));
+        print_json(&json!({ "path": path.display().to_string() }))?;
     } else {
-        println!("{}", path.display());
+        outln!("{}", path.display())?;
     }
+    Ok(())
 }
 
-pub fn print_users(users: &[SlackUser], fields: &[UserField], as_json: bool) {
+pub fn print_users(
+    users: &[SlackUser],
+    fields: &[UserField],
+    as_json: bool,
+) -> Result<(), OutputError> {
     if as_json {
         let rows: Vec<Value> = users
             .iter()
@@ -185,19 +227,19 @@ pub fn print_users(users: &[SlackUser], fields: &[UserField], as_json: bool) {
                 Value::Object(row)
             })
             .collect();
-        print_json(&rows);
-        return;
+        return print_json(&rows);
     }
 
     if users.is_empty() {
-        println!("No users found");
-        return;
+        outln!("No users found")?;
+        return Ok(());
     }
 
     for user in users {
         let cells: Vec<String> = fields.iter().map(|&field| user_cell(user, field)).collect();
-        println!("{}", cells.join("\t"));
+        outln!("{}", cells.join("\t"))?;
     }
+    Ok(())
 }
 
 fn user_status(user: &SlackUser) -> Option<String> {
@@ -255,7 +297,11 @@ fn user_cell(user: &SlackUser, field: UserField) -> String {
     }
 }
 
-pub fn print_channels(channels: &[SlackChannel], fields: &[ChannelField], as_json: bool) {
+pub fn print_channels(
+    channels: &[SlackChannel],
+    fields: &[ChannelField],
+    as_json: bool,
+) -> Result<(), OutputError> {
     if as_json {
         let rows: Vec<Value> = channels
             .iter()
@@ -267,13 +313,12 @@ pub fn print_channels(channels: &[SlackChannel], fields: &[ChannelField], as_jso
                 Value::Object(row)
             })
             .collect();
-        print_json(&rows);
-        return;
+        return print_json(&rows);
     }
 
     if channels.is_empty() {
-        println!("No channels found");
-        return;
+        outln!("No channels found")?;
+        return Ok(());
     }
 
     for channel in channels {
@@ -281,8 +326,9 @@ pub fn print_channels(channels: &[SlackChannel], fields: &[ChannelField], as_jso
             .iter()
             .map(|&field| channel_cell(channel, field))
             .collect();
-        println!("{}", cells.join("\t"));
+        outln!("{}", cells.join("\t"))?;
     }
+    Ok(())
 }
 
 fn channel_type(ch: &SlackChannel) -> &'static str {
@@ -357,22 +403,22 @@ pub fn print_message_page(
     as_json: bool,
     fields: &[MessageField],
     cache: Option<&SqliteCache>,
-) {
+) -> Result<(), OutputError> {
     let allowed = field_names(fields);
 
     if as_json {
         let envelope = json!({
-            "messages": project_messages(messages, &allowed, cache),
+            "messages": project_messages(messages, &allowed, cache)?,
             "next_cursor": next_cursor,
         });
-        print_json(&envelope);
-        return;
+        return print_json(&envelope);
     }
 
-    render_messages(messages, &allowed, cache);
+    render_messages(messages, &allowed, cache)?;
     if let Some(cursor) = next_cursor {
         eprintln!("More messages available: rerun with --cursor {}", cursor);
     }
+    Ok(())
 }
 
 fn field_names(fields: &[MessageField]) -> HashSet<&'static str> {
@@ -383,7 +429,7 @@ fn project_messages(
     messages: &[SlackMessage],
     allowed: &HashSet<&str>,
     cache: Option<&SqliteCache>,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, serde_json::Error> {
     messages
         .iter()
         .map(|msg| project_message(msg, allowed, cache))
@@ -394,10 +440,10 @@ fn render_messages(
     messages: &[SlackMessage],
     allowed: &HashSet<&str>,
     cache: Option<&SqliteCache>,
-) {
+) -> Result<(), OutputError> {
     if messages.is_empty() {
-        println!("No messages found");
-        return;
+        outln!("No messages found")?;
+        return Ok(());
     }
 
     let expand_date = allowed.contains(MessageField::Date.as_str());
@@ -427,30 +473,31 @@ fn render_messages(
             msg.ts.clone()
         };
 
-        println!("[{}] {}: {}", ts_display, author, msg.text);
+        outln!("[{}] {}: {}", ts_display, author, msg.text)?;
 
         // Render attachments (wee-slack style)
         if let Some(attachments) = &msg.attachments {
             for att in attachments {
-                render_attachment(att);
+                render_attachment(att)?;
             }
         }
         for file in msg.files.iter().flatten() {
-            render_file(file);
+            render_file(file)?;
         }
 
         if let Some(count) = msg.reply_count {
-            println!("  └─ {} replies", count);
+            outln!("  └─ {} replies", count)?;
         }
     }
+    Ok(())
 }
 
 fn project_message(
     msg: &SlackMessage,
     allowed: &HashSet<&str>,
     cache: Option<&SqliteCache>,
-) -> Value {
-    let mut value = serde_json::to_value(msg).unwrap_or_else(|_| json!({}));
+) -> Result<Value, serde_json::Error> {
+    let mut value = serde_json::to_value(msg)?;
     if let Value::Object(map) = &mut value {
         map.retain(|key, _| allowed.contains(key.as_str()));
 
@@ -466,7 +513,7 @@ fn project_message(
             map.insert("user_name".to_string(), json!(name));
         }
     }
-    value
+    Ok(value)
 }
 
 fn format_timestamp(ts: &str) -> Option<String> {
@@ -482,25 +529,26 @@ fn resolve_user_name(user_id: &str, cache: Option<&SqliteCache>) -> Option<Strin
         .and_then(|u| u.profile.and_then(|p| p.real_name))
 }
 
-fn render_file(file: &MessageFile) {
+fn render_file(file: &MessageFile) -> Result<(), OutputError> {
     let label = file
         .title
         .as_deref()
         .or(file.name.as_deref())
         .unwrap_or(&file.id);
     match file.mimetype.as_deref().or(file.mode.as_deref()) {
-        Some(kind) => println!("  [file] {label} ({kind})"),
-        None => println!("  [file] {label}"),
+        Some(kind) => outln!("  [file] {label} ({kind})")?,
+        None => outln!("  [file] {label}")?,
     }
+    Ok(())
 }
 
-fn render_attachment(att: &Value) {
+fn render_attachment(att: &Value) -> Result<(), OutputError> {
     let mut rendered = false;
 
     if let Some(pretext) = att.get("pretext").and_then(|v| v.as_str())
         && !pretext.is_empty()
     {
-        println!("  │ {}", pretext);
+        outln!("  │ {}", pretext)?;
         rendered = true;
     }
 
@@ -508,15 +556,15 @@ fn render_attachment(att: &Value) {
     let title = att.get("title").and_then(|v| v.as_str());
     match (author, title) {
         (Some(a), Some(t)) => {
-            println!("  │ {}: {}", a, t);
+            outln!("  │ {}: {}", a, t)?;
             rendered = true;
         }
         (Some(a), None) => {
-            println!("  │ {}", a);
+            outln!("  │ {}", a)?;
             rendered = true;
         }
         (None, Some(t)) => {
-            println!("  │ {}", t);
+            outln!("  │ {}", t)?;
             rendered = true;
         }
         _ => {}
@@ -528,7 +576,7 @@ fn render_attachment(att: &Value) {
         for line in text.lines() {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                println!("  │ {}", trimmed);
+                outln!("  │ {}", trimmed)?;
             }
         }
         rendered = true;
@@ -541,12 +589,12 @@ fn render_attachment(att: &Value) {
             match (field_title, field_value) {
                 (Some(t), Some(v)) => {
                     let first_line = v.lines().next().unwrap_or(v);
-                    println!("  │ {}: {}", t, first_line);
+                    outln!("  │ {}: {}", t, first_line)?;
                     rendered = true;
                 }
                 (None, Some(v)) => {
                     let first_line = v.lines().next().unwrap_or(v);
-                    println!("  │ {}", first_line);
+                    outln!("  │ {}", first_line)?;
                     rendered = true;
                 }
                 _ => {}
@@ -557,7 +605,7 @@ fn render_attachment(att: &Value) {
     if let Some(footer) = att.get("footer").and_then(|v| v.as_str())
         && !footer.is_empty()
     {
-        println!("  │ {}", footer);
+        outln!("  │ {}", footer)?;
         rendered = true;
     }
 
@@ -565,116 +613,119 @@ fn render_attachment(att: &Value) {
         && let Some(fallback) = att.get("fallback").and_then(|v| v.as_str())
         && !fallback.is_empty()
     {
-        println!("  │ {}", fallback);
+        outln!("  │ {}", fallback)?;
     }
+    Ok(())
 }
 
-pub fn print_members(member_ids: &[String], cache: &crate::cache::SqliteCache, as_json: bool) {
+pub fn print_members(
+    member_ids: &[String],
+    cache: &crate::cache::SqliteCache,
+    as_json: bool,
+) -> Result<(), OutputError> {
     if as_json {
-        print_json(member_ids);
-        return;
+        return print_json(member_ids);
     }
 
     if member_ids.is_empty() {
-        println!("No members found");
-        return;
+        outln!("No members found")?;
+        return Ok(());
     }
 
     let users = cache.get_users().unwrap_or_default();
 
     for id in member_ids {
         if let Some(user) = users.iter().find(|u| &u.id == id) {
-            println!("{:<20} {}", user.name, id);
+            outln!("{:<20} {}", user.name, id)?;
         } else {
-            println!("{}", id);
+            outln!("{}", id)?;
         }
     }
+    Ok(())
 }
 
-pub fn print_reactions(reactions: &MessageReactions, as_json: bool) {
+pub fn print_reactions(reactions: &MessageReactions, as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(reactions);
-        return;
+        return print_json(reactions);
     }
 
     if reactions.reactions.is_empty() {
-        println!("No reactions");
-        return;
+        outln!("No reactions")?;
+        return Ok(());
     }
 
     for r in &reactions.reactions {
-        println!(":{}: ({})", r.name, r.count);
+        outln!(":{}: ({})", r.name, r.count)?;
     }
+    Ok(())
 }
 
-pub fn print_emoji(emoji: &[CustomEmoji], as_json: bool) {
+pub fn print_emoji(emoji: &[CustomEmoji], as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(emoji);
-        return;
+        return print_json(emoji);
     }
 
     if emoji.is_empty() {
-        println!("No custom emoji found");
-        return;
+        outln!("No custom emoji found")?;
+        return Ok(());
     }
 
     for e in emoji {
         if e.is_alias {
-            println!(
+            outln!(
                 ":{}: -> :{}: (alias)",
                 e.name,
                 e.alias_for.as_deref().unwrap_or("?")
-            );
+            )?;
         } else {
-            println!(":{}: {}", e.name, e.url);
+            outln!(":{}: {}", e.name, e.url)?;
         }
     }
+    Ok(())
 }
 
-pub fn print_pins(pins: &[PinnedMessage], as_json: bool) {
+pub fn print_pins(pins: &[PinnedMessage], as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(pins);
-        return;
+        return print_json(pins);
     }
 
     if pins.is_empty() {
-        println!("No pinned messages");
-        return;
+        outln!("No pinned messages")?;
+        return Ok(());
     }
 
     for pin in pins {
         let text = pin.text.as_deref().unwrap_or("[no text]");
         let preview: String = text.chars().take(60).collect();
         if text.chars().count() > 60 {
-            println!("[{}] {}...", pin.ts, preview);
+            outln!("[{}] {}...", pin.ts, preview)?;
         } else {
-            println!("[{}] {}", pin.ts, preview);
+            outln!("[{}] {}", pin.ts, preview)?;
         }
     }
+    Ok(())
 }
 
-pub fn print_schedule(scheduled: &ScheduleResponse, as_json: bool) {
+pub fn print_schedule(scheduled: &ScheduleResponse, as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(scheduled);
-        return;
+        return print_json(scheduled);
     }
 
-    println!(
+    outln!(
         "✓ Scheduled for {} (id: {})",
         format_epoch(scheduled.post_at),
         scheduled.scheduled_message_id
-    );
+    )
 }
 
-pub fn print_scheduled(messages: &[ScheduledMessage], as_json: bool) {
+pub fn print_scheduled(messages: &[ScheduledMessage], as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(messages);
-        return;
+        return print_json(messages);
     }
 
     if messages.is_empty() {
-        println!("No scheduled messages");
-        return;
+        outln!("No scheduled messages")?;
+        return Ok(());
     }
 
     for message in messages {
@@ -684,54 +735,56 @@ pub fn print_scheduled(messages: &[ScheduledMessage], as_json: bool) {
         } else {
             ""
         };
-        println!(
+        outln!(
             "{}  {}  {}  {}{}",
             format_epoch(message.post_at),
             message.channel_id,
             message.id,
             preview,
             ellipsis
-        );
+        )?;
     }
+    Ok(())
 }
 
-pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) {
+pub fn print_bookmarks(bookmarks: &[Bookmark], as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(bookmarks);
-        return;
+        return print_json(bookmarks);
     }
 
     if bookmarks.is_empty() {
-        println!("No bookmarks");
-        return;
+        outln!("No bookmarks")?;
+        return Ok(());
     }
 
     for b in bookmarks {
         let emoji = b.emoji.as_deref().unwrap_or("");
-        println!("{} {} - {} (id: {})", emoji, b.title, b.link, b.id);
+        outln!("{} {} - {} (id: {})", emoji, b.title, b.link, b.id)?;
     }
+    Ok(())
 }
 
-pub fn print_search_capabilities(capabilities: &SearchCapabilities, as_json: bool) {
+pub fn print_search_capabilities(
+    capabilities: &SearchCapabilities,
+    as_json: bool,
+) -> Result<(), OutputError> {
     if as_json {
-        print_json(&json!({ "is_ai_search_enabled": capabilities.is_ai_search_enabled }));
-        return;
+        return print_json(&json!({ "is_ai_search_enabled": capabilities.is_ai_search_enabled }));
     }
 
-    println!(
+    outln!(
         "semantic search: {}",
         if capabilities.is_ai_search_enabled {
             "enabled"
         } else {
             "unavailable (keyword matching only)"
         }
-    );
+    )
 }
 
-pub fn print_search_results(results: &SearchResults, as_json: bool) {
+pub fn print_search_results(results: &SearchResults, as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(results);
-        return;
+        return print_json(results);
     }
 
     if results.messages.is_empty()
@@ -739,8 +792,8 @@ pub fn print_search_results(results: &SearchResults, as_json: bool) {
         && results.channels.is_empty()
         && results.users.is_empty()
     {
-        println!("No search results found");
-        return;
+        outln!("No search results found")?;
+        return Ok(());
     }
 
     for msg in &results.messages {
@@ -750,29 +803,29 @@ pub fn print_search_results(results: &SearchResults, as_json: bool) {
             .or(msg.author_user_id.as_deref())
             .unwrap_or("unknown");
         let channel = msg.channel_name.as_deref().unwrap_or("-");
-        println!("[message] #{} {}: {}", channel, author, msg.text);
+        outln!("[message] #{} {}: {}", channel, author, msg.text)?;
         if let Some(permalink) = &msg.permalink {
-            println!("  {}", permalink);
+            outln!("  {}", permalink)?;
         }
     }
 
     for file in &results.files {
         let title = file.title.as_deref().unwrap_or("[untitled file]");
         let file_type = file.file_type.as_deref().unwrap_or("file");
-        println!("[file] {} ({})", title, file_type);
+        outln!("[file] {} ({})", title, file_type)?;
         if let Some(permalink) = &file.permalink {
-            println!("  {}", permalink);
+            outln!("  {}", permalink)?;
         }
     }
 
     for channel in &results.channels {
         let name = channel.name.as_deref().unwrap_or("[unnamed channel]");
-        println!("[channel] #{}", name);
+        outln!("[channel] #{}", name)?;
         if let Some(topic) = channel.topic.as_deref().filter(|topic| !topic.is_empty()) {
-            println!("  {}", topic);
+            outln!("  {}", topic)?;
         }
         if let Some(permalink) = &channel.permalink {
-            println!("  {}", permalink);
+            outln!("  {}", permalink)?;
         }
     }
 
@@ -782,24 +835,25 @@ pub fn print_search_results(results: &SearchResults, as_json: bool) {
             .as_deref()
             .or(user.user_id.as_deref())
             .unwrap_or("[unknown user]");
-        println!("[user] {}", name);
+        outln!("[user] {}", name)?;
         if let Some(title) = user.title.as_deref().filter(|title| !title.is_empty()) {
-            println!("  {}", title);
+            outln!("  {}", title)?;
         }
         if let Some(permalink) = &user.permalink {
-            println!("  {}", permalink);
+            outln!("  {}", permalink)?;
         }
     }
+    Ok(())
 }
 
-pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
+pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) -> Result<(), OutputError> {
     let signature = outcome.signature.map(|signature| match signature {
         Signature::Verified => "verified",
         Signature::Unverified => "unverified",
     });
 
     if as_json {
-        print_json(&json!({
+        return print_json(&json!({
             "action": outcome.action.as_str(),
             "from": outcome.from,
             "to": outcome.to,
@@ -807,18 +861,18 @@ pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
             "binary": outcome.binary.display().to_string(),
             "signature": signature,
         }));
-        return;
     }
 
     match outcome.action {
-        Action::AlreadyCurrent => println!("Already at v{} ({})", outcome.to, outcome.target),
-        Action::UpdateAvailable => println!(
+        Action::AlreadyCurrent => outln!("Already at v{} ({})", outcome.to, outcome.target)?,
+        Action::UpdateAvailable => outln!(
             "v{} is available (running v{}). Run: slack-cli self update",
-            outcome.to, outcome.from
-        ),
-        Action::Cancelled => println!("Cancelled; still at v{}", outcome.from),
+            outcome.to,
+            outcome.from
+        )?,
+        Action::Cancelled => outln!("Cancelled; still at v{}", outcome.from)?,
         Action::Updated | Action::Reinstalled => {
-            println!(
+            outln!(
                 "✓ {} to v{} at {}",
                 if outcome.action == Action::Reinstalled {
                     "Reinstalled"
@@ -827,38 +881,36 @@ pub fn print_update_outcome(outcome: &UpdateOutcome, as_json: bool) {
                 },
                 outcome.to,
                 outcome.binary.display()
-            );
+            )?;
             if signature == Some("unverified") {
-                println!(
+                outln!(
                     "  cosign is not installed, so the signature was not checked and the \
                      download rests on its checksum alone."
-                );
+                )?;
             }
         }
     }
+    Ok(())
 }
 
 /// One JSON object per line, which is what a consuming process reads. Not
 /// `print_json`, which indents for a terminal: a pulled batch is a stream of
 /// records, and a record that spans lines cannot be read one at a time.
-pub fn print_events(events: &[Event], as_json: bool) {
+pub fn print_events(events: &[Event], as_json: bool) -> Result<(), OutputError> {
     if as_json {
         for event in events {
-            match event.to_ndjson() {
-                Ok(line) => println!("{line}"),
-                Err(err) => eprintln!("could not encode event {}: {err}", event.id),
-            }
+            outln!("{}", event.to_ndjson()?)?;
         }
-        return;
+        return Ok(());
     }
 
     if events.is_empty() {
-        println!("No events");
-        return;
+        outln!("No events")?;
+        return Ok(());
     }
 
     for event in events {
-        println!(
+        outln!(
             "{:>6}  {}  [{}]  {}  {}  {}",
             event.seq,
             event.received_at.format("%Y-%m-%d %H:%M:%S"),
@@ -877,8 +929,9 @@ pub fn print_events(events: &[Event], as_json: bool) {
                     cut
                 })
                 .unwrap_or_else(|| "(body not stored)".to_string()),
-        );
+        )?;
     }
+    Ok(())
 }
 
 pub fn print_event_stats(
@@ -887,9 +940,9 @@ pub fn print_event_stats(
     mode: &str,
     profile: &str,
     as_json: bool,
-) {
+) -> Result<(), OutputError> {
     if as_json {
-        print_json(&json!({
+        return print_json(&json!({
             "profile": profile,
             "mode": mode,
             "durable": caps.durable,
@@ -900,33 +953,35 @@ pub fn print_event_stats(
             "newest": stats.newest,
             "consumers": stats.consumers,
         }));
-        return;
     }
 
-    println!("profile : {profile}");
-    println!("mode    : {mode}");
+    outln!("profile : {profile}")?;
+    outln!("mode    : {mode}")?;
     if !caps.durable {
-        println!("events  : not stored (streaming only)");
-        return;
+        outln!("events  : not stored (streaming only)")?;
+        return Ok(());
     }
 
-    println!("events  : {}", stats.events);
-    println!("size    : {}", human_bytes(stats.bytes));
+    outln!("events  : {}", stats.events)?;
+    outln!("size    : {}", human_bytes(stats.bytes))?;
     if let (Some(oldest), Some(newest)) = (stats.oldest, stats.newest) {
-        println!("oldest  : {}", format_epoch(oldest));
-        println!("newest  : {}", format_epoch(newest));
+        outln!("oldest  : {}", format_epoch(oldest))?;
+        outln!("newest  : {}", format_epoch(newest))?;
     }
     if stats.consumers.is_empty() {
-        println!("consumers: none registered");
+        outln!("consumers: none registered")?;
     } else {
-        println!("consumers:");
+        outln!("consumers:")?;
         for consumer in &stats.consumers {
-            println!(
+            outln!(
                 "  {:<20} acked {:<10} pending {}",
-                consumer.name, consumer.acked_seq, consumer.pending
-            );
+                consumer.name,
+                consumer.acked_seq,
+                consumer.pending
+            )?;
         }
     }
+    Ok(())
 }
 
 /// `running` answers whether a daemon process is actually alive; only the
@@ -941,28 +996,28 @@ pub fn print_daemon_status(
     running: bool,
     stale_after: i64,
     as_json: bool,
-) {
+) -> Result<(), OutputError> {
     // Named on every line of output, because the events of one installation
     // live apart from another's: a command run without the environment the
     // daemon runs under reads a different store, finds it empty, and would
     // otherwise report a working daemon as absent.
     let Some(status) = status else {
         if as_json {
-            print_json(&json!({ "running": false, "profile": profile }));
+            print_json(&json!({ "running": false, "profile": profile }))?;
         } else {
-            println!("profile : {profile}");
-            println!(
+            outln!("profile : {profile}")?;
+            outln!(
                 "running : no daemon has run for this profile. Start one: slack-cli daemon run"
-            );
+            )?;
         }
-        return;
+        return Ok(());
     };
 
     let age = chrono::Utc::now().timestamp() - status.heartbeat_at;
     let beating = age <= stale_after;
 
     if as_json {
-        print_json(&json!({
+        return print_json(&json!({
             "running": running,
             "profile": profile,
             "pid": status.pid,
@@ -981,19 +1036,18 @@ pub fn print_daemon_status(
                 "backfilled": status.counters.backfilled,
             },
         }));
-        return;
     }
 
-    println!("profile  : {profile}");
+    outln!("profile  : {profile}")?;
     if !running {
-        println!(
+        outln!(
             "stopped  : pid {} ran from {} until its last heartbeat {}s ago",
             status.pid,
             format_epoch(status.started_at),
             age
-        );
+        )?;
     } else if beating {
-        println!(
+        outln!(
             "running  : pid {} ({}), {}",
             status.pid,
             if status.connected {
@@ -1002,53 +1056,58 @@ pub fn print_daemon_status(
                 "reconnecting"
             },
             format_epoch(status.started_at)
-        );
+        )?;
     } else {
-        println!(
+        outln!(
             "wedged   : pid {} still holds the lock but has not heartbeat for {}s (running \
              since {}). Stop it: slack-cli daemon stop",
             status.pid,
             age,
             format_epoch(status.started_at)
-        );
+        )?;
     }
 
     let counters = &status.counters;
-    println!(
+    outln!(
         "events   : {} received, {} matched, {} stored, {} recovered",
-        counters.received, counters.matched, counters.stored, counters.backfilled
-    );
-    println!(
+        counters.received,
+        counters.matched,
+        counters.stored,
+        counters.backfilled
+    )?;
+    outln!(
         "delivery : {} delivered, {} failed, {} reconnects",
-        counters.delivered, counters.failed, counters.reconnects
-    );
+        counters.delivered,
+        counters.failed,
+        counters.reconnects
+    )?;
     if counters.dropped > 0 {
-        println!(
+        outln!(
             "dropped  : {} — the buffer overflowed. Raise events.buffer, or make the sink \
              faster: delivery is serial, so one slow handler holds the whole pipeline",
             counters.dropped
-        );
+        )?;
     }
+    Ok(())
 }
 
-pub fn print_prune_outcome(outcome: &PruneOutcome, as_json: bool) {
+pub fn print_prune_outcome(outcome: &PruneOutcome, as_json: bool) -> Result<(), OutputError> {
     if as_json {
-        print_json(&json!({
+        return print_json(&json!({
             "removed": outcome.total(),
             "acknowledged": outcome.acknowledged,
             "expired": outcome.expired,
             "over_budget": outcome.over_budget,
         }));
-        return;
     }
 
-    println!(
+    outln!(
         "✓ Removed {} events ({} acknowledged, {} expired, {} over the size budget)",
         outcome.total(),
         outcome.acknowledged,
         outcome.expired,
         outcome.over_budget
-    );
+    )
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -1206,7 +1265,7 @@ mod tests {
     fn project_message_drops_fields_outside_allowed_set() {
         let msg = sample_message_with_blocks_and_metadata();
         let allowed = field_names(&lean_fields());
-        let projected = project_message(&msg, &allowed, None);
+        let projected = project_message(&msg, &allowed, None).unwrap();
 
         assert!(projected.get("blocks").is_none());
         assert!(projected.get("permalink").is_none());
@@ -1220,7 +1279,7 @@ mod tests {
         let mut fields = lean_fields();
         fields.push(MessageField::Blocks);
         let allowed = field_names(&fields);
-        let projected = project_message(&msg, &allowed, None);
+        let projected = project_message(&msg, &allowed, None).unwrap();
 
         assert_eq!(projected["blocks"][0]["type"], json!("section"));
     }
@@ -1231,7 +1290,7 @@ mod tests {
         let mut fields = lean_fields();
         fields.push(MessageField::Date);
         let allowed = field_names(&fields);
-        let projected = project_message(&msg, &allowed, None);
+        let projected = project_message(&msg, &allowed, None).unwrap();
 
         assert!(projected.get("date").is_some());
     }

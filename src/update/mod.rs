@@ -165,8 +165,9 @@ fn confirm(from: &str, to: &str, assume_yes: bool, interactive: bool) -> Result<
     if !interactive {
         bail!("replacing the running binary needs confirmation. re-run with --yes");
     }
-    print!("Replace the running binary (v{from} → v{to})? [y/N]: ");
-    std::io::stdout().flush()?;
+    let mut out = std::io::stdout();
+    write!(out, "Replace the running binary (v{from} → v{to})? [y/N]: ")?;
+    out.flush()?;
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES"))

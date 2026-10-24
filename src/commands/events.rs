@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use slack_cli::{
     cli::{Cli, Command, DaemonAction, EventsAction},
-    config, events, format,
+    config, events, format, outln,
     paths::AppPaths,
     slack,
 };
@@ -101,7 +101,7 @@ pub(crate) async fn handle(
                     running,
                     DAEMON_STALE_AFTER_SECONDS,
                     as_json,
-                );
+                )?;
                 Ok(())
             }
 
@@ -154,11 +154,11 @@ async fn handle_events_action(
                 if batch.is_empty() && !follow {
                     // Silence would be ambiguous: nothing pending reads the
                     // same as a command that did not run.
-                    format::print_events(&batch, as_json);
+                    format::print_events(&batch, as_json)?;
                     return Ok(());
                 }
                 if let Some(last) = batch.last() {
-                    format::print_events(&batch, as_json);
+                    format::print_events(&batch, as_json)?;
                     if ack {
                         let name = consumer.clone();
                         let through = last.seq;
@@ -189,9 +189,9 @@ async fn handle_events_action(
             if as_json {
                 format::print_json(
                     &serde_json::json!({ "consumer": consumer, "acked_seq": through, "pending": pending }),
-                );
+                )?;
             } else {
-                println!("✓ {consumer} acknowledged through {through} ({pending} pending)");
+                outln!("✓ {consumer} acknowledged through {through} ({pending} pending)")?;
             }
             Ok(())
         }
@@ -204,18 +204,18 @@ async fn handle_events_action(
                 config.events.mode.as_str(),
                 profile,
                 as_json,
-            );
+            )?;
             Ok(())
         }
 
         EventsAction::Prune => {
             let outcome = runtime.execute(|runtime| runtime.store.prune()).await?;
-            format::print_prune_outcome(&outcome, as_json);
+            format::print_prune_outcome(&outcome, as_json)?;
             Ok(())
         }
 
         EventsAction::Path => {
-            format::print_path(runtime.paths.root(), as_json);
+            format::print_path(runtime.paths.root(), as_json)?;
             Ok(())
         }
     }
@@ -238,9 +238,9 @@ fn stop_daemon(runtime: &events::EventRuntime, as_json: bool) -> Result<()> {
     runtime.state.request_stop()?;
 
     if as_json {
-        format::print_json(&serde_json::json!({ "stopped": true, "pid": status.pid }));
+        format::print_json(&serde_json::json!({ "stopped": true, "pid": status.pid }))?;
     } else {
-        println!("✓ Asked the daemon (pid {}) to stop", status.pid);
+        outln!("✓ Asked the daemon (pid {}) to stop", status.pid)?;
     }
     Ok(())
 }

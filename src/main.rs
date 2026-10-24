@@ -8,7 +8,7 @@ use slack_cli::{
     auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
     cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget, SelfAction},
-    config, format,
+    config, format, outln,
     paths::AppPaths,
     slack,
     slack::{ConversationType, MessageMetadata, MessagePayload, SlackApiError},
@@ -48,6 +48,9 @@ async fn main() -> ExitCode {
     let as_json = cli.json;
     match run(cli).await {
         Ok(()) => ExitCode::SUCCESS,
+        Err(err) if matches!(err.downcast_ref(), Some(format::OutputError::Closed)) => {
+            ExitCode::SUCCESS
+        }
         Err(err) => {
             let (code, exit) = classify_error(&err);
             if as_json {
@@ -167,7 +170,7 @@ async fn run(cli: Cli) -> Result<()> {
                 })
                 .await?;
             let fields = merge_fields(&config.output.users_fields, expand.as_deref());
-            format::print_users(&users, &fields, cli.json);
+            format::print_users(&users, &fields, cli.json)?;
         }
 
         Command::Channels {
@@ -187,7 +190,7 @@ async fn run(cli: Cli) -> Result<()> {
                 })
                 .await?;
             let fields = merge_fields(&config.output.channels_fields, expand.as_deref());
-            format::print_channels(&channels, &fields, cli.json);
+            format::print_channels(&channels, &fields, cli.json)?;
         }
 
         Command::Send {
@@ -200,9 +203,9 @@ async fn run(cli: Cli) -> Result<()> {
             let result = slack.messages.send(&id, payload, thread.as_deref()).await?;
 
             if cli.json {
-                format::print_json(&result);
+                format::print_json(&result)?;
             } else {
-                println!("✓ Sent: {}", result.ts);
+                outln!("✓ Sent: {}", result.ts)?;
             }
         }
 
@@ -216,9 +219,9 @@ async fn run(cli: Cli) -> Result<()> {
             let result = slack.messages.update(&id, &ts, payload).await?;
 
             if cli.json {
-                format::print_json(&result);
+                format::print_json(&result)?;
             } else {
-                println!("✓ Updated: {}", result.ts);
+                outln!("✓ Updated: {}", result.ts)?;
             }
         }
 
@@ -227,9 +230,9 @@ async fn run(cli: Cli) -> Result<()> {
             let result = slack.messages.delete(&id, &ts).await?;
 
             if cli.json {
-                format::print_json(&result);
+                format::print_json(&result)?;
             } else {
-                println!("✓ Deleted: {}", result.ts);
+                outln!("✓ Deleted: {}", result.ts)?;
             }
         }
 
@@ -245,7 +248,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .messages
                 .schedule(&id, at, payload, thread.as_deref())
                 .await?;
-            format::print_schedule(&scheduled, cli.json);
+            format::print_schedule(&scheduled, cli.json)?;
         }
 
         Command::Unschedule {
@@ -259,9 +262,9 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "ok": true }));
+                format::print_json(&serde_json::json!({ "ok": true }))?;
             } else {
-                println!("✓ Unscheduled message");
+                outln!("✓ Unscheduled message")?;
             }
         }
 
@@ -271,7 +274,7 @@ async fn run(cli: Cli) -> Result<()> {
                 None => None,
             };
             let messages = slack.messages.scheduled(channel.as_deref()).await?;
-            format::print_scheduled(&messages, cli.json);
+            format::print_scheduled(&messages, cli.json)?;
         }
 
         Command::Upload {
@@ -298,13 +301,13 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?;
 
             if cli.json {
-                format::print_json(&file);
+                format::print_json(&file)?;
             } else {
-                println!(
+                outln!(
                     "✓ Uploaded {} (id: {})",
                     file.title.as_deref().unwrap_or(&path.display().to_string()),
                     file.id
-                );
+                )?;
             }
         }
 
@@ -313,9 +316,9 @@ async fn run(cli: Cli) -> Result<()> {
             let link = slack.messages.permalink(&id, &ts).await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "permalink": link }));
+                format::print_json(&serde_json::json!({ "permalink": link }))?;
             } else {
-                println!("{}", link);
+                outln!("{}", link)?;
             }
         }
 
@@ -354,7 +357,7 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.json,
                 &fields,
                 Some(&cache),
-            );
+            )?;
         }
 
         Command::Thread {
@@ -380,22 +383,22 @@ async fn run(cli: Cli) -> Result<()> {
                 cli.json,
                 &fields,
                 Some(&cache),
-            );
+            )?;
         }
 
         Command::Dm { users } => {
             let channel = slack.channels.open(&users).await?;
             if cli.json {
-                format::print_json(&serde_json::json!({ "channel": channel }));
+                format::print_json(&serde_json::json!({ "channel": channel }))?;
             } else {
-                println!("{channel}");
+                outln!("{channel}")?;
             }
         }
 
         Command::Members { channel } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let members = slack.channels.members(&id).await?;
-            format::print_members(&members, &cache, cli.json);
+            format::print_members(&members, &cache, cli.json)?;
         }
 
         Command::Search {
@@ -418,7 +421,7 @@ async fn run(cli: Cli) -> Result<()> {
         } => {
             if capabilities {
                 let capabilities = slack.search.info().await?;
-                format::print_search_capabilities(&capabilities, cli.json);
+                format::print_search_capabilities(&capabilities, cli.json)?;
                 return Ok(());
             }
 
@@ -450,7 +453,7 @@ async fn run(cli: Cli) -> Result<()> {
             };
             let results = slack.search.context(&query, &options).await?;
 
-            format::print_search_results(&results, cli.json);
+            format::print_search_results(&results, cli.json)?;
         }
 
         Command::React { channel, ts, emoji } => {
@@ -458,9 +461,9 @@ async fn run(cli: Cli) -> Result<()> {
             slack.reactions.add(&id, &ts, &emoji).await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "ok": true }));
+                format::print_json(&serde_json::json!({ "ok": true }))?;
             } else {
-                println!("✓ Added :{}: reaction", emoji.trim_matches(':'));
+                outln!("✓ Added :{}: reaction", emoji.trim_matches(':'))?;
             }
         }
 
@@ -469,16 +472,16 @@ async fn run(cli: Cli) -> Result<()> {
             slack.reactions.remove(&id, &ts, &emoji).await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "ok": true }));
+                format::print_json(&serde_json::json!({ "ok": true }))?;
             } else {
-                println!("✓ Removed :{}: reaction", emoji.trim_matches(':'));
+                outln!("✓ Removed :{}: reaction", emoji.trim_matches(':'))?;
             }
         }
 
         Command::Reactions { channel, ts } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let reactions = slack.reactions.get(&id, &ts).await?;
-            format::print_reactions(&reactions, cli.json);
+            format::print_reactions(&reactions, cli.json)?;
         }
 
         Command::Emoji { query } => {
@@ -487,7 +490,7 @@ async fn run(cli: Cli) -> Result<()> {
             } else {
                 slack.emoji.list().await?
             };
-            format::print_emoji(&emoji, cli.json);
+            format::print_emoji(&emoji, cli.json)?;
         }
 
         Command::Pin { channel, ts } => {
@@ -495,9 +498,9 @@ async fn run(cli: Cli) -> Result<()> {
             slack.pins.add(&id, &ts).await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "ok": true }));
+                format::print_json(&serde_json::json!({ "ok": true }))?;
             } else {
-                println!("✓ Pinned message");
+                outln!("✓ Pinned message")?;
             }
         }
 
@@ -506,16 +509,16 @@ async fn run(cli: Cli) -> Result<()> {
             slack.pins.remove(&id, &ts).await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "ok": true }));
+                format::print_json(&serde_json::json!({ "ok": true }))?;
             } else {
-                println!("✓ Unpinned message");
+                outln!("✓ Unpinned message")?;
             }
         }
 
         Command::Pins { channel } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let pins = slack.pins.list(&id).await?;
-            format::print_pins(&pins, cli.json);
+            format::print_pins(&pins, cli.json)?;
         }
 
         Command::Bookmark {
@@ -531,9 +534,9 @@ async fn run(cli: Cli) -> Result<()> {
                 .await?;
 
             if cli.json {
-                format::print_json(&bookmark);
+                format::print_json(&bookmark)?;
             } else {
-                println!("✓ Added bookmark: {} (id: {})", bookmark.title, bookmark.id);
+                outln!("✓ Added bookmark: {} (id: {})", bookmark.title, bookmark.id)?;
             }
         }
 
@@ -545,16 +548,16 @@ async fn run(cli: Cli) -> Result<()> {
             slack.bookmarks.remove(&id, &bookmark_id).await?;
 
             if cli.json {
-                format::print_json(&serde_json::json!({ "ok": true }));
+                format::print_json(&serde_json::json!({ "ok": true }))?;
             } else {
-                println!("✓ Removed bookmark");
+                outln!("✓ Removed bookmark")?;
             }
         }
 
         Command::Bookmarks { channel } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let bookmarks = slack.bookmarks.list(&id).await?;
-            format::print_bookmarks(&bookmarks, cli.json);
+            format::print_bookmarks(&bookmarks, cli.json)?;
         }
 
         Command::Cache { action } => match action {
@@ -567,14 +570,14 @@ async fn run(cli: Cli) -> Result<()> {
                 if cli.json {
                     format::print_json(
                         &serde_json::json!({ "users": users, "channels": channels }),
-                    );
+                    )?;
                 } else {
-                    println!("Users: {}, Channels: {}", users, channels);
+                    outln!("Users: {}, Channels: {}", users, channels)?;
                 }
             }
 
             CacheAction::Path => {
-                format::print_path(&db_path, cli.json);
+                format::print_path(&db_path, cli.json)?;
             }
         },
 
@@ -660,7 +663,7 @@ async fn handle_self_action(action: &SelfAction, as_json: bool) -> Result<()> {
     })
     .await?;
 
-    format::print_update_outcome(&outcome, as_json);
+    format::print_update_outcome(&outcome, as_json)?;
     Ok(())
 }
 
@@ -676,8 +679,7 @@ fn handle_unloadable_config(
     match action {
         ConfigAction::Path => {
             let path = config_path.unwrap_or_else(|| paths.config_file());
-            format::print_path(&path, as_json);
-            Some(Ok(()))
+            Some(format::print_path(&path, as_json).map_err(Into::into))
         }
         ConfigAction::Edit => Some(config::Config::edit(paths, config_path)),
         ConfigAction::Show => None,
@@ -1019,9 +1021,9 @@ async fn refresh_cache(
                 |kind| serde_json::json!({ "type": kind.as_api_str(), "scope": kind.read_scope() }),
             )
             .collect();
-        format::print_json(&serde_json::json!({ "ok": true, "unreadable": unreadable }));
+        format::print_json(&serde_json::json!({ "ok": true, "unreadable": unreadable }))?;
     } else {
-        println!("✓ Cache refreshed");
+        outln!("✓ Cache refreshed")?;
     }
 
     Ok(())

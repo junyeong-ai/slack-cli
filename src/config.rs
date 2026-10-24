@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::format::{ChannelField, MessageField, UserField, print_json};
+use crate::outln;
 use crate::paths::{self, AppPaths};
 use crate::slack::ConversationType;
 
@@ -900,32 +901,32 @@ impl Config {
 
     pub fn show(&self, paths: &AppPaths, as_json: bool) -> Result<()> {
         if as_json {
-            print_json(&serde_json::to_value(self)?);
+            print_json(self)?;
             return Ok(());
         }
 
-        println!("Auth:");
-        println!(
+        outln!("Auth:")?;
+        outln!(
             "  client_id: {}",
             self.auth.client_id.as_deref().unwrap_or("(unset)")
-        );
-        println!("  exclude_scopes: {:?}", self.auth.exclude_scopes);
-        println!("\nCache:");
-        println!("  ttl_users_hours: {}", self.cache.ttl_users_hours);
-        println!("  ttl_channels_hours: {}", self.cache.ttl_channels_hours);
-        println!(
+        )?;
+        outln!("  exclude_scopes: {:?}", self.auth.exclude_scopes)?;
+        outln!("\nCache:")?;
+        outln!("  ttl_users_hours: {}", self.cache.ttl_users_hours)?;
+        outln!("  ttl_channels_hours: {}", self.cache.ttl_channels_hours)?;
+        outln!(
             "  refresh_threshold_percent: {}",
             self.cache.refresh_threshold_percent
-        );
-        println!("  data_path: {}", self.cache_dir(paths).display());
+        )?;
+        outln!("  data_path: {}", self.cache_dir(paths).display())?;
         let channel_types: Vec<&str> = self
             .cache
             .channel_types
             .iter()
             .map(|t| t.as_api_str())
             .collect();
-        println!("  channel_types: {:?}", channel_types);
-        println!("\nOutput:");
+        outln!("  channel_types: {:?}", channel_types)?;
+        outln!("\nOutput:")?;
         let users_fields: Vec<&str> = self
             .output
             .users_fields
@@ -944,53 +945,53 @@ impl Config {
             .iter()
             .map(|f| f.as_str())
             .collect();
-        println!("  users_fields: {:?}", users_fields);
-        println!("  channels_fields: {:?}", channels_fields);
-        println!("  messages_fields: {:?}", messages_fields);
-        println!("\nRetry:");
-        println!("  max_attempts: {}", self.retry.max_attempts);
-        println!("  initial_delay_ms: {}", self.retry.initial_delay_ms);
-        println!("  max_delay_ms: {}", self.retry.max_delay_ms);
-        println!("  exponential_base: {}", self.retry.exponential_base);
-        println!("\nConnection:");
-        println!("  api_base_url: {}", self.connection.api_base_url);
-        println!("  timeout_seconds: {}", self.connection.timeout_seconds);
-        println!(
+        outln!("  users_fields: {:?}", users_fields)?;
+        outln!("  channels_fields: {:?}", channels_fields)?;
+        outln!("  messages_fields: {:?}", messages_fields)?;
+        outln!("\nRetry:")?;
+        outln!("  max_attempts: {}", self.retry.max_attempts)?;
+        outln!("  initial_delay_ms: {}", self.retry.initial_delay_ms)?;
+        outln!("  max_delay_ms: {}", self.retry.max_delay_ms)?;
+        outln!("  exponential_base: {}", self.retry.exponential_base)?;
+        outln!("\nConnection:")?;
+        outln!("  api_base_url: {}", self.connection.api_base_url)?;
+        outln!("  timeout_seconds: {}", self.connection.timeout_seconds)?;
+        outln!(
             "  rate_limit_per_minute: {}",
             self.connection.rate_limit_per_minute
-        );
-        println!(
+        )?;
+        outln!(
             "  app_distribution: {}",
             match self.connection.app_distribution {
                 SlackAppDistribution::CommercialExternal => "commercial_external",
                 SlackAppDistribution::MarketplaceOrInternal => "marketplace_or_internal",
             }
-        );
-        println!("\nEvents:");
-        println!("  mode: {}", self.events.mode.as_str());
-        println!("  store_body: {}", self.events.store_body);
-        println!("  retention_days: {}", self.events.retention_days);
-        println!("  buffer: {}", self.events.buffer);
-        println!("  on_overflow: {}", self.events.on_overflow.as_str());
-        println!("  max_bytes: {}", self.events.max_bytes);
-        println!("  backfill: {}", self.events.backfill);
-        println!("  data_path: {}", self.events_dir(paths).display());
-        println!(
+        )?;
+        outln!("\nEvents:")?;
+        outln!("  mode: {}", self.events.mode.as_str())?;
+        outln!("  store_body: {}", self.events.store_body)?;
+        outln!("  retention_days: {}", self.events.retention_days)?;
+        outln!("  buffer: {}", self.events.buffer)?;
+        outln!("  on_overflow: {}", self.events.on_overflow.as_str())?;
+        outln!("  max_bytes: {}", self.events.max_bytes)?;
+        outln!("  backfill: {}", self.events.backfill)?;
+        outln!("  data_path: {}", self.events_dir(paths).display())?;
+        outln!(
             "  sinks: {:?}",
             self.events
                 .effective_sinks()
                 .iter()
                 .map(|sink| sink.name.clone())
                 .collect::<Vec<_>>()
-        );
-        println!(
+        )?;
+        outln!(
             "  rules: {:?}",
             self.events
                 .effective_rules()
                 .iter()
                 .map(|rule| rule.name.clone())
                 .collect::<Vec<_>>()
-        );
+        )?;
 
         Ok(())
     }
