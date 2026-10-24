@@ -6,15 +6,16 @@
 
 > **English** | **[한국어](README.md)**
 
-**Run core Slack workflows from your terminal.** Send messages, search context, manage reactions, pins, bookmarks, users, and channels without opening a browser.
+**Run core Slack workflows from your terminal and your AI agents.** Send messages, search context, manage reactions, pins, bookmarks, users, and channels without opening a browser.
 
 ---
 
 ## Why Slack CLI?
 
-- **Fast** — Millisecond searches powered by SQLite FTS5
-- **Practical** — Messages, search, reactions, pins, bookmarks, users, and channels
-- **Automatable** — Integrates with scripts, CI/CD, and AI agents
+- **Agent-ready output** — `--json` emits single-line JSON when piped, defaults stay lean with `--expand` for more, and failures are classified by exit code and an `{"error": {...}}` envelope
+- **Bundled Claude Code skill** — the installer adds the `slack-workspace` skill matching the installed binary by default
+- **Real-time events** — read mentions and subscribed thread replies collected by the Socket Mode daemon with `events pull`
+- **Local lookups** — user and channel names resolve from a SQLite FTS5 cache
 
 ---
 

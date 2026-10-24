@@ -2,7 +2,7 @@
 name: slack-workspace
 metadata:
   version: "0.19.8"
-description: Use slack-cli to search and read Slack, manage messages, reactions, pins and bookmarks, look up users and channels, or consume collected Socket Mode events.
+description: Searches, reads and posts Slack messages with the slack-cli command — channel history, threads, workspace search, users and channels, reactions, pins, bookmarks, and events collected by its Socket Mode daemon. Use when a task involves Slack, such as finding or summarizing a discussion, replying in a thread, posting a message, looking up a person or channel, or handling mentions.
 allowed-tools: Bash(slack-cli *), Bash(jq *)
 ---
 
@@ -92,7 +92,7 @@ slack-cli unreact    <channel> <ts> <emoji>
 slack-cli reactions  <channel> <ts> --json
 slack-cli pin        <channel> <ts>
 slack-cli unpin      <channel> <ts>
-slack-cli pins  <channel> --json
+slack-cli pins       <channel> --json
 slack-cli bookmark   <channel> <title> <url> [--emoji <e>]
 slack-cli unbookmark <channel> <bookmark_id>
 slack-cli bookmarks  <channel> --json
@@ -165,12 +165,13 @@ Names resolve via the local cache; partial matches never select a target. If the
 
 slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for these field names with `jq`:
 
-- `users --json` → array. Fields filtered by config defaults (`id, name, real_name, email`) plus anything passed to `--expand` (`avatar, title, timezone, status, status_emoji, display_name, is_admin, is_bot, deleted`). Anything outside that union is absent.
-- `channels --json` → array. Same field-filter model. Defaults `id, name, type, members`; `--expand` adds `topic, purpose, created, creator, is_member, is_archived, is_private`. Member count is `members`, not `num_members`. `type` is a display string (`Public`, `Private`, `DM`, `Group`) — not the API's `channel_types` tokens.
+- `users --json` → array of the configured fields (default `id, name, real_name, email`) plus `--expand`. Nothing else is present.
+- `channels --json` → array, same model (default `id, name, type, members`). Member count is `members`, not `num_members`. `type` is a display string (`Public`, `Private`, `DM`, `Group`) — not the API's `channel_types` tokens.
 - `members --json` → array of user-id strings (`["U123", "U456", ...]`), not user objects.
-- `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. Message objects are projected through the `messages_fields` whitelist. **Lean default**: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, metadata`. Use `--expand` to opt in to verbose fields (`blocks, attachments, reactions, edited, parent_user_id, reply_users, reply_users_count, latest_reply, channel, permalink`) or computed fields (`date, user_name`). Optional struct fields are omitted when absent.
+- `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, metadata`, plus `--expand`. Fields a message lacks are omitted.
 - `thread --json` → bare array of message objects (paginates internally up to `--limit`); same field model as `messages`.
-- `send --json`, `update --json` → `{channel, ts}`.
+- `send --json`, `update --json`, `delete --json` → `{channel, ts}`.
+- `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `cache refresh` with `--json` → `{ok: true}`.
 - `permalink --json` → `{permalink}`. Non-JSON output is the URL alone.
 - `reactions --json` → `{channel, ts, reactions: [{name, count, users}]}`.
 - `pins --json` → array of `{ts, text, ...}`.
@@ -191,6 +192,8 @@ Slack lets every message carry a `{event_type, event_payload}` marker. `slack-cl
 `conversations.history` and `conversations.replies` always request `include_all_metadata=true`, so no extra flag is needed to see the field.
 
 ## `--expand` fields
+
+A name outside this table exits `2` and lists the valid names.
 
 | Domain | Fields |
 |--------|--------|
