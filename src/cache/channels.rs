@@ -121,6 +121,22 @@ impl SqliteCache {
         Ok(result)
     }
 
+    /// IDs of the archived channels named exactly `name`, ignoring ASCII case.
+    /// Name lookups skip archived channels; this tells a caller whether a name
+    /// it could not resolve belongs to one.
+    pub fn archived_channel_ids(&self, name: &str) -> CacheResult<Vec<String>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT id FROM channels
+             WHERE is_archived = 1 AND lower(name) = lower(?1)
+             ORDER BY id",
+        )?;
+        let ids = stmt
+            .query_map(params![name], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(ids)
+    }
+
     pub fn search_channels(&self, query: &str, limit: usize) -> CacheResult<Vec<SlackChannel>> {
         let conn = self.pool.get()?;
 

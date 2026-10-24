@@ -748,7 +748,21 @@ async fn resolve_channel(
 
     match name_matches.as_slice() {
         [channel] => Ok(channel.id.clone()),
-        [] => Err(channel_not_found(input, fetched_now.as_deref())),
+        [] => {
+            let query = name.to_owned();
+            let archived = cache
+                .execute(move |cache| cache.archived_channel_ids(&query))
+                .await?;
+            if archived.is_empty() {
+                Err(channel_not_found(input, fetched_now.as_deref()))
+            } else {
+                anyhow::bail!(
+                    "Channel is archived: {input}. Names resolve to active channels only; use \
+                     its ID: {}.",
+                    archived.join(", ")
+                )
+            }
+        }
         _ => anyhow::bail!(
             "Channel name is ambiguous: {}. Use a channel ID from `slack-cli channels`.",
             input
@@ -763,11 +777,11 @@ fn channel_not_found(input: &str, fetched_now: Option<&[ConversationType]>) -> a
     match fetched_now {
         Some([]) => anyhow::anyhow!(
             "Channel not found: {input}. The channel list was fetched just now; \
-             use an exact channel name or a channel ID. Archived channels resolve by ID only."
+             use an exact channel name or a channel ID."
         ),
         Some(unreadable) => anyhow::anyhow!(
             "Channel not found: {input}. The channel list was fetched just now without {}; \
-             use an exact channel name or a channel ID. Archived channels resolve by ID only.",
+             use an exact channel name or a channel ID.",
             unreadable
                 .iter()
                 .map(|kind| unreadable_note(*kind))
@@ -777,8 +791,7 @@ fn channel_not_found(input: &str, fetched_now: Option<&[ConversationType]>) -> a
         None => anyhow::anyhow!(
             "Channel not found in the local cache: {input}. Use an exact channel name or a \
              channel ID; `slack-cli cache refresh channels` fetches channels created since the \
-             last refresh and reports conversation types this token may not list. Archived \
-             channels resolve by ID only."
+             last refresh and reports conversation types this token may not list."
         ),
     }
 }

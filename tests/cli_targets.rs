@@ -153,6 +153,37 @@ async fn a_token_that_may_list_no_channel_type_reports_the_refusal() {
 }
 
 #[tokio::test]
+async fn an_archived_channel_name_is_answered_with_its_id() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    Mock::given(path("/conversations.list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "channels": [{"id": "C00000002", "name": "old-team", "is_channel": true, "is_archived": true}],
+            "response_metadata": {"next_cursor": ""}
+        })))
+        .mount(&server)
+        .await;
+
+    for (target, archived) in [("#OLD-team", true), ("#old", false)] {
+        let output = command(dir.path(), &server)
+            .env("SLACK_USER_TOKEN", "xoxp-test")
+            .args(["send", target, "--text", "hello"])
+            .output()
+            .await
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+        let message = error["error"]["message"].as_str().unwrap();
+        assert_eq!(
+            message.contains("C00000002"),
+            archived,
+            "{target}: {message}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn channel_operations_require_a_unique_exact_name() {
     let server = MockServer::start().await;
     let dir = tempfile::tempdir().unwrap();
