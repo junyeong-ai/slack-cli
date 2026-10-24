@@ -35,6 +35,12 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_urlencoded = "0.7.1"
 reqwest = { version = "0.13.5", features = ["json", "rustls", "stream"], default-features = false }
+# `tls::http_client_builder` hands reqwest a rustls configuration, which it
+# accepts only from the rustls version it links itself.
+rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-platform-verifier = "0.7.1"
+webpki-roots = "1.0.11"
+# Socket Mode connects with `tls::client_config`; the feature only enables rustls.
 tokio-tungstenite = { version = "0.30.0", features = ["connect", "handshake", "rustls-tls-webpki-roots"], default-features = false }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }

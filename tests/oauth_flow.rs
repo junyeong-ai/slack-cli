@@ -32,7 +32,7 @@ fn scopes(values: &[&str]) -> Vec<String> {
 fn exchange(server: &MockServer) -> TokenExchange {
     TokenExchange {
         api_base_url: server.uri(),
-        http: reqwest::Client::builder()
+        http: slack_cli::tls::http_client_builder()
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap(),

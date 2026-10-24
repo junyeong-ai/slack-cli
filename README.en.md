@@ -391,8 +391,11 @@ A command that needs an excluded scope is refused by Slack, and the CLI names th
 | `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`; outranks `config.toml [auth]`) |
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
 | `NO_COLOR` | When non-empty, logs carry no color. Color is used only when stderr is a terminal |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | (Linux) CA certificate file and directories to trust instead of the system's |
 
 A `.env` file in the working directory supplies any of the above.
+
+Every connection, including Slack, OAuth, release downloads and Socket Mode, trusts the operating system's certificate store, so a root installed there, such as a corporate proxy's, applies to all of them. A Linux system with no CA certificates at all, such as a minimal container, trusts the Mozilla roots built into the binary.
 
 ---
 

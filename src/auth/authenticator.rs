@@ -52,7 +52,7 @@ impl Authenticator {
             }
         }
 
-        let http = reqwest::Client::builder()
+        let http = crate::tls::http_client_builder()
             .timeout(RENEWAL_TIMEOUT)
             .build()
             .map_err(|e| AuthError::Internal(format!("failed to create OAuth client: {e}")))?;

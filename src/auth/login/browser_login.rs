@@ -28,7 +28,7 @@ pub async fn run(request: Request) -> Result<Profile> {
     let receiver = LoopbackReceiver::bind(request.port).await?;
     let exchange = TokenExchange {
         api_base_url: request.api_base_url,
-        http: reqwest::Client::builder()
+        http: crate::tls::http_client_builder()
             .timeout(EXCHANGE_TIMEOUT)
             .build()?,
     };

@@ -95,7 +95,7 @@ pub struct SlackCore {
 
 impl SlackCore {
     pub fn new(config: Config, auth: Arc<Authenticator>) -> Result<Self> {
-        let http = HttpClient::builder()
+        let http = crate::tls::http_client_builder()
             .timeout(Duration::from_secs(config.connection.timeout_seconds))
             .pool_max_idle_per_host(HTTP_POOL_MAX_IDLE_PER_HOST)
             .pool_idle_timeout(Duration::from_secs(HTTP_POOL_IDLE_TIMEOUT_SECONDS))

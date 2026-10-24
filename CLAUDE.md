@@ -14,6 +14,7 @@ src/
 ├── format.rs     Output formatting (table / JSON)
 ├── lib.rs        Library re-exports
 ├── paths.rs      Platform config/cache directories (XDG on Unix, Known Folders on Windows)
+├── tls.rs        TLS trust shared by every HTTPS and WSS connection
 ├── auth/        See src/auth/CLAUDE.md
 ├── slack/       See src/slack/CLAUDE.md
 ├── cache/       See src/cache/CLAUDE.md
@@ -68,5 +69,6 @@ release commits reach `main` directly.
 - **Targets require exact identity.** Name discovery may return partial matches; commands that act on a channel require one exact cached name or a channel ID. Never select a discovery result by position.
 - **The event daemon reuses the library and owns nothing else.** `events/` builds on `slack/`, `auth/` and `config`; outside it, only the CLI (`main.rs`, `commands/events.rs`) and `format.rs`, which prints its types, use it. Its state lives outside `cache_dir` because the cache rebuilds itself on a schema change and Socket Mode never replays what it dropped.
 - **Command output returns its errors.** Write stdout through `outln!` or `format::print_json`, which report a closed reader as `OutputError::Closed` and `main` ends quietly on it; `println!` panics instead, and `clippy::print_stdout` rejects it. Diagnostics go through `errln!`, which drops a failed stderr write so the command keeps its exit status; `clippy::print_stderr` rejects `eprintln!`. Prompts go to stderr too. The event daemon's stdout sink keeps its own writer (`events/sink.rs`).
+- **Every connection shares one TLS trust.** HTTPS clients come from `tls::http_client_builder` and Socket Mode connects with `tls::client_config`, so a root the operating system trusts applies everywhere, and a system with none falls back to the bundled Mozilla roots in one place. `clippy.toml` disallows building a `reqwest` client or a WebSocket connection any other way.
 - **Filesystem locations come from `paths.rs`.** `AppPaths` resolves the config root once per invocation and hands out `config.toml`, `auth.json` and the cache directory. No module reads `HOME` or `XDG_CONFIG_HOME` itself.
 - **Database work leaves the async runtime.** Use `SqliteCache::execute`, `EventState::execute` or `EventRuntime::execute` for synchronous database operations from async code. Keep pool connections and transactions inside the blocking operation; never carry them across an await. Event preparation and commit remain separate from asynchronous sink delivery.

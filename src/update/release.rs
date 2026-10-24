@@ -69,7 +69,7 @@ impl Releases {
         Ok(Self {
             api_base: api_base.trim_end_matches('/').to_string(),
             repository,
-            http: reqwest::Client::builder()
+            http: crate::tls::http_client_builder()
                 .read_timeout(STALL_TIMEOUT)
                 .user_agent(USER_AGENT)
                 .build()

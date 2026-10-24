@@ -65,7 +65,7 @@ impl SinkSet {
                     },
                     SinkKind::Http => Delivery::Http {
                         url: config.url.clone().context("an http sink needs a url")?,
-                        client: reqwest::Client::builder()
+                        client: crate::tls::http_client_builder()
                             .timeout(timeout)
                             .build()
                             .context("could not build the sink HTTP client")?,
