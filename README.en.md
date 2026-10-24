@@ -60,6 +60,7 @@ slack-cli schedule "#general" 2026-10-25T09:00:00+09:00 -t "Standup"  # Schedule
 slack-cli scheduled                                     # Messages scheduled with this token
 slack-cli unschedule "#general" Q1298393284             # Cancel a scheduled message
 slack-cli permalink "#general" 1234.5678                # Fetch permalink URL
+slack-cli upload "#general" ./report.pdf --comment "Weekly report"  # Upload a file (--thread, --title, --alt-text)
 slack-cli messages "#general" --limit 15                # List (lean default fields)
 slack-cli messages "#general" --expand blocks,reactions # Expand fields
 slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31
@@ -194,12 +195,12 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 <!-- scopes:user -->
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
-chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  im:write  mpim:history
-mpim:read  mpim:write  pins:read  pins:write
-reactions:read  reactions:write  search:read.files  search:read.im
-search:read.mpim  search:read.private  search:read.public  search:read.users
-users:read  users:read.email
+chat:write  emoji:read  files:write  groups:history
+groups:read  im:history  im:read  im:write
+mpim:history  mpim:read  mpim:write  pins:read
+pins:write  reactions:read  reactions:write  search:read.files
+search:read.im  search:read.mpim  search:read.private  search:read.public
+search:read.users  users:read  users:read.email
 ```
 <!-- /scopes:user -->
 
@@ -222,11 +223,11 @@ The token is validated via `auth.test` before the profile is persisted. Pasted t
 <!-- scopes:bot -->
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
-chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  im:write  metadata.message:read
-mpim:history  mpim:read  mpim:write  pins:read
-pins:write  reactions:read  reactions:write  search:read.public
-users:read  users:read.email
+chat:write  emoji:read  files:write  groups:history
+groups:read  im:history  im:read  im:write
+metadata.message:read  mpim:history  mpim:read  mpim:write
+pins:read  pins:write  reactions:read  reactions:write
+search:read.public  users:read  users:read.email
 ```
 <!-- /scopes:bot -->
 
@@ -406,6 +407,7 @@ A `.env` file in the working directory supplies any of the above.
 | `unschedule <ch> <id>` | Cancel a scheduled message (not within 60 seconds of posting) |
 | `scheduled [--channel <ch>]` | Messages scheduled with this token (not those scheduled in the Slack app) |
 | `permalink <ch> <ts>` | Fetch the permalink URL for a message |
+| `upload <ch> <path> [--title --comment --thread --alt-text]` | Upload a file and share it in a channel (shared asynchronously; raise `connection.timeout_seconds` for large files) |
 | `messages <ch>` | List messages |
 | `thread <ch> <ts>` | List thread |
 | `members <ch>` | List members |

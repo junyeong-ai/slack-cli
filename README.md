@@ -60,6 +60,7 @@ slack-cli schedule "#general" 2026-10-25T09:00:00+09:00 -t "스탠드업"  # 예
 slack-cli scheduled                                     # 이 토큰으로 예약한 메시지
 slack-cli unschedule "#general" Q1298393284             # 예약 취소
 slack-cli permalink "#general" 1234.5678                # permalink URL 조회
+slack-cli upload "#general" ./report.pdf --comment "주간 보고"  # 파일 업로드 (--thread, --title, --alt-text)
 slack-cli messages "#general" --limit 15                # 조회 (lean 기본 필드)
 slack-cli messages "#general" --expand blocks,reactions # 필드 확장
 slack-cli messages "#general" --oldest 2025-01-01 --latest 2025-01-31
@@ -194,12 +195,12 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 <!-- scopes:user -->
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
-chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  im:write  mpim:history
-mpim:read  mpim:write  pins:read  pins:write
-reactions:read  reactions:write  search:read.files  search:read.im
-search:read.mpim  search:read.private  search:read.public  search:read.users
-users:read  users:read.email
+chat:write  emoji:read  files:write  groups:history
+groups:read  im:history  im:read  im:write
+mpim:history  mpim:read  mpim:write  pins:read
+pins:write  reactions:read  reactions:write  search:read.files
+search:read.im  search:read.mpim  search:read.private  search:read.public
+search:read.users  users:read  users:read.email
 ```
 <!-- /scopes:user -->
 
@@ -222,11 +223,11 @@ slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 <!-- scopes:bot -->
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
-chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  im:write  metadata.message:read
-mpim:history  mpim:read  mpim:write  pins:read
-pins:write  reactions:read  reactions:write  search:read.public
-users:read  users:read.email
+chat:write  emoji:read  files:write  groups:history
+groups:read  im:history  im:read  im:write
+metadata.message:read  mpim:history  mpim:read  mpim:write
+pins:read  pins:write  reactions:read  reactions:write
+search:read.public  users:read  users:read.email
 ```
 <!-- /scopes:bot -->
 
@@ -393,6 +394,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `unschedule <ch> <id>` | 예약 취소 (게시 60초 전부터 불가) |
 | `scheduled [--channel <ch>]` | 이 토큰으로 예약한 메시지 목록 (Slack 앱에서 예약한 것은 제외) |
 | `permalink <ch> <ts>` | 메시지 permalink URL 조회 |
+| `upload <ch> <path> [--title --comment --thread --alt-text]` | 파일을 업로드해 채널에 공유 (공유는 비동기, 큰 파일은 `connection.timeout_seconds` 조정) |
 | `messages <ch>` | 메시지 조회 |
 | `thread <ch> <ts>` | 스레드 조회 |
 | `members <ch>` | 멤버 목록 |

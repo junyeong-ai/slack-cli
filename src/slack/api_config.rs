@@ -111,6 +111,7 @@ const CONVERSATIONS: MethodScopes =
 const DIRECTORY: MethodScopes = MethodScopes::shared(&["users:read", "users:read.email"]);
 const WRITE_MESSAGES: MethodScopes = MethodScopes::shared(&["chat:write"]);
 const OPEN_DIRECT_MESSAGES: MethodScopes = MethodScopes::shared(&["im:write", "mpim:write"]);
+const WRITE_FILES: MethodScopes = MethodScopes::shared(&["files:write"]);
 const READ_REACTIONS: MethodScopes = MethodScopes::shared(&["reactions:read"]);
 const WRITE_REACTIONS: MethodScopes = MethodScopes::shared(&["reactions:write"]);
 const READ_PINS: MethodScopes = MethodScopes::shared(&["pins:read"]);
@@ -259,6 +260,25 @@ pub const API_METHODS: &[(&str, ApiConfig)] = &[
             token_policy: TokenPolicy::BotPreferred,
             rate_policy: rate(100, None),
             scopes: UNSCOPED,
+        },
+    ),
+    (
+        // A file reserved by one token is completed by the same token.
+        "files.getUploadURLExternal",
+        ApiConfig {
+            encoding: RequestEncoding::Json,
+            token_policy: TokenPolicy::BotPreferred,
+            rate_policy: rate(100, None),
+            scopes: WRITE_FILES,
+        },
+    ),
+    (
+        "files.completeUploadExternal",
+        ApiConfig {
+            encoding: RequestEncoding::Json,
+            token_policy: TokenPolicy::BotPreferred,
+            rate_policy: rate(100, None),
+            scopes: WRITE_FILES,
         },
     ),
     (
@@ -464,6 +484,18 @@ mod tests {
         assert_eq!(
             get_api_config("conversations.open").unwrap().token_policy,
             get_api_config("chat.postMessage").unwrap().token_policy
+        );
+    }
+
+    #[test]
+    fn an_upload_is_reserved_and_completed_by_one_actor() {
+        assert_eq!(
+            get_api_config("files.getUploadURLExternal")
+                .unwrap()
+                .token_policy,
+            get_api_config("files.completeUploadExternal")
+                .unwrap()
+                .token_policy
         );
     }
 

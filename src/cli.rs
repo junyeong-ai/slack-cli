@@ -177,6 +177,25 @@ pub enum Command {
         channel: Option<String>,
     },
 
+    #[command(
+        about = "Upload a file and share it in a channel",
+        long_about = "Upload a file and share it in a channel. Slack shares it asynchronously, \
+                      so it can take a moment to appear. A large file needs \
+                      `connection.timeout_seconds` long enough to send it."
+    )]
+    Upload {
+        channel: String,
+        path: PathBuf,
+        #[arg(long, help = "Title shown for the file (default: its name)")]
+        title: Option<String>,
+        #[arg(long, help = "Message posted with the file")]
+        comment: Option<String>,
+        #[arg(long, help = "Share as a reply in the given thread ts")]
+        thread: Option<String>,
+        #[arg(long, help = "Description of an image for screen readers")]
+        alt_text: Option<String>,
+    },
+
     #[command(about = "Get the permalink URL for a message")]
     Permalink { channel: String, ts: String },
 

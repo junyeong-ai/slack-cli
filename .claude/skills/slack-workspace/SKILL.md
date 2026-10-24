@@ -87,6 +87,7 @@ slack-cli permalink <channel> <ts> --json
 slack-cli send   <channel> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] [--thread <ts>] --json
 slack-cli update <channel> <ts> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] --json
 slack-cli delete <channel> <ts>
+slack-cli upload <channel> <path> [--title T] [--comment TEXT] [--thread <ts>] [--alt-text TEXT] --json
 slack-cli schedule <channel> <at> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [--thread <ts>] --json
 slack-cli scheduled [--channel <channel>] --json
 slack-cli unschedule <channel> <scheduled_message_id>
@@ -174,6 +175,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `channels --json` → array, same model (default `id, name, type, members`). Member count is `members`, not `num_members`. `type` is a display string (`Public`, `Private`, `DM`, `Group`) — not the API's `channel_types` tokens.
 - `members --json` → array of user-id strings (`["U123", "U456", ...]`), not user objects.
 - `dm --json` → `{channel}`.
+- `upload --json` → `{id, title}`. Slack shares the file asynchronously, so it can take a moment to appear in the channel.
 - `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, files, metadata`, plus `--expand`. Fields a message lacks are omitted. `files` lists `{id, name, title, mimetype, size, mode, permalink}` per shared file; a message that only shares a file has empty `text`, and `mode: "tombstone"` marks a deleted one.
 - `thread --json` → the same envelope, oldest first; the first page leads with the parent. A non-null `next_cursor` means the thread continues — follow it before summarizing.
 - `send --json`, `update --json`, `delete --json` → `{channel, ts}`.

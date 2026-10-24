@@ -193,6 +193,29 @@ impl SlackCore {
         }
     }
 
+    /// Sends file bytes to the URL `files.getUploadURLExternal` issued. That
+    /// URL authorizes the upload itself, so no token is attached, and like
+    /// every write it is not replayed after an unknown outcome.
+    pub(crate) async fn send_upload(&self, url: &str, content: Vec<u8>) -> Result<()> {
+        let response = self
+            .http
+            .post(url)
+            .body(content)
+            .send()
+            .await
+            .map_err(|source| SlackApiError::Transport { source })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(SlackApiError::Http {
+                method: "file upload".to_string(),
+                status,
+                body: response.text().await.unwrap_or_default(),
+            }
+            .into());
+        }
+        Ok(())
+    }
+
     pub async fn api_call_with(&self, method: &str, params: Value, token: &str) -> Result<Value> {
         let api_config = lookup_config(method)?;
         self.dispatch(method, api_config, params, token, None).await

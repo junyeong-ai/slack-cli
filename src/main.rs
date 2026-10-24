@@ -274,6 +274,49 @@ async fn run(cli: Cli) -> Result<()> {
             format::print_scheduled(&messages, cli.json);
         }
 
+        Command::Upload {
+            channel,
+            path,
+            title,
+            comment,
+            thread,
+            alt_text,
+        } => {
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .with_context(|| format!("{} does not name a file", path.display()))?
+                .to_owned();
+            let content = tokio::fs::read(&path)
+                .await
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
+            let file = slack
+                .files
+                .upload(
+                    &id,
+                    &filename,
+                    content,
+                    slack::UploadOptions {
+                        title,
+                        initial_comment: comment,
+                        thread_ts: thread,
+                        alt_txt: alt_text,
+                    },
+                )
+                .await?;
+
+            if cli.json {
+                format::print_json(&file);
+            } else {
+                println!(
+                    "✓ Uploaded {} (id: {})",
+                    file.title.as_deref().unwrap_or(&filename),
+                    file.id
+                );
+            }
+        }
+
         Command::Permalink { channel, ts } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let link = slack.messages.permalink(&id, &ts).await?;

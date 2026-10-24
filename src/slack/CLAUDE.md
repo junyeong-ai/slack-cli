@@ -8,7 +8,7 @@ Verb-only, no noun redundancy. Match the Slack API verb when one exists.
 
 - `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`, `messages.permalink`, `messages.schedule`, `messages.scheduled`, `messages.delete_scheduled`
 - `users.list`, `channels.list`, `channels.members`
-- `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`, `search.info`
+- `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`, `search.info`, `files.upload`, `channels.open`
 - `auth.test`, `auth.revoke`, `apps.connection`
 
 Never `send_message`, `fetch_all_*`, `get_*`. When the Slack API verb is `getX` (e.g. `chat.getPermalink`), drop the `get` prefix so the method reads as a noun.
@@ -72,9 +72,11 @@ Declared per method in `api_config.rs::API_METHODS`. The enum lives in `auth::po
 
 When Slack answers `missing_scope`, `SlackCore` reports which scopes the method declares for the kind of token it sent — `Authenticator::token_for` returns that kind for this reason. There is no pre-flight check: a pasted token records no scopes, so the only sound signal is Slack's own refusal.
 
-### Exception: `oauth.v2.access`
+### Exceptions: `oauth.v2.access` and the file upload URL
 
-The only Slack endpoint outside `SlackCore` dispatch. It has no `Authorization` header and uses a different response envelope. Lives in `auth/oauth/exchange.rs` with a dedicated `reqwest::Client`.
+`oauth.v2.access` is the one Slack method outside `SlackCore` dispatch. It has no `Authorization` header and uses a different response envelope. Lives in `auth/oauth/exchange.rs` with a dedicated `reqwest::Client`.
+
+File bytes go to the URL `files.getUploadURLExternal` issues, through `SlackCore::send_upload`. The URL authorizes the upload itself, so no token is sent to it. The reservation and `files.completeUploadExternal` share a token policy, because a file reserved by one token can only be completed by that token.
 
 For ad-hoc validation with an explicit token (login flows before persistence), use `SlackCore::api_call_with(method, params, token)` — same retry/rate-limit/JSON-envelope handling, but the token comes from the caller instead of the `Authenticator`.
 

@@ -11,7 +11,7 @@ use secrecy::SecretString;
 use serde_json::{Value, json};
 use slack_cli::auth::{AuthLoadOptions, Authenticator, EnvOverrides};
 use slack_cli::config::Config;
-use slack_cli::slack::{MessageMetadata, MessagePayload, SlackClient};
+use slack_cli::slack::{MessageMetadata, MessagePayload, SlackClient, UploadOptions};
 use wiremock::matchers::{body_partial_json, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -609,6 +609,114 @@ async fn dm_refuses_targets_slack_cannot_open_before_any_request() {
     assert!(err.to_string().contains("not a user ID"), "{err}");
 
     assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upload_sends_bytes_without_the_token_and_shares_into_the_thread() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/files.getUploadURLExternal"))
+        .and(body_partial_json(
+            json!({"filename": "report.md", "length": 5}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "upload_url": format!("{}/upload/F01", server.uri()),
+            "file_id": "F01",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/upload/F01"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let (responder, mut rx) = capture(json!({
+        "ok": true,
+        "files": [{"id": "F01", "title": "Weekly"}],
+    }));
+    Mock::given(method("POST"))
+        .and(path("/files.completeUploadExternal"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let file = client
+        .files
+        .upload(
+            "C123",
+            "report.md",
+            b"hello".to_vec(),
+            UploadOptions {
+                title: Some("Weekly".into()),
+                initial_comment: Some("see attached".into()),
+                thread_ts: Some("1700000000.000100".into()),
+                alt_txt: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(file.id, "F01");
+    let completion = rx.recv().await.unwrap();
+    assert_eq!(
+        completion["files"],
+        json!([{"id": "F01", "title": "Weekly"}])
+    );
+    assert_eq!(completion["channel_id"], json!("C123"));
+    assert_eq!(completion["thread_ts"], json!("1700000000.000100"));
+    assert_eq!(completion["initial_comment"], json!("see attached"));
+
+    let upload = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|request| request.url.path() == "/upload/F01")
+        .unwrap();
+    assert_eq!(upload.body, b"hello");
+    assert!(upload.headers.get("authorization").is_none());
+}
+
+#[tokio::test]
+async fn a_failed_byte_upload_is_never_completed() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/files.getUploadURLExternal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "upload_url": format!("{}/upload/F02", server.uri()),
+            "file_id": "F02",
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/upload/F02"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/files.completeUploadExternal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "files": []})))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let err = client
+        .files
+        .upload(
+            "C123",
+            "report.md",
+            b"hello".to_vec(),
+            UploadOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("500"), "{err}");
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@ use super::bookmarks::SlackBookmarkClient;
 use super::channels::SlackChannelClient;
 use super::core::SlackCore;
 use super::emoji::SlackEmojiClient;
+use super::files::SlackFileClient;
 use super::messages::SlackMessageClient;
 use super::pins::SlackPinClient;
 use super::reactions::SlackReactionClient;
@@ -25,6 +26,7 @@ pub struct SlackClient {
     pub channels: SlackChannelClient,
     pub reactions: SlackReactionClient,
     pub emoji: SlackEmojiClient,
+    pub files: SlackFileClient,
     pub pins: SlackPinClient,
     pub bookmarks: SlackBookmarkClient,
     pub search: SlackSearchClient,
@@ -42,6 +44,7 @@ impl SlackClient {
             channels: SlackChannelClient::new(core.clone()),
             reactions: SlackReactionClient::new(core.clone()),
             emoji: SlackEmojiClient::new(core.clone()),
+            files: SlackFileClient::new(core.clone()),
             pins: SlackPinClient::new(core.clone()),
             bookmarks: SlackBookmarkClient::new(core.clone()),
             search: SlackSearchClient::new(core),
