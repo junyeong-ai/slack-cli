@@ -92,6 +92,7 @@ fn request(server: &MockServer, binary: &Path) -> UpdateRequest {
         check: false,
         force: false,
         assume_yes: true,
+        may_prompt: false,
         api_base: Some(server.uri()),
         binary: Some(binary.to_path_buf()),
         cosign: Some(false),

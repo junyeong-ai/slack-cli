@@ -123,42 +123,51 @@ fn a_login_excluding_every_scope_is_refused_before_the_browser_opens() {
 
 /// The refusal must be about there being nothing left, not about there being
 /// exclusions at all: a partial exclusion still authorizes, asking for exactly
-/// what survived.
+/// what survived. Under `--json` the URL arrives as a JSON line, which is how
+/// a program reads it.
 #[test]
 fn a_partial_exclusion_still_authorizes_for_what_remains() {
     let dir = tempfile::tempdir().unwrap();
     let (path, kept) = excluding_all_but(dir.path(), 1);
-    let port = free_loopback_port().to_string();
 
-    let mut command = Command::new(BIN);
-    command
-        .args([
-            "--config",
-            path.to_str().unwrap(),
-            "auth",
-            "login",
-            "--method",
-            "pkce",
-            "--no-browser",
-            "--port",
-            &port,
-        ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    isolate(&mut command, dir.path());
-    let mut child = command.spawn().expect("binary runs");
+    for json in [false, true] {
+        let port = free_loopback_port().to_string();
+        let mut command = Command::new(BIN);
+        command.args(["--config", path.to_str().unwrap()]);
+        if json {
+            command.arg("--json");
+        }
+        command
+            .args([
+                "auth",
+                "login",
+                "--method",
+                "pkce",
+                "--no-browser",
+                "--port",
+                &port,
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        isolate(&mut command, dir.path());
+        let mut child = command.spawn().expect("binary runs");
 
-    // It offers the URL and then waits for a redirect that never comes, so the
-    // URL is read from the pipe rather than by waiting for the process.
-    let mut reader = std::io::BufReader::new(child.stderr.take().expect("stderr piped"));
-    let url = read_authorize_url(&mut reader);
-    child.kill().ok();
-    child.wait().ok();
+        // It offers the URL and then waits for a redirect that never comes, so
+        // the URL is read from the pipe rather than by waiting for the process.
+        let mut reader = std::io::BufReader::new(child.stderr.take().expect("stderr piped"));
+        let url = if json {
+            read_json_prompt(&mut reader)
+        } else {
+            read_authorize_url(&mut reader)
+        };
+        child.kill().ok();
+        child.wait().ok();
 
-    let url = url.expect("an authorize URL is offered");
-    // Compared as a set: one scope is a prefix of another, so a substring
-    // check would find an excluded scope inside a requested one.
-    assert_eq!(requested_scopes(&url), kept, "url: {url}");
+        let url = url.unwrap_or_else(|| panic!("json={json}: an authorize URL is offered"));
+        // Compared as a set: one scope is a prefix of another, so a substring
+        // check would find an excluded scope inside a requested one.
+        assert_eq!(requested_scopes(&url), kept, "url: {url}");
+    }
 }
 
 /// The `user_scope` parameter, decoded. Only the two escapes the CLI can emit
@@ -182,6 +191,24 @@ fn requested_scopes(url: &str) -> Vec<String> {
         .filter(|scope| !scope.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+/// Under `--json` every stderr line is a JSON object, and the prompt is the
+/// one carrying `authorize_url`; a log record may come before it.
+fn read_json_prompt(reader: &mut impl std::io::BufRead) -> Option<String> {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        let record: serde_json::Value =
+            serde_json::from_str(&line).unwrap_or_else(|err| panic!("{err}: {line}"));
+        if let Some(url) = record["authorize_url"].as_str() {
+            assert_eq!(record["browser_opened"], false, "{record}");
+            return Some(url.to_string());
+        }
+    }
 }
 
 /// The CLI prints the authorization URL on stderr when it cannot open a

@@ -36,19 +36,27 @@ async fn main() -> ExitCode {
     };
     // Diagnostics follow the output mode. Under `--json` every stderr line is
     // a JSON object, so the stream that carries the error envelope parses as
-    // a whole; text is colored only for a person at a terminal.
+    // a whole; text is colored only for a person at a terminal. Nothing
+    // reaches stderr around the subscriber: an invalid RUST_LOG is reported
+    // through it, and a record it cannot write is dropped like `errln!`'s
+    // rather than retried with `eprintln!`, which panics on a closed pipe.
+    let filter = EnvFilter::builder().with_default_directive(default_level.into());
+    let (filter, rejected_filter) = match filter.from_env() {
+        Ok(from_env) => (from_env, None),
+        Err(err) => (filter.parse_lossy(""), Some(err)),
+    };
     let logs = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(default_level.into())
-                .from_env_lossy(),
-        )
+        .with_env_filter(filter)
         .with_writer(std::io::stderr)
-        .with_target(false);
+        .with_target(false)
+        .log_internal_errors(false);
     if cli.json {
         logs.json().init();
     } else {
         logs.compact().with_ansi(colors_on_stderr()).init();
+    }
+    if let Some(err) = rejected_filter {
+        tracing::warn!(%err, "ignoring RUST_LOG");
     }
 
     let as_json = cli.json;
@@ -670,6 +678,9 @@ async fn handle_self_action(action: &SelfAction, as_json: bool) -> Result<()> {
         check: *check,
         force: *force,
         assume_yes: *yes,
+        // A `--json` caller is a program: it confirms with `--yes` rather than
+        // being left waiting at a prompt it cannot see.
+        may_prompt: !as_json,
         api_base: None,
         binary: None,
         cosign: None,

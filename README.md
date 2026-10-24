@@ -270,7 +270,7 @@ slack-cli auth logout --all              # 모든 프로필 제거
 ```bash
 slack-cli self update            # 최신 릴리스로 교체 (확인 프롬프트)
 slack-cli self update --check    # 새 버전 유무만 확인
-slack-cli self update --yes      # 프롬프트 없이
+slack-cli self update --yes      # 프롬프트 없이 (터미널 밖이나 --json에서는 필수)
 slack-cli self update --force    # 선택 버전이 설치돼 있어도 재설치
 slack-cli self update --version 0.9.0   # 특정 버전으로
 ```

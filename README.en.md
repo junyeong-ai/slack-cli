@@ -270,7 +270,7 @@ Caches are isolated by profile authorization; logging in again starts a fresh ca
 ```bash
 slack-cli self update            # replace with the latest release (prompts first)
 slack-cli self update --check    # report whether a newer version exists
-slack-cli self update --yes      # skip the prompt
+slack-cli self update --yes      # skip the prompt (required off a terminal and under --json)
 slack-cli self update --force    # reinstall even if the selected version is already installed
 slack-cli self update --version 0.9.0   # install a specific release
 ```

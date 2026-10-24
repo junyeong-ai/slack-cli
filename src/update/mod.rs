@@ -19,6 +19,10 @@ pub struct UpdateRequest {
     pub force: bool,
     /// Skip the confirmation prompt.
     pub assume_yes: bool,
+    /// Whether a person at a terminal may be asked to confirm. A caller that
+    /// must never wait for typed input turns it off, and a missing
+    /// `assume_yes` is then an error.
+    pub may_prompt: bool,
     /// Environment facts the update depends on. `None` means detect: the real
     /// GitHub API, the running executable, and whether `cosign` is on `PATH`.
     /// Tests supply them so an update never depends on the machine it runs on.
@@ -110,7 +114,7 @@ pub async fn run(request: UpdateRequest) -> Result<UpdateOutcome> {
         &from,
         &to,
         request.assume_yes,
-        std::io::stdin().is_terminal(),
+        request.may_prompt && std::io::stdin().is_terminal(),
     )? {
         return Ok(unchanged(Action::Cancelled));
     }

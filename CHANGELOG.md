@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Under `--json`, `self update` needs `--yes`, as it does off a terminal, instead of asking at a terminal. A `--json` caller is a program, and the question was the one stderr line that was not JSON.
+
 ### Fixed
 
+- A command that logs a warning, such as a rate-limit retry, while its stderr is a closed pipe exits with its usual status instead of aborting. 0.20.1 covered only the error message.
+- An invalid `RUST_LOG` is ignored as a whole and reported as a warning, a JSON record under `--json`, instead of in a plain-text line that kept its valid directives.
 - `curl … | bash`, the documented way to run `install.sh`, stopped at `BASH_SOURCE[0]: unbound variable` before installing anything. It has failed since 0.14.0; running the script from a file was unaffected.
 
 ## [0.20.2] - 2026-10-24

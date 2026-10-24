@@ -37,34 +37,38 @@ fn a_closed_stdout_ends_the_command_quietly() {
     );
 }
 
-#[test]
-fn a_closed_stderr_keeps_the_exit_status() {
-    let (reader, writer) = std::io::pipe().expect("pipe");
-    drop(reader);
-    let dir = tempfile::tempdir().unwrap();
-    let config = dir.path().join("config.toml");
-    std::fs::write(&config, "[auth]\nexclude_scopes = [\"users:reed\"]\n").unwrap();
-
-    for json in [true, false] {
-        let mut command = Command::new(BIN);
-        command.args(["--config", config.to_str().unwrap()]);
-        if json {
-            command.arg("--json");
-        }
-        let status = command
-            .args(["users", "anyone"])
-            .stderr(writer.try_clone().unwrap())
+/// Both a log record and the error envelope meet the closed pipe.
+#[tokio::test]
+async fn a_closed_stderr_keeps_the_exit_status() {
+    let status_with_closed_stderr = async |json| {
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        drop(reader);
+        let mut run = rate_limited(json).await;
+        run.command
+            .stderr(writer)
             .status()
-            .expect("binary runs");
-        assert_eq!(status.code(), Some(1), "json={json}: {status:?}");
-    }
+            .await
+            .expect("binary runs")
+    };
+    let (json, text) = tokio::join!(
+        status_with_closed_stderr(true),
+        status_with_closed_stderr(false)
+    );
+    assert_eq!(json.code(), Some(4), "{json:?}");
+    assert_eq!(text.code(), Some(4), "{text:?}");
 }
 
 /// A command whose only request is refused with 429 once, so it logs one
-/// rate-limit warning and then fails with `rate_limited`. The internal-app
-/// distribution keeps `conversations.history` off the one-a-minute limit, so
-/// the retry waits only for `Retry-After`.
-async fn rate_limited(json: bool) -> std::process::Output {
+/// rate-limit warning and then fails with `rate_limited`, exit 4. The
+/// internal-app distribution keeps `conversations.history` off the
+/// one-a-minute limit, so the retry waits only for `Retry-After`.
+struct RateLimited {
+    command: tokio::process::Command,
+    _server: MockServer,
+    _dir: tempfile::TempDir,
+}
+
+async fn rate_limited(json: bool) -> RateLimited {
     let server = MockServer::start().await;
     Mock::given(path("/conversations.history"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1"))
@@ -98,27 +102,36 @@ async fn rate_limited(json: bool) -> std::process::Output {
     if json {
         command.arg("--json");
     }
-    let output = command
-        .args(["messages", "C00000001", "--limit", "1"])
+    command.args(["messages", "C00000001", "--limit", "1"]);
+    RateLimited {
+        command,
+        _server: server,
+        _dir: dir,
+    }
+}
+
+/// An invalid `RUST_LOG` is reported like any other warning, not by the log
+/// library's own plain-text line.
+#[tokio::test]
+async fn json_mode_writes_every_stderr_line_as_json() {
+    let mut run = rate_limited(true).await;
+    let output = run
+        .command
+        .env("RUST_LOG", "slack_cli=loud")
         .output()
         .await
         .unwrap();
     assert_eq!(output.status.code(), Some(4), "{output:?}");
-    output
-}
-
-#[tokio::test]
-async fn json_mode_writes_every_stderr_line_as_json() {
-    let output = rate_limited(true).await;
     let stderr = String::from_utf8(output.stderr).unwrap();
     let lines: Vec<serde_json::Value> = stderr
         .lines()
         .map(|line| serde_json::from_str(line).unwrap_or_else(|err| panic!("{err}: {line}")))
         .collect();
 
-    let [warning, envelope] = lines.as_slice() else {
-        panic!("expected a warning and the error envelope: {stderr}");
+    let [ignored_filter, warning, envelope] = lines.as_slice() else {
+        panic!("expected two warnings and the error envelope: {stderr}");
     };
+    assert_eq!(ignored_filter["fields"]["message"], "ignoring RUST_LOG");
     assert_eq!(warning["level"], "WARN", "{warning}");
     assert_eq!(warning["fields"]["method"], "conversations.history");
     assert_eq!(envelope["error"]["code"], "rate_limited");
@@ -126,7 +139,9 @@ async fn json_mode_writes_every_stderr_line_as_json() {
 
 #[tokio::test]
 async fn text_logs_carry_no_color_codes_off_a_terminal() {
-    let output = rate_limited(false).await;
+    let mut run = rate_limited(false).await;
+    let output = run.command.output().await.unwrap();
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("Rate limited"), "{stderr}");
     assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
