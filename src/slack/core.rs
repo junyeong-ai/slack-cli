@@ -76,6 +76,7 @@ impl RateGate {
 /// invocation, so callers never observe the difference.
 const HTTP_POOL_MAX_IDLE_PER_HOST: usize = 10;
 const HTTP_POOL_IDLE_TIMEOUT_SECONDS: u64 = 90;
+const IM_PAGE_SIZE: u32 = 200;
 
 /// A conversation resolved for a method, with the credential that resolved
 /// it. A user ID becomes that user's existing DM for this credential, and
@@ -195,8 +196,7 @@ impl SlackCore {
         let config = lookup_config("conversations.list")?;
         let mut cursor = None;
         loop {
-            let mut params =
-                serde_json::json!({ "types": "im", "limit": 200, "exclude_archived": false });
+            let mut params = serde_json::json!({ "types": "im", "limit": IM_PAGE_SIZE, "exclude_archived": false });
             if let Some(cursor) = cursor {
                 params["cursor"] = Value::String(cursor);
             }
