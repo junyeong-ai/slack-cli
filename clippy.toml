@@ -3,6 +3,9 @@ disallowed-methods = [
     { path = "reqwest::Client::new", reason = "use `tls::http_client_builder`, so every connection shares one trust store" },
     { path = "reqwest::ClientBuilder::new", reason = "use `tls::http_client_builder`, so every connection shares one trust store" },
     { path = "reqwest::get", reason = "use `tls::http_client_builder`, so every connection shares one trust store" },
-    { path = "tokio_tungstenite::connect_async", reason = "connect with `tls::client_config`, so Socket Mode shares the CLI's trust store" },
-    { path = "tokio_tungstenite::connect_async_with_config", reason = "connect with `tls::client_config`, so Socket Mode shares the CLI's trust store" },
+    { path = "tokio_tungstenite::connect_async", reason = "use `tls::connect_websocket`, so Socket Mode shares the CLI's trust store" },
+    { path = "tokio_tungstenite::connect_async_with_config", reason = "use `tls::connect_websocket`, so Socket Mode shares the CLI's trust store" },
+    { path = "tokio_tungstenite::connect_async_tls_with_config", reason = "use `tls::connect_websocket`, so Socket Mode shares the CLI's trust store" },
+    { path = "tokio_tungstenite::client_async_tls", reason = "use `tls::connect_websocket`, so Socket Mode shares the CLI's trust store" },
+    { path = "tokio_tungstenite::client_async_tls_with_config", reason = "use `tls::connect_websocket`, so Socket Mode shares the CLI's trust store" },
 ]

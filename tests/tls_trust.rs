@@ -1,8 +1,9 @@
 //! A Linux system with no CA certificates, such as a minimal container, still
 //! runs the CLI: it trusts the Mozilla roots built into the binary rather than
 //! failing to build any HTTP client. `SSL_CERT_FILE` and `SSL_CERT_DIR` choose
-//! where the system's roots are read from, so pointing them at nothing is that
-//! system. macOS and Windows verify through the OS and never read them.
+//! where the roots are read from, so pointing them at nothing reproduces that
+//! system, and because someone set them, the substitution is reported. macOS
+//! and Windows verify through the OS and never read them.
 
 #![cfg(target_os = "linux")]
 
@@ -22,14 +23,19 @@ fn a_system_without_ca_certificates_still_runs() {
         .env_remove("SLACK_USER_TOKEN")
         .env_remove("SLACK_BOT_TOKEN")
         .env_remove("SLACK_PROFILE")
+        .env_remove("RUST_LOG")
         .args(["--json", "auth", "scopes"])
         .output()
         .expect("binary runs");
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "status {:?}, stderr: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
+        "status {:?}, stderr: {stderr}",
+        output.status
+    );
+    assert!(
+        stderr.contains("SSL_CERT_FILE and SSL_CERT_DIR provide no CA certificates"),
+        "{stderr}"
     );
 }

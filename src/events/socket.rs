@@ -3,7 +3,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::envelope::SocketEnvelope;
 
@@ -68,11 +68,9 @@ pub struct SocketStream {
 
 impl SocketStream {
     pub async fn connect(url: &str) -> Result<Self> {
-        let connector = Connector::Rustls(crate::tls::client_config());
-        let (inner, _) =
-            tokio_tungstenite::connect_async_tls_with_config(url, None, false, Some(connector))
-                .await
-                .context("could not open the Socket Mode connection")?;
+        let inner = crate::tls::connect_websocket(url)
+            .await
+            .context("could not open the Socket Mode connection")?;
         Ok(Self { inner })
     }
 

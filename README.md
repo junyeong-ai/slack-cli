@@ -381,7 +381,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`, `config.toml [auth]`보다 우선) |
 | `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
 | `NO_COLOR` | 비어 있지 않으면 로그에 색을 쓰지 않음. 색은 stderr가 터미널일 때만 쓰입니다 |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR` | (Linux) 시스템 대신 신뢰할 CA 인증서 파일과 디렉터리 |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | (Linux) 시스템 대신 신뢰할 CA 인증서 파일과 디렉터리. 인증서를 하나도 읽지 못하면 경고를 남기고 내장 Mozilla 루트 인증서를 신뢰 |
 
 작업 디렉터리에 `.env` 파일이 있으면 위 변수들을 거기서 읽습니다.
 
