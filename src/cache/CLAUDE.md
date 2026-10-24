@@ -26,6 +26,8 @@ Any user-supplied query MUST pass through `helpers::process_fts_query` before re
 
 `schema::SCHEMA_VERSION` gates auto-migration on cache open. **Bump it whenever the cached column set or FTS5 table definition changes** — adding a generated column, changing tokenizer, renaming a JSON path. Any stored version other than the current one (older *or* newer — cache contents are refetchable, so rebuild is always safe) drops and recreates every table; without a bump the cache deserializes against a stale schema and silently returns wrong data.
 
+FTS external-content delete/update triggers must supply the old indexed values through the FTS5 `delete` command; otherwise the index keeps entries for text the rows no longer contain, and searches match stale content.
+
 ## Atomic refresh
 
 A refresh fetches Slack data before opening a write transaction. `BEGIN IMMEDIATE` serializes the snapshot replacement and its sync timestamp across processes. Readers retain the previous committed snapshot until the replacement commits. An error or a process exit rolls the transaction back; there are no application-managed lock leases. Concurrent refreshes may fetch the same data. Empty successful snapshots replace old rows and update the sync timestamp. Initialization is determined by that timestamp, independently of row count; a completed empty snapshot must not trigger a fetch on every lookup.
@@ -36,6 +38,8 @@ A refresh fetches Slack data before opening a write transaction. `BEGIN IMMEDIAT
 2. **`cache/schema.rs`**: add a generated column whose expression extracts the JSON path. Bump `SCHEMA_VERSION`.
 3. **`cache/{users,channels}.rs`**: if the field affects search ranking, also add it to the FTS5 virtual table column list and re-index after migration.
 
+## Execution and partitioning
+
 Async callers use `execute` for synchronous reads. Cache creation and snapshot writes already run on bounded blocking workers. The worker owns its transaction until completion, even when its async caller is cancelled.
 
-The CLI places each cache below an authorization-specific directory. Stored profile identity and authorization time remain stable through token rotation; a new login gets a new cache. Environment user/bot credentials and API endpoints are isolated. An unpartitioned legacy database is never reused. FTS external-content delete/update triggers must supply the old indexed values through the FTS5 `delete` command.
+The CLI places each cache below an authorization-specific directory. Stored profile identity and authorization time remain stable through token rotation; a new login gets a new cache. Environment user/bot credentials and API endpoints are isolated. An unpartitioned legacy database is never reused.

@@ -109,7 +109,7 @@ slack-cli emoji --query "party"                 # 이모지 검색
 
 ### 인증 & 캐시 & 설정
 ```bash
-slack-cli auth login                            # 새 워크스페이스 로그인 (기본: PKCE)
+slack-cli auth login                            # 새 워크스페이스 로그인 (터미널에서는 PKCE 기본)
 slack-cli auth login --method static --user-token xoxp-...  # 토큰 붙여넣기
 slack-cli auth scopes                           # 앱에 등록할 scope 확인
 slack-cli auth profiles                         # 저장된 프로필 목록
@@ -140,6 +140,9 @@ curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/
 ```bash
 # 특정 릴리스 설치
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.5.0 bash
+
+# 설치 위치 지정 (기본: ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | INSTALL_DIR="$HOME/bin" bash
 
 # 제거 (비대화형 기본값은 바이너리만 제거하고 스킬/설정은 보존)
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/uninstall.sh | bash
@@ -181,7 +184,7 @@ slack-cli auth login --method pkce --client-id <client-id>
 SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 
-`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`(`--port`로 변경)에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 포트는 앱에 등록한 Redirect URL과 정확히 같아야 합니다. 터미널에서 실행할 때만 브라우저를 열고, 그 외(스크립트·CI)에는 URL을 출력합니다 — `--no-browser`로 항상 출력하게 할 수 있습니다. 사전 준비:
+`auth login`이 로컬 콜백 서버를 `127.0.0.1:53682`(`--port`로 변경)에 잠깐 띄우고, 브라우저로 Slack 인증 페이지를 열어 코드를 받아 user token을 발급받습니다. 포트는 앱에 등록한 Redirect URL과 정확히 같아야 합니다. 터미널에서 실행할 때만 브라우저를 열고, 그 외(스크립트·CI)에는 URL을 출력합니다 — `--no-browser`로 항상 출력하게 할 수 있습니다. 스크립트에서는 방식을 고를 수 없으므로 `--method pkce`를 지정하세요. 사전 준비:
 
 1. [api.slack.com/apps](https://api.slack.com/apps)에서 앱 생성
 2. **OAuth & Permissions** → User Token Scopes에 아래 항목 추가
@@ -297,14 +300,20 @@ ttl_channels_hours = 168
 refresh_threshold_percent = 10 # TTL의 10% 시점부터 stale 경고
 channel_types = ["public_channel", "private_channel"]
                                # 캐시할 conversation 타입. 토큰이 목록을 볼 수 없는
-                               # 타입(예: groups:read 없는 private_channel)은 건너뛰고 알립니다.
+                               # 타입(예: groups:read 없는 private_channel)은 건너뜁니다. `cache refresh`와
+                               # 그 타입의 이름을 찾지 못한 오류가 건너뛴 타입을 알립니다.
                                # 허용 값: public_channel, private_channel, mpim, im
+# data_path = "~/other/place"   # 캐시 위치 (기본: 설정 디렉터리의 cache/)
 
 [output]
 users_fields    = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
 messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "files", "metadata"]
                                # 허용 값은 각 명령의 --expand 와 같음
+
+# 알 수 없는 키는 무시되지 않고 오류로 처리됩니다. 이전 버전의 잔여 키
+# (`user_token`, `bot_token`, `max_idle_per_host`, `pool_idle_timeout_seconds`)는
+# 명시적 오류로 드러나니 제거하세요.
 
 [connection]
 api_base_url = "https://slack.com/api"
@@ -336,11 +345,15 @@ name = "agent"
 type = "stdout"                # stdout | exec | http
                                # exec/http는 push, `events pull`은 pull입니다.
                                # 둘 다 쓰면 같은 이벤트가 두 번 전달됩니다.
+# command = ["my-agent"]       # exec: 실행할 프로그램과 인자. 이벤트 JSON은 stdin으로 전달
+# url = "http://127.0.0.1:8080/slack"  # http: 이벤트 JSON을 POST할 주소
+# timeout_seconds = 30         # 전달 한 번의 제한 시간 (전달은 직렬)
 
 [[events.rule]]
 name = "mention"
 on = ["message"]
 mentions_me = true
+# sinks = ["agent"]            # 일치한 이벤트를 받을 싱크 (기본: 모든 싱크)
 
 [[events.rule]]
 name = "watched-thread"
@@ -348,7 +361,6 @@ on = ["message", "reaction_added", "reaction_removed"]
 subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을 추적
 ```
 
-알 수 없는 키는 무시되지 않고 오류로 처리됩니다 — 이전 버전의 잔여 키(`user_token`, `bot_token`, `max_idle_per_host`, `pool_idle_timeout_seconds`)가 있으면 명시적 에러로 표면화되니 제거하세요.
 
 `app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
 
@@ -409,19 +421,19 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `pin <ch> <ts>` | 핀 추가 |
 | `unpin <ch> <ts>` | 핀 제거 |
 | `pins <ch>` | 핀 목록 |
-| `bookmark <ch> <title> <url>` | 북마크 추가 |
+| `bookmark <ch> <title> <url> [--emoji]` | 북마크 추가 |
 | `unbookmark <ch> <id>` | 북마크 제거 |
 | `bookmarks <ch>` | 북마크 목록 |
 | `watch` | 매칭 이벤트를 stdout으로 스트리밍 (저장 없음, 설정된 싱크도 무시) |
 | `daemon run` | Socket Mode 데몬을 포그라운드로 실행 |
 | `daemon status` | 데몬이 실행 중인지(락으로 판단), 마지막 하트비트와 카운터 |
 | `daemon stop` | 현재 프로필의 데몬에 정상 종료 요청 |
-| `events pull [--consumer --ack --follow]` | 아직 ack하지 않은 이벤트 읽기 |
+| `events pull [--consumer --limit --ack --follow]` | 아직 ack하지 않은 이벤트 읽기 (`--limit` 기본 50) |
 | `events ack --through <seq>` | 소비자 위치 전진 |
 | `events stats` | 이벤트 로그 크기·보존·소비자 지연 |
 | `events prune` | 보존 정책 즉시 적용 |
 | `events path` | 데몬 파일 위치 |
-| `cache stats/refresh/path` | 캐시 관리 및 현재 데이터베이스 경로 |
+| `cache stats/refresh/path` | 캐시 관리 및 현재 데이터베이스 경로. `refresh [users\|channels\|all]`의 `--json` 출력은 `{ok, unreadable: [{type, scope}]}` |
 | `config show/path/edit` | 설정 관리 |
 | `self update` | 최신 릴리스로 이 바이너리를 교체 |
 | `self update --check` | 업데이트 유무만 확인 (교체하지 않음) |
@@ -446,12 +458,12 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 - `-b, --blocks <SOURCE>` — Block Kit blocks (JSON array). `-` / `@file` / inline
 - `-a, --attachments <SOURCE>` — Legacy attachments (JSON array). 동일 SOURCE 어휘
 - `-m, --metadata <SOURCE>` — Message metadata `{event_type, event_payload}` (JSON object). 동일 SOURCE 어휘
-- `--thread <ts>` — (send 전용) 스레드 답장
+- `--thread <ts>` — (send·schedule) 스레드 답장
 
 `text`/`markdown_text`/`blocks`/`attachments` 중 최소 하나는 반드시 제공해야 합니다. 같은 호출에서 `-` (stdin) 은 최대 한 플래그에만 사용 가능합니다.
 
 ### messages/thread 옵션
-- `--limit <N>` — 결과 제한 (기본: `15`)
+- `--limit <N>` — 결과 제한 (기본: `15`). `app_distribution = "commercial_external"`(기본)에서는 Slack 제한에 맞춰 호출당 최대 15건이고, 한 프로세스 안의 호출은 분당 1회로 제한됩니다
 - `--cursor <cursor>` — 이전 응답의 `next_cursor` 로 다음 페이지 조회
 - `--oldest <date>` — (messages 전용) 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--latest <date>` — (messages 전용) 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
@@ -497,7 +509,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 
 ## 실시간 이벤트 (Socket Mode)
 
-Slack이 이벤트를 밀어주는 WebSocket 연결을 열고, 규칙에 걸린 것만 골라 로컬로 전달합니다. `conversations.history`는 Marketplace 미승인 상용 배포 앱에서 분당 1회·15건으로 제한될 수 있으므로 폴링으로는 여러 채널을 따라갈 수 없습니다. 이벤트 전달은 그 제한과 별개 축입니다.
+Slack이 이벤트를 밀어주는 WebSocket 연결을 열고, 규칙에 걸린 것만 골라 로컬로 전달합니다. `conversations.history`는 Marketplace 미승인 상용 배포 앱에서 분당 1회·15건으로 제한될 수 있으므로 폴링으로는 채널 한두 개 이상을 따라갈 수 없습니다. 이벤트 전달은 그 제한과 별개 축입니다.
 
 ### 앱 설정
 
@@ -581,14 +593,17 @@ set -euo pipefail
 batch=$(slack-cli events pull --consumer agent --limit 20 --json)
 while IFS= read -r event; do
     [ -n "$event" ] || continue
-    ts=$(jq -er '.thread_ts // .ts' <<<"$event")
-    ch=$(jq -er '.channel' <<<"$event")
-    id=$(jq -er '.id' <<<"$event")
     seq=$(jq -er '.seq' <<<"$event")
-    reply=$(my-agent "$event")
-    metadata=$(jq -cn --arg id "$id" \
-        '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
-    slack-cli send "$ch" --thread "$ts" -t "$reply" -m "$metadata"
+    # 반응·수정·삭제 이벤트도 규칙에 걸리지만 답장하지 않습니다.
+    if jq -e '.kind == "message" and .subtype == null' <<<"$event" >/dev/null; then
+        ts=$(jq -er '.thread_ts // .ts' <<<"$event")
+        ch=$(jq -er '.channel' <<<"$event")
+        id=$(jq -er '.id' <<<"$event")
+        reply=$(my-agent "$event")
+        metadata=$(jq -cn --arg id "$id" \
+            '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
+        slack-cli send "$ch" --thread "$ts" -t "$reply" -m "$metadata"
+    fi
     slack-cli events ack --consumer agent --through "$seq"
 done <<<"$batch"
 ```
@@ -606,7 +621,7 @@ done <<<"$batch"
 - 이벤트 저장소는 API 엔드포인트·프로필 이름·워크스페이스·사용자별로 격리합니다. 같은 소유자의 재로그인과 토큰 갱신은 저장소를 유지하고, 소유자가 달라지면 별도 저장소를 사용합니다. 환경 토큰은 토큰 조합마다 최초 한 번 검증하고 비밀정보가 없는 식별자 바인딩을 저장해 이후 로컬 조회에 사용합니다. 새 토큰 조합의 첫 로컬 조회에는 Slack 연결이 필요합니다. 선택한 저장소는 `events path`로 확인합니다.
 - 전달은 **순차적**입니다. 하나의 태스크가 파이프라인 전체를 소유하는 것이 중복 판정 게이트를 경합 없이 만들고 소비자에게 도착 순서를 보장합니다. 느린 싱크는 파이프라인을 붙잡고, 그 압력은 앞의 유계 큐가 흡수합니다(= 버립니다).
 - app-level 토큰과 user 토큰은 따로 등록되고 Slack은 둘이 같은 워크스페이스인지 확인하지 않습니다. 이 설치에 인가되지 않은 페이로드는 폐기하고 오류를 남깁니다. 판정은 `authorizations` 기준입니다 — Slack Connect 공유 채널에서는 최상위 `team_id`가 상대 조직의 것이므로, 그걸로 판정하면 상대가 보낸 메시지를 전부 버리게 됩니다.
-- Slack은 한 앱의 이벤트를 열려 있는 연결들에 **나눠서** 보냅니다. 같은 app 토큰을 서로 다른 이름의 프로필 둘에 등록하면 잠금이 분리되어 데몬 둘이 각자 절반만 보게 됩니다. 두 대에서 데몬을 띄우면 각자 절반만 봅니다 — 그래서 프로필당 하나만 실행되도록 잠급니다. 두 대가 필요하면 Slack 앱을 두 개 만드세요.
+- Slack은 한 앱의 이벤트를 열려 있는 연결들에 **나눠서** 보내므로, 같은 앱으로 연결한 데몬 둘은 각자 절반만 봅니다. 잠금은 프로필마다 데몬 하나만 허용할 뿐이라, 같은 app 토큰을 이름이 다른 프로필 둘에 등록하거나 두 대에서 실행하면 여전히 나뉩니다. 데몬마다 Slack 앱을 따로 만드세요.
 - 이모지 구독은 **스레드 시작 메시지**(또는 최상위 메시지)에 찍어야 합니다. 답글에 찍으면 그 답글이 루트인 스레드를 구독하게 됩니다.
 - Socket Mode 앱은 공개 Slack Marketplace에 등재할 수 없습니다 (조직 내 배포는 가능).
 - `watch`와 `daemon run`은 같은 프로필에서 동시에 실행할 수 없습니다. 커서·스레드 구독·중복 판정을 공유하기 때문에 하나만 잠금을 가집니다.

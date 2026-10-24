@@ -109,7 +109,7 @@ slack-cli emoji --query "party"                   # Search emoji
 
 ### Auth, Cache & Config
 ```bash
-slack-cli auth login                              # Log into a workspace (default: PKCE)
+slack-cli auth login                              # Log into a workspace (PKCE by default at a terminal)
 slack-cli auth login --method static --user-token xoxp-...  # Paste an existing token
 slack-cli auth scopes                             # Scopes to register on your app
 slack-cli auth profiles                           # List stored profiles
@@ -140,6 +140,9 @@ The installation and removal scripts require Bash and Perl with core `Fcntl`. Pr
 ```bash
 # Install a specific release
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | SLACK_CLI_VERSION=v0.5.0 bash
+
+# Install somewhere else (default: ~/.local/bin)
+curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/install.sh | INSTALL_DIR="$HOME/bin" bash
 
 # Uninstall (noninteractive default removes only the binary and keeps skill/config)
 curl -fsSL https://raw.githubusercontent.com/junyeong-ai/slack-cli/main/scripts/uninstall.sh | bash
@@ -181,7 +184,7 @@ slack-cli auth login --method pkce --client-id <client-id>
 SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 
-`auth login` briefly binds a callback server on `127.0.0.1:53682` (`--port` to change it), opens the Slack authorization page in your browser, and exchanges the code for a user token. The port has to match the Redirect URL registered on the app exactly. The browser opens only when the command is run from a terminal; anywhere else — a script, CI — the URL is printed instead, which `--no-browser` also forces. One-time setup:
+`auth login` briefly binds a callback server on `127.0.0.1:53682` (`--port` to change it), opens the Slack authorization page in your browser, and exchanges the code for a user token. The port has to match the Redirect URL registered on the app exactly. The browser opens only when the command is run from a terminal; anywhere else — a script, CI — the URL is printed instead, which `--no-browser` also forces. A script cannot be asked which method to use, so pass `--method pkce`. One-time setup:
 
 1. Create an app at [api.slack.com/apps](https://api.slack.com/apps)
 2. **OAuth & Permissions** → add the User Token Scopes below
@@ -308,8 +311,10 @@ ttl_channels_hours = 168
 refresh_threshold_percent = 10 # Warn as stale after 10% of TTL
 channel_types = ["public_channel", "private_channel"]
                                # Conversation types to cache. A type the token may not list
-                               # (e.g. private_channel without groups:read) is skipped and reported.
+                               # (e.g. private_channel without groups:read) is skipped; `cache refresh`
+                               # and the error for a name of that type report it.
                                # Allowed: public_channel, private_channel, mpim, im
+# data_path = "~/other/place"   # where the cache lives (default: cache/ under the config dir)
 
 [output]
 users_fields    = ["id", "name", "real_name", "email"]
@@ -351,11 +356,15 @@ name = "agent"
 type = "stdout"                # stdout | exec | http
                                # exec/http push; `events pull` pulls.
                                # Using both delivers every event twice.
+# command = ["my-agent"]       # exec: program and arguments; the event JSON arrives on stdin
+# url = "http://127.0.0.1:8080/slack"  # http: where to POST the event JSON
+# timeout_seconds = 30         # one delivery's time limit (delivery is serial)
 
 [[events.rule]]
 name = "mention"
 on = ["message"]
 mentions_me = true
+# sinks = ["agent"]            # sinks that receive a match (default: every sink)
 
 [[events.rule]]
 name = "watched-thread"
@@ -422,19 +431,19 @@ A `.env` file in the working directory supplies any of the above.
 | `pin <ch> <ts>` | Pin message |
 | `unpin <ch> <ts>` | Unpin message |
 | `pins <ch>` | List pins |
-| `bookmark <ch> <title> <url>` | Add bookmark |
+| `bookmark <ch> <title> <url> [--emoji]` | Add bookmark |
 | `unbookmark <ch> <id>` | Remove bookmark |
 | `bookmarks <ch>` | List bookmarks |
 | `watch` | Stream matching events to stdout (stores nothing, ignores configured sinks) |
 | `daemon run` | Run the Socket Mode daemon in the foreground |
 | `daemon status` | Whether a daemon is running (decided by its lock), its last heartbeat and counters |
 | `daemon stop` | Request graceful shutdown of the current profile's daemon |
-| `events pull [--consumer --ack --follow]` | Read events a consumer has not acknowledged |
+| `events pull [--consumer --limit --ack --follow]` | Read events a consumer has not acknowledged (`--limit` default 50) |
 | `events ack --through <seq>` | Move a consumer's position forward |
 | `events stats` | Event log size, age and consumer backlogs |
 | `events prune` | Apply the retention policy now |
 | `events path` | Where the daemon keeps its files |
-| `cache stats/refresh/path` | Cache management and the selected database path |
+| `cache stats/refresh/path` | Cache management and the selected database path. `refresh [users\|channels\|all]` prints `{ok, unreadable: [{type, scope}]}` with `--json` |
 | `config show/path/edit` | Config management |
 | `self update` | Replace this binary with the latest release |
 | `self update --check` | Report whether an update exists, changing nothing |
@@ -459,12 +468,12 @@ A `.env` file in the working directory supplies any of the above.
 - `-b, --blocks <SOURCE>` — Block Kit blocks (JSON array). `-` / `@file` / inline
 - `-a, --attachments <SOURCE>` — Legacy attachments (JSON array). Same source vocabulary
 - `-m, --metadata <SOURCE>` — Message metadata `{event_type, event_payload}` (JSON object). Same source vocabulary
-- `--thread <ts>` — (send only) Post as a reply in the given thread
+- `--thread <ts>` — (send and schedule) Post as a reply in the given thread
 
 At least one of `text` / `markdown_text` / `blocks` / `attachments` must be provided. Only one flag per invocation may read from stdin (`-`).
 
 ### messages/thread Options
-- `--limit <N>` — Limit results (default: `15`)
+- `--limit <N>` — Limit results (default: `15`). Under `app_distribution = "commercial_external"` (the default) Slack's limit caps each call at 15, and calls within one process run at most once a minute
 - `--cursor <cursor>` — Fetch the next page using `next_cursor` from the previous response
 - `--oldest <date>` — (messages only) Start time (Unix timestamp or YYYY-MM-DD)
 - `--latest <date>` — (messages only) End time (Unix timestamp or YYYY-MM-DD)
@@ -594,14 +603,17 @@ set -euo pipefail
 batch=$(slack-cli events pull --consumer agent --limit 20 --json)
 while IFS= read -r event; do
     [ -n "$event" ] || continue
-    ts=$(jq -er '.thread_ts // .ts' <<<"$event")
-    ch=$(jq -er '.channel' <<<"$event")
-    id=$(jq -er '.id' <<<"$event")
     seq=$(jq -er '.seq' <<<"$event")
-    reply=$(my-agent "$event")
-    metadata=$(jq -cn --arg id "$id" \
-        '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
-    slack-cli send "$ch" --thread "$ts" -t "$reply" -m "$metadata"
+    # Reactions, edits and deletions match rules too; they get no reply.
+    if jq -e '.kind == "message" and .subtype == null' <<<"$event" >/dev/null; then
+        ts=$(jq -er '.thread_ts // .ts' <<<"$event")
+        ch=$(jq -er '.channel' <<<"$event")
+        id=$(jq -er '.id' <<<"$event")
+        reply=$(my-agent "$event")
+        metadata=$(jq -cn --arg id "$id" \
+            '{event_type:"assistant_reply",event_payload:{source_event:$id}}')
+        slack-cli send "$ch" --thread "$ts" -t "$reply" -m "$metadata"
+    fi
     slack-cli events ack --consumer agent --through "$seq"
 done <<<"$batch"
 ```
@@ -619,7 +631,7 @@ Acknowledge each event only after successful processing. `--metadata` identifies
 - Event stores are isolated by API endpoint, profile name, workspace and user. Re-login and token rotation for the same owner preserve the store; a different owner gets a separate store. Environment credentials are verified once per credential set, then local reads use the saved nonsecret identity binding. A new credential set requires Slack access before its first local read. Use `events path` to inspect the selected store.
 - Delivery is **serial**. One task owns the whole pipeline, which is what makes the deduplication gate race-free and what keeps a consumer seeing events in arrival order. A slow sink holds the pipeline, and the bounded queue in front of it absorbs — that is, discards — the pressure.
 - The app-level token and the user token are registered separately, and Slack never checks they belong to the same workspace. A payload not authorized for this installation is discarded and reported. The judgement reads `authorizations`, not the top-level `team_id` — in a Slack Connect channel that field names the partner org, so judging on it would drop everything they say.
-- Slack **splits** an app's events across its open connections. Registering one app token under two differently named profiles gives them separate locks, so two daemons start and each sees half. Two daemons see half a workspace each, which is why one is locked per profile. Use two Slack apps if you need two machines.
+- Slack **splits** an app's events across its open connections, so two daemons on one app each see half. The lock allows one daemon per profile only: one app token registered under two differently named profiles, or run on two machines, still splits. Give each daemon its own Slack app.
 - An emoji subscription has to land on the **thread's first message** (or a top-level one). Reacting to a reply subscribes a thread rooted at that reply.
 - A Socket Mode app cannot be listed in the public Slack Marketplace (org-wide distribution is fine).
 - `watch` and `daemon run` cannot run at once for the same profile. They share cursors, thread subscriptions and deduplication keys, so only one holds the lock.

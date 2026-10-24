@@ -2,9 +2,10 @@
 
 Opens Slack's Socket Mode WebSocket, normalizes what arrives, keeps only what a
 rule matched, and hands it to whatever is consuming. The reason it exists is
-arithmetic: `conversations.history` can be limited to one request a minute and 15 messages for
-commercially distributed apps outside the Marketplace; internal apps retain their tiered limits, so polling cannot follow a workspace. Events are pushed
-on a separate axis, capped at 30,000 per workspace per hour.
+arithmetic: `conversations.history` can be limited to one request a minute and
+15 messages for commercially distributed apps outside the Marketplace; internal
+apps retain their tiered limits, so polling cannot follow a workspace. Events
+are pushed on a separate axis, capped at 30,000 per workspace per hour.
 
 ## The pipeline, in order
 
@@ -59,9 +60,13 @@ refetchable — and exactly wrong here, since Socket Mode never replays.
 `db::migrate` applies steps forward and **refuses a database written by a newer
 build** rather than rebuilding it.
 
-Event periods use checked conversions shared with configuration validation. The store validates retention seconds before opening its database; recovery checks both duration and date ranges before reading state or calling Slack.
+Event periods use checked conversions shared with configuration validation. The
+store validates retention seconds before opening its database; recovery checks
+both duration and date ranges before reading state or calling Slack.
 
-A consumer is registered at its first pull, even when the log is empty. Registration and batch selection share a transaction; spool pruning includes its unacknowledged position immediately. Age and size limits still apply.
+A consumer is registered at its first pull, even when the log is empty.
+Registration and batch selection share a transaction; spool pruning includes
+its unacknowledged position immediately. Age and size limits still apply.
 
 ## Retention is a capability, not a branch
 
@@ -77,13 +82,14 @@ what was said.
 
 ## What is guaranteed, and to whom
 
-Persisted rows are replayable within the retention and size limits. An event that matched is appended before it is
-delivered and the commit happens after both, so a crash re-delivers rather than
-drops. `append` returns the original ID and sequence for a retained row and
-whether it was newly inserted. The pipeline redelivers using that identity;
-current source, content and matching rules remain unchanged. Insertion and
-identity lookup share a transaction with respect to concurrent pruning.
-Deleted rows and stream mode retain no historical identity.
+Persisted rows are replayable within the retention and size limits. An event
+that matched is appended before it is delivered and the commit happens after
+both, so a crash re-delivers rather than drops. `append` returns the original
+ID and sequence for a retained row and whether it was newly inserted. The
+pipeline redelivers using that identity; current source, content and matching
+rules remain unchanged. Insertion and identity lookup share a transaction with
+respect to concurrent pruning. Deleted rows and stream mode retain no
+historical identity.
 
 Sinks are best-effort on top of that. A failed push is counted and logged, not
 retried: retrying inline would stall every event behind it, and one unreachable
@@ -95,9 +101,16 @@ before the daemon stops, because Slack has already been told the event
 was received and will not send it again — and an edit or a reaction cannot be
 reconstructed from history at all.
 
-Preparation failures are retried before sink delivery. Commit failures are retried separately and never replay a sink. Persistent storage failures stop the pipeline; recovery completion cannot pass a failed event.
+Preparation failures are retried before sink delivery. Commit failures are
+retried separately and never replay a sink. Persistent storage failures stop
+the pipeline; recovery completion cannot pass a failed event.
 
-Recovery pins channel and thread positions durably before opening each socket. Live traffic advances its high-water marks without changing those positions. A non-evictable completion item follows the recovered events through the serial queue and releases only its own reconnect generation. Errors and cancellation retain the checkpoint; partial thread reads advance it only through the processed prefix. Channel page limits retain the older checkpoint.
+Recovery pins channel and thread positions durably before opening each socket.
+Live traffic advances its high-water marks without changing those positions. A
+non-evictable completion item follows the recovered events through the serial
+queue and releases only its own reconnect generation. Errors and cancellation
+retain the checkpoint; partial thread reads advance it only through the
+processed prefix. Channel page limits retain the older checkpoint.
 
 ## `watch` overrides both halves of delivery
 
@@ -225,10 +238,25 @@ consumer at `events pull` instead.
 
 ## Execution boundaries
 
-`pipeline.rs` prepares and commits events on the state database executor and awaits sinks between those operations. Processing stays serial. Recovery and housekeeping use the same bounded executor; no pool wait or SQLite busy handler occupies the Socket Mode runtime. CLI event handlers live in `commands/events.rs`.
+`pipeline.rs` prepares and commits events on the state database executor and
+awaits sinks between those operations. Processing stays serial. Recovery and
+housekeeping use the same bounded executor; no pool wait or SQLite busy handler
+occupies the Socket Mode runtime. CLI event handlers live in
+`commands/events.rs`.
 
-`daemon stop` records a request in the profile state database. The daemon checks it during startup and while connected, then drains its queue before exiting. No external PID is signalled. Shutdown cancels recovery, drains the processing queue and waits for active database workers before releasing the profile lock. A record from an older daemon has no control flag; it must be stopped through its service manager before upgrading.
+`daemon stop` records a request in the profile state database. The daemon
+checks it during startup and while connected, then drains its queue before
+exiting. No external PID is signalled. Shutdown cancels recovery, drains the
+processing queue and waits for active database workers before releasing the
+profile lock. A record from an older daemon has no control flag; it must be
+stopped through its service manager before upgrading.
 
-Stdout uses one process-owned writer thread, outside the runtime blocking pool, so an unread pipe cannot hold runtime shutdown. Timeout, cancellation or write failure retires stdout until process restart; an in-flight write may still finish. Other sinks and durable log processing continue.
+Stdout uses one process-owned writer thread, outside the runtime blocking pool,
+so an unread pipe cannot hold runtime shutdown. Timeout, cancellation or write
+failure retires stdout until process restart; an in-flight write may still
+finish. Other sinks and durable log processing continue.
 
-Mentions and subscription reactions use the primary user. The default own-message filter checks all verified user and bot actor IDs, including bot-only events without a user field. Other bots remain eligible; `include_own_messages` explicitly permits own actors.
+Mentions and subscription reactions use the primary user. The default
+own-message filter checks all verified user and bot actor IDs, including
+bot-only events without a user field. Other bots remain eligible;
+`include_own_messages` explicitly permits own actors.

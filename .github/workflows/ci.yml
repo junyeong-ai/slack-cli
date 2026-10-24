@@ -22,6 +22,9 @@ env:
   RUST_BACKTRACE: "1"
   CARGO_BUILD_WARNINGS: deny
 
+# The `main` ruleset requires `test (<os>)` for each matrix value and
+# `Minimum supported Rust` by name; renaming either, or changing the matrix,
+# needs the ruleset updated (CLAUDE.md, "Build & test").
 jobs:
   test:
     runs-on: ${{ matrix.os }}

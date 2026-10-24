@@ -18,6 +18,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_WARNINGS: deny
 
+# The `main` ruleset requires every job here by name; renaming one needs the
+# ruleset updated (CLAUDE.md, "Build & test").
 jobs:
   fmt:
     name: rustfmt

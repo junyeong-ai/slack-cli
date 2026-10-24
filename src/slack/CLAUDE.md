@@ -24,7 +24,7 @@ messages.update(channel, ts, payload)                    // edit (no thread rout
 ```
 
 - `payload.validate()` enforces ≥1 content field before any HTTP call, and rejects markdown_text alongside text or blocks (Slack's `markdown_text_conflict`).
-- `into_post_json` adds `thread_ts` only on send; `into_update_json` never carries thread routing.
+- `into_post_json` (send and schedule) adds `thread_ts`; `into_update_json` never carries thread routing.
 - New send/update fields belong on `MessagePayload`, not on call sites.
 
 Metadata is a first-class field on `MessagePayload` and on `SlackMessage`. `conversations.history` and `conversations.replies` always request `include_all_metadata=true` so round-tripping correlation metadata needs no extra flag. Metadata does not prevent duplicate sends.
@@ -82,7 +82,7 @@ For ad-hoc validation with an explicit token (login flows before persistence), u
 
 ## Adding a new API method
 
-1. **`api_config.rs`**: insert into `API_METHODS` with `RequestEncoding`, `TokenPolicy`, `RatePolicy` and `MethodScopes`. `Query` is a GET, `Json` a POST with a JSON body — the convention Slack accepts almost everywhere — and `Form` a POST with `application/x-www-form-urlencoded`, for the methods where the documented content type is the only assurance there is. `apps.connections.open` is the one such method here, because the daemon cannot start without it and nothing else would reveal a mismatch. The scopes are declared here and nowhere else — the OAuth request set and the README both derive from them.
+1. **`api_config.rs`**: insert into `API_METHODS` with `RequestEncoding`, `TokenPolicy`, `RatePolicy` and `MethodScopes`. `Query` is a GET, `Json` a POST with a JSON body — the convention Slack accepts almost everywhere — and `Form` a POST with `application/x-www-form-urlencoded`, where only the documented or SDK-proven content type is safe: `apps.connections.open`, because the daemon cannot start without it and nothing else would reveal a mismatch, and the two `files.*` upload steps, which the official SDKs send as forms. The scopes are declared here and nowhere else — the OAuth request set and the README both derive from them.
 2. **`slack/{module}.rs`**: add the method to the matching `Slack*Client`. Verb-only name matching the Slack API verb.
 3. **`cli.rs`**: add a `Command` variant. Mirror Slack API parameter names for fields; use clap `long = "..."` for terse user-facing flags.
 4. **`main.rs`**: add the match arm. Resolve channel name → ID via `resolve_channel`; convert ISO dates via `parse_unix_seconds` / `parse_timestamp`.
@@ -98,9 +98,9 @@ Pagination follows the operation:
 |---|---|---|
 | Returns `(Vec<T>, Option<cursor>)` | `messages.history`, `messages.replies` | Caller decides whether to follow cursor |
 | Loops internally to a user `limit` | `search.context`, `messages.replies_with_completion` (event recovery) | Caller passes a total cap; method owns the loop |
-| Fetches every page | `users.list`, `channels.list`, `channels.members` | Directory lists populate complete cache snapshots; `channels.list` reads each configured type separately and returns the refused types in `ChannelDirectory::unreadable`; members returns the complete member list |
+| Fetches every page | `users.list`, `channels.list`, `channels.members`, `messages.scheduled` | Directory lists populate complete cache snapshots; `channels.list` reads each configured type separately and returns the refused types in `ChannelDirectory::unreadable`; members and scheduled messages return the complete list |
 
-Each internally-looping method defines its own `PAGE_SIZE` constant matching the Slack API's per-method max. Don't unify them — different endpoints cap differently (search=20, replies=1000, users/channels=200).
+Each paging method declares its own page-size constant at the Slack API's per-method maximum. Don't unify them — endpoints cap differently (search 20, scheduled 100, users and channels 200, replies and members 1000).
 
 ## Real-time Search (`search.rs`)
 
@@ -115,5 +115,7 @@ Both RTS methods are wired in: `assistant.search.context` runs the query, `assis
 ## Response shapes
 
 Domain types in `slack/types.rs` are shared across modules. Module-local result structs (e.g. `SearchMessageResult`) stay private to their module unless re-exported via `slack/mod.rs`.
+
+## Conversation targets
 
 Channel-targeted methods use `SlackCore::api_call_in_conversation` with their explicit channel field. User IDs resolve through existing IMs with the operation token, and the same token performs the operation. A method that must resolve its target before other work, such as an upload that reserves and then completes, takes a `Conversation` from `SlackCore::conversation` and makes every call through `api_call_as`, which carries that credential. Reads never open DMs; no automatic sender fallback is permitted. `auth.identities` validates each held installation actor and preserves the primary user separately from the optional bot.
