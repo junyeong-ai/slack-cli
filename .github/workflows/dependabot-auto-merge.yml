@@ -1,8 +1,9 @@
 name: Dependabot auto-merge
 
-# Queues a non-major Dependabot update to merge once the checks the `main`
-# ruleset requires have passed. A major update waits for a person. Nothing
-# from the pull request is checked out or run here.
+# Queues a Dependabot update to merge once the checks the `main` ruleset
+# requires have passed, when every version it changes stays compatible; any
+# other update waits for a person. Nothing from the pull request is checked
+# out or run here.
 on:
   pull_request:
     branches: [main]
@@ -15,7 +16,7 @@ jobs:
     if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'junyeong-ai/slack-cli'
     runs-on: ubuntu-latest
     # Dependabot runs start with a read-only token; these are the scopes
-    # enabling auto-merge needs.
+    # enabling and disabling auto-merge need.
     permissions:
       contents: write
       pull-requests: write
@@ -24,9 +25,44 @@ jobs:
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
 
-      - name: Enable auto-merge
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+      # Compatible the way Cargo reads it: the leftmost non-zero component
+      # stays, so 0.13 → 0.14 breaks like 1.x → 2.x, where `update-type`
+      # counts positions and calls it minor. A version that is not plain
+      # numbers, or an update the step above could not read, is left to a
+      # person. The queue is bound to the head commit judged here, and a
+      # group pull request can gain an update later, so a push that makes it
+      # incompatible withdraws the queue this workflow made; one a person
+      # made stays.
+      - name: Queue or withdraw auto-merge
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          UPDATES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+          COMPATIBLE: |
+            def compatibility:
+              if type == "string" and test("^v?[0-9]+(\\.[0-9]+)*$") then
+                ltrimstr("v") | split(".") | map(tonumber)
+                | (map(. != 0) | index(true)) as $major
+                | if $major == null then . else .[:$major + 1] end
+              else null end;
+            length > 0 and all(.[];
+              (.prevVersion | compatibility) as $from
+              | $from != null and $from == (.newVersion | compatibility))
+          QUEUED_BY: |
+            query($url: URI!) {
+              resource(url: $url) {
+                ... on PullRequest { autoMergeRequest { enabledBy { __typename } } }
+              }
+            }
+        run: |
+          if jq -e "$COMPATIBLE" <<<"$UPDATES" >/dev/null; then
+            gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
+          else
+            queued_by=$(gh api graphql -f url="$PR_URL" -f query="$QUEUED_BY" \
+              --jq '.data.resource.autoMergeRequest.enabledBy.__typename // ""')
+            if [ "$queued_by" = Bot ]; then
+              gh pr merge --disable-auto "$PR_URL"
+            fi
+          fi

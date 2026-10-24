@@ -53,10 +53,10 @@ jobs by exact name: `test (ubuntu-latest)`, `test (macos-latest)`,
 `actionlint`, `zizmor` and `cargo-deny`. Renaming one of them, changing the
 test matrix, or filtering when one runs leaves every pull request waiting on a
 check that never reports, so update the ruleset when such a change merges.
-Dependabot's non-major updates merge on their own once those checks pass
-(`dependabot-auto-merge.yml`), after the three-day cooldown in
-`.github/dependabot.yml`. Repository admins bypass the ruleset, which is how
-release commits reach `main` directly.
+Dependabot updates that keep every version compatible, as Cargo reads it,
+merge on their own once those checks pass (`dependabot-auto-merge.yml`),
+after the three-day cooldown in `.github/dependabot.yml`. Repository admins
+bypass the ruleset, which is how release commits reach `main` directly.
 
 ## Cross-cutting rules
 
