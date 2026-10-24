@@ -566,6 +566,52 @@ async fn replies_always_requests_include_all_metadata() {
 }
 
 #[tokio::test]
+async fn dm_opens_one_conversation_for_the_listed_users() {
+    let server = MockServer::start().await;
+    let (responder, mut rx) = capture(json!({
+        "ok": true,
+        "channel": {"id": "G01MPIM00"},
+    }));
+    Mock::given(method("POST"))
+        .and(path("/conversations.open"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let channel = client
+        .channels
+        .open(&["U0000ALICE".into(), "U00000BOB".into()])
+        .await
+        .unwrap();
+
+    assert_eq!(channel, "G01MPIM00");
+    assert_eq!(
+        rx.recv().await.unwrap()["users"],
+        json!("U0000ALICE,U00000BOB")
+    );
+}
+
+#[tokio::test]
+async fn dm_refuses_targets_slack_cannot_open_before_any_request() {
+    let server = MockServer::start().await;
+    let (client, _store) = test_client(&server).await;
+
+    let crowd: Vec<String> = (1..=9).map(|n| format!("U0000000{n}")).collect();
+    let err = client.channels.open(&crowd).await.unwrap_err();
+    assert!(err.to_string().contains("1 to 8"), "{err}");
+
+    let err = client
+        .channels
+        .open(&["#general".into()])
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("not a user ID"), "{err}");
+
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn delete_body_contains_channel_and_ts() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

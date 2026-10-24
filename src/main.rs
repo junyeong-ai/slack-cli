@@ -349,6 +349,15 @@ async fn run(cli: Cli) -> Result<()> {
             );
         }
 
+        Command::Dm { users } => {
+            let channel = slack.channels.open(&users).await?;
+            if cli.json {
+                format::print_json(&serde_json::json!({ "channel": channel }));
+            } else {
+                println!("{channel}");
+            }
+        }
+
         Command::Members { channel } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let members = slack.channels.members(&id).await?;

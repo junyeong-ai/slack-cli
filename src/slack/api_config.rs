@@ -110,6 +110,7 @@ const CONVERSATIONS: MethodScopes =
     MethodScopes::shared(&["channels:read", "groups:read", "im:read", "mpim:read"]);
 const DIRECTORY: MethodScopes = MethodScopes::shared(&["users:read", "users:read.email"]);
 const WRITE_MESSAGES: MethodScopes = MethodScopes::shared(&["chat:write"]);
+const OPEN_DIRECT_MESSAGES: MethodScopes = MethodScopes::shared(&["im:write", "mpim:write"]);
 const READ_REACTIONS: MethodScopes = MethodScopes::shared(&["reactions:read"]);
 const WRITE_REACTIONS: MethodScopes = MethodScopes::shared(&["reactions:write"]);
 const READ_PINS: MethodScopes = MethodScopes::shared(&["pins:read"]);
@@ -175,6 +176,17 @@ pub const API_METHODS: &[(&str, ApiConfig)] = &[
             token_policy: TokenPolicy::UserPreferred,
             rate_policy: rate(20, Some(1000)),
             scopes: CONVERSATIONS,
+        },
+    ),
+    (
+        // The same token policy as `chat.postMessage`: a DM belongs to the
+        // actor that opened it, and that actor is the one `send` posts as.
+        "conversations.open",
+        ApiConfig {
+            encoding: RequestEncoding::Json,
+            token_policy: TokenPolicy::BotPreferred,
+            rate_policy: rate(50, None),
+            scopes: OPEN_DIRECT_MESSAGES,
         },
     ),
     (
@@ -445,6 +457,14 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_direct_message_is_opened_by_the_actor_that_sends_to_it() {
+        assert_eq!(
+            get_api_config("conversations.open").unwrap().token_policy,
+            get_api_config("chat.postMessage").unwrap().token_policy
+        );
     }
 
     #[test]

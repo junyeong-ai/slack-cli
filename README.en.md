@@ -43,13 +43,14 @@ slack-cli send "#general" -t "Hello!"
 
 ### Channel identifier (`<channel>` argument)
 
-`#name` · `name` (unique exact cached name, case-insensitive) · `C…/G…` channel ID · `D…` DM ID · `U…/W…` user ID (looks up an existing DM accessible to the operation's token; never creates a DM)
+`#name` · `name` (unique exact cached name, case-insensitive) · `C…/G…` channel ID · `D…` DM ID · `U…/W…` user ID (looks up an existing DM accessible to the operation's token; never creates a DM — open a new one with `dm`)
 
 ### Messages
 ```bash
 slack-cli send "#general" -t "Announcement"             # Send (text)
 slack-cli send "#general" --markdown-text "**bold**"    # Send (standard Markdown, rendered by Slack)
-slack-cli send U123ABCDEF -t "DM by user-id"            # User ID → DM auto-resolution
+slack-cli send U123ABCDEF -t "DM by user-id"            # User ID → existing DM auto-resolution
+slack-cli dm U123ABCDEF,U456GHIJKL                       # DM or group DM channel ID (opened if missing)
 slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + fallback text
 slack-cli send "#general" -m @meta.json -t "deploy done" # Attach correlation metadata
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
@@ -194,12 +195,15 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
 chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  mpim:history  mpim:read
-pins:read  pins:write  reactions:read  reactions:write
-search:read.files  search:read.im  search:read.mpim  search:read.private
-search:read.public  search:read.users  users:read  users:read.email
+im:history  im:read  im:write  mpim:history
+mpim:read  mpim:write  pins:read  pins:write
+reactions:read  reactions:write  search:read.files  search:read.im
+search:read.mpim  search:read.private  search:read.public  search:read.users
+users:read  users:read.email
 ```
 <!-- /scopes:user -->
+
+You do not have to register them all. List any scope your app or workspace does not allow in `[auth].exclude_scopes`; login then succeeds, and only the commands that need that scope are unavailable.
 
 ### Method 2 — Paste an existing token (static)
 
@@ -219,9 +223,10 @@ The token is validated via `auth.test` before the profile is persisted. Pasted t
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
 chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  metadata.message:read  mpim:history
-mpim:read  pins:read  pins:write  reactions:read
-reactions:write  search:read.public  users:read  users:read.email
+im:history  im:read  im:write  metadata.message:read
+mpim:history  mpim:read  mpim:write  pins:read
+pins:write  reactions:read  reactions:write  search:read.public
+users:read  users:read.email
 ```
 <!-- /scopes:bot -->
 
@@ -404,6 +409,7 @@ A `.env` file in the working directory supplies any of the above.
 | `messages <ch>` | List messages |
 | `thread <ch> <ts>` | List thread |
 | `members <ch>` | List members |
+| `dm <users>` | Channel ID of the DM with one user or the group DM with 2–8 (opened if missing, with the token `send` uses) |
 | `search <query>` | Search with the Real-time Search API |
 | `search --capabilities` | Report whether this workspace can search semantically |
 | `react <ch> <ts> <emoji>` | Add reaction |

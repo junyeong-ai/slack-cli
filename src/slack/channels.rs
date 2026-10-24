@@ -1,10 +1,10 @@
-use anyhow::Result;
-use serde_json::json;
+use anyhow::{Context, Result};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::core::SlackCore;
-use crate::slack::{ConversationType, SlackApiError, SlackChannel};
+use crate::slack::{ConversationType, SlackApiError, SlackChannel, is_user_id};
 
 const PAGE_SIZE: u32 = 200;
 const MEMBERS_PAGE_SIZE: u32 = 1000;
@@ -102,6 +102,27 @@ impl SlackChannelClient {
         }
 
         Ok(all_channels)
+    }
+
+    /// The direct message with these users, opened when it does not exist
+    /// yet: one user is a DM, two to eight are a group DM.
+    pub async fn open(&self, users: &[String]) -> Result<String> {
+        if !(1..=8).contains(&users.len()) {
+            anyhow::bail!("a direct message takes 1 to 8 users, got {}", users.len());
+        }
+        if let Some(input) = users.iter().find(|user| !is_user_id(user)) {
+            anyhow::bail!("not a user ID: {input}. Find one with `slack-cli users <name>`");
+        }
+
+        let response = self
+            .core
+            .api_call("conversations.open", json!({ "users": users.join(",") }))
+            .await?;
+        response
+            .pointer("/channel/id")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .context("Missing channel in conversations.open response")
     }
 
     pub async fn members(&self, channel: &str) -> Result<Vec<String>> {

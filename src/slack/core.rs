@@ -187,7 +187,7 @@ impl SlackCore {
                 .map(ToOwned::to_owned);
             if cursor.is_none() {
                 anyhow::bail!(
-                    "No existing DM with user {user} is accessible to the selected {kind} token. Open a DM with that sender first, or use an accessible D channel ID"
+                    "No existing DM with user {user} is accessible to the selected {kind} token. Open one with `slack-cli dm {user}`, or use an accessible D channel ID"
                 );
             }
         }

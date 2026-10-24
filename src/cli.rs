@@ -226,6 +226,21 @@ pub enum Command {
     #[command(about = "List channel members")]
     Members { channel: String },
 
+    #[command(
+        about = "Open the direct message with one or more users",
+        long_about = "Print the channel ID of the direct message with these users, opening it \
+                      when it does not exist yet: one user is a DM, two to eight are a group DM. \
+                      It is opened with the token `send` uses, so the ID can go straight to `send`."
+    )]
+    Dm {
+        #[arg(
+            required = true,
+            value_delimiter = ',',
+            help = "User IDs (U… or W…), comma-separated"
+        )]
+        users: Vec<String>,
+    },
+
     #[command(about = "Search Slack context with Real-time Search API")]
     Search {
         #[arg(required_unless_present = "capabilities")]

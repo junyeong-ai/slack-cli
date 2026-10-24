@@ -74,6 +74,7 @@ Inside `-t` text or Block Kit `text` objects, Markdown renders literally (e.g. `
 slack-cli users    <query>   [--id U1,U2] [--expand FIELDS] [--limit N] --json
 slack-cli channels <query>   [--id C1,C2] [--expand FIELDS] [--limit N] --json
 slack-cli members  <channel>
+slack-cli dm       <user>[,<user>…]       # 1 user: DM, 2–8: group DM; opens it if missing
 
 # Reading
 slack-cli messages <channel> [--limit N] [--oldest DATE] [--latest DATE] [--exclude-bots] [--expand FIELDS] --json
@@ -161,7 +162,7 @@ generate-blocks.sh | slack-cli send "#alerts" -t "fallback" -b -
 | `#name`, `name` | Unique exact name in the local cache (case-insensitive) |
 | `C…`, `G…` | Channel ID (public / private channel, MPIM) — passthrough |
 | `D…` | DM channel ID — passthrough |
-| `U…`, `W…` | User ID — resolves an existing DM with the operation's selected token; does not create a DM or switch senders |
+| `U…`, `W…` | User ID — resolves an existing DM with the operation's selected token; does not create a DM or switch senders. When none exists, `slack-cli dm <user>` opens one with the same token and prints its ID |
 
 Names resolve via the local cache; partial matches never select a target. If the name is unknown, run `slack-cli cache refresh` and retry. When a name is ambiguous, inspect `slack-cli channels <name> --json` and select the intended ID.
 
@@ -172,6 +173,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `users --json` → array of the configured fields (default `id, name, real_name, email`) plus `--expand`. Nothing else is present.
 - `channels --json` → array, same model (default `id, name, type, members`). Member count is `members`, not `num_members`. `type` is a display string (`Public`, `Private`, `DM`, `Group`) — not the API's `channel_types` tokens.
 - `members --json` → array of user-id strings (`["U123", "U456", ...]`), not user objects.
+- `dm --json` → `{channel}`.
 - `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, files, metadata`, plus `--expand`. Fields a message lacks are omitted. `files` lists `{id, name, title, mimetype, size, mode, permalink}` per shared file; a message that only shares a file has empty `text`, and `mode: "tombstone"` marks a deleted one.
 - `thread --json` → the same envelope, oldest first; the first page leads with the parent. A non-null `next_cursor` means the thread continues — follow it before summarizing.
 - `send --json`, `update --json`, `delete --json` → `{channel, ts}`.

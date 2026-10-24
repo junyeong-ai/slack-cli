@@ -43,13 +43,14 @@ slack-cli send "#general" -t "Hello!"
 
 ### 채널 식별자 (`<channel>` 인자)
 
-`#name` · `name` (대소문자를 무시한 유일한 정확한 캐시 이름) · `C…/G…` 채널 ID · `D…` DM ID · `U…/W…` 유저 ID (실제 작업 토큰으로 접근 가능한 기존 DM을 조회하며, DM을 새로 만들지 않음)
+`#name` · `name` (대소문자를 무시한 유일한 정확한 캐시 이름) · `C…/G…` 채널 ID · `D…` DM ID · `U…/W…` 유저 ID (실제 작업 토큰으로 접근 가능한 기존 DM을 조회하며, DM을 새로 만들지 않음. 새 DM은 `dm`으로 연다)
 
 ### 메시지
 ```bash
 slack-cli send "#general" -t "공지사항입니다"           # 전송 (텍스트)
 slack-cli send "#general" --markdown-text "**볼드**"    # 전송 (표준 Markdown, Slack이 렌더링)
-slack-cli send U123ABCDEF -t "DM by user-id"           # 유저 ID → DM 자동 해석
+slack-cli send U123ABCDEF -t "DM by user-id"           # 유저 ID → 기존 DM 자동 해석
+slack-cli dm U123ABCDEF,U456GHIJKL                      # DM·그룹 DM 채널 ID (없으면 연다)
 slack-cli send "#general" -b @blocks.json -t "fallback" # Block Kit + 폴백 텍스트
 slack-cli send "#general" -m @meta.json -t "deploy done" # 추적용 metadata 첨부
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
@@ -194,12 +195,15 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
 chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  mpim:history  mpim:read
-pins:read  pins:write  reactions:read  reactions:write
-search:read.files  search:read.im  search:read.mpim  search:read.private
-search:read.public  search:read.users  users:read  users:read.email
+im:history  im:read  im:write  mpim:history
+mpim:read  mpim:write  pins:read  pins:write
+reactions:read  reactions:write  search:read.files  search:read.im
+search:read.mpim  search:read.private  search:read.public  search:read.users
+users:read  users:read.email
 ```
 <!-- /scopes:user -->
+
+모두 등록할 필요는 없습니다. 앱이나 워크스페이스가 허용하지 않는 scope는 `[auth].exclude_scopes`에 적으면 로그인이 통과하고, 그 scope가 필요한 명령만 쓸 수 없습니다.
 
 ### 방법 2 — 토큰 직접 붙여넣기 (Static)
 
@@ -219,9 +223,10 @@ slack-cli auth login --method static --user-token xoxp-... --bot-token xoxb-...
 ```
 bookmarks:read  bookmarks:write  channels:history  channels:read
 chat:write  emoji:read  groups:history  groups:read
-im:history  im:read  metadata.message:read  mpim:history
-mpim:read  pins:read  pins:write  reactions:read
-reactions:write  search:read.public  users:read  users:read.email
+im:history  im:read  im:write  metadata.message:read
+mpim:history  mpim:read  mpim:write  pins:read
+pins:write  reactions:read  reactions:write  search:read.public
+users:read  users:read.email
 ```
 <!-- /scopes:bot -->
 
@@ -391,6 +396,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `messages <ch>` | 메시지 조회 |
 | `thread <ch> <ts>` | 스레드 조회 |
 | `members <ch>` | 멤버 목록 |
+| `dm <users>` | 사용자 1명은 DM, 2~8명은 그룹 DM의 채널 ID (없으면 `send`와 같은 토큰으로 연다) |
 | `search <query>` | Real-time Search API 검색 |
 | `search --capabilities` | 워크스페이스의 시맨틱 검색 가용 여부 |
 | `react <ch> <ts> <emoji>` | 리액션 추가 |
