@@ -233,6 +233,47 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
 
+        Command::Schedule {
+            channel,
+            at,
+            content,
+            thread,
+        } => {
+            let payload = build_payload(content)?;
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
+            let scheduled = slack
+                .messages
+                .schedule(&id, at, payload, thread.as_deref())
+                .await?;
+            format::print_schedule(&scheduled, cli.json);
+        }
+
+        Command::Unschedule {
+            channel,
+            scheduled_message_id,
+        } => {
+            let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
+            slack
+                .messages
+                .delete_scheduled(&id, &scheduled_message_id)
+                .await?;
+
+            if cli.json {
+                format::print_json(&serde_json::json!({ "ok": true }));
+            } else {
+                println!("✓ Unscheduled message");
+            }
+        }
+
+        Command::Scheduled { channel } => {
+            let channel = match channel {
+                Some(input) => Some(resolve_channel(&input, &slack, &cache, cli.json).await?),
+                None => None,
+            };
+            let messages = slack.messages.scheduled(channel.as_deref()).await?;
+            format::print_scheduled(&messages, cli.json);
+        }
+
         Command::Permalink { channel, ts } => {
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let link = slack.messages.permalink(&id, &ts).await?;

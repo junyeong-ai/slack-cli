@@ -55,6 +55,9 @@ slack-cli send "#general" -m @meta.json -t "deploy done" # Attach correlation me
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
 slack-cli update "#general" 1234.5678 -t "Edited"       # Update (text/markdown_text/blocks/attachments/metadata)
 slack-cli delete "#general" 1234.5678                   # Delete
+slack-cli schedule "#general" 2026-10-25T09:00:00+09:00 -t "Standup"  # Schedule
+slack-cli scheduled                                     # Messages scheduled with this token
+slack-cli unschedule "#general" Q1298393284             # Cancel a scheduled message
 slack-cli permalink "#general" 1234.5678                # Fetch permalink URL
 slack-cli messages "#general" --limit 15                # List (lean default fields)
 slack-cli messages "#general" --expand blocks,reactions # Expand fields
@@ -394,6 +397,9 @@ A `.env` file in the working directory supplies any of the above.
 | `send <ch> [-t -b -a -m --markdown-text --thread]` | Send a message (≥1 content field required) |
 | `update <ch> <ts> [-t -b -a -m --markdown-text]` | Update a message (≥1 content field required) |
 | `delete <ch> <ts>` | Delete a message |
+| `schedule <ch> <at> [-t -b -a --markdown-text --thread]` | Schedule a message. `<at>` is Unix seconds or RFC 3339 with an offset, at most 120 days ahead; no `--metadata` |
+| `unschedule <ch> <id>` | Cancel a scheduled message (not within 60 seconds of posting) |
+| `scheduled [--channel <ch>]` | Messages scheduled with this token (not those scheduled in the Slack app) |
 | `permalink <ch> <ts>` | Fetch the permalink URL for a message |
 | `messages <ch>` | List messages |
 | `thread <ch> <ts>` | List thread |

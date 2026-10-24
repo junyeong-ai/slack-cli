@@ -6,7 +6,7 @@ Facade pattern: `SlackClient` owns one `Slack{Domain}Client` per domain. All cli
 
 Verb-only, no noun redundancy. Match the Slack API verb when one exists.
 
-- `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`, `messages.permalink`
+- `messages.send`, `messages.update`, `messages.delete`, `messages.history`, `messages.replies`, `messages.permalink`, `messages.schedule`, `messages.scheduled`, `messages.delete_scheduled`
 - `users.list`, `channels.list`, `channels.members`
 - `reactions.add`, `pins.list`, `bookmarks.add`, `emoji.search`, `search.context`, `search.info`
 - `auth.test`, `auth.revoke`, `apps.connection`
@@ -15,11 +15,12 @@ Never `send_message`, `fetch_all_*`, `get_*`. When the Slack API verb is `getX` 
 
 ## Message payload model (`MessagePayload`)
 
-`chat.postMessage` and `chat.update` share the same payload surface (text, markdown_text, blocks, attachments, metadata). `MessagePayload` captures this once:
+`chat.postMessage`, `chat.scheduleMessage` and `chat.update` share the same payload surface (text, markdown_text, blocks, attachments, metadata). `MessagePayload` captures this once:
 
 ```rust
-messages.send(channel, payload, thread_ts)   // post
-messages.update(channel, ts, payload)         // edit (no thread routing)
+messages.send(channel, payload, thread_ts)              // post
+messages.schedule(channel, post_at, payload, thread_ts) // post later; refuses metadata, which Slack never posts
+messages.update(channel, ts, payload)                    // edit (no thread routing)
 ```
 
 - `payload.validate()` enforces ≥1 content field before any HTTP call, and rejects markdown_text alongside text or blocks (Slack's `markdown_text_conflict`).

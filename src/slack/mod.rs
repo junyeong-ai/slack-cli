@@ -21,7 +21,7 @@ pub use bookmarks::Bookmark;
 pub use client::SlackClient;
 pub use emoji::CustomEmoji;
 pub use error::SlackApiError;
-pub use messages::{MessagePayload, MessageResponse};
+pub use messages::{MessagePayload, MessageResponse, ScheduleResponse, ScheduledMessage};
 pub use pins::PinnedMessage;
 pub use reactions::MessageReactions;
 pub use search::{

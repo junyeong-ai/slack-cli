@@ -199,6 +199,100 @@ async fn send_posts_markdown_text_verbatim() {
 }
 
 #[tokio::test]
+async fn schedule_posts_the_time_content_and_thread() {
+    let server = MockServer::start().await;
+    let (responder, mut rx) = capture(json!({
+        "ok": true,
+        "channel": "C123",
+        "scheduled_message_id": "Q1298393284",
+        "post_at": 1792000000,
+    }));
+    Mock::given(method("POST"))
+        .and(path("/chat.scheduleMessage"))
+        .respond_with(responder)
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let payload = MessagePayload {
+        markdown_text: Some("**standup** at 10".into()),
+        ..Default::default()
+    };
+    let scheduled = client
+        .messages
+        .schedule("C123", 1792000000, payload, Some("1700000000.000100"))
+        .await
+        .unwrap();
+
+    assert_eq!(scheduled.scheduled_message_id, "Q1298393284");
+    assert_eq!(scheduled.post_at, 1792000000);
+    let body = rx.recv().await.unwrap();
+    assert_eq!(body["post_at"], json!(1792000000));
+    assert_eq!(body["markdown_text"], json!("**standup** at 10"));
+    assert_eq!(body["thread_ts"], json!("1700000000.000100"));
+}
+
+#[tokio::test]
+async fn schedule_refuses_metadata_slack_would_never_post() {
+    let server = MockServer::start().await;
+    let (client, _store) = test_client(&server).await;
+    let payload = MessagePayload {
+        text: Some("later".into()),
+        metadata: Some(MessageMetadata {
+            event_type: "reminder".into(),
+            event_payload: json!({}),
+        }),
+        ..Default::default()
+    };
+
+    let err = client
+        .messages
+        .schedule("C123", 1792000000, payload, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("--metadata"), "{err}");
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn scheduled_collects_every_page() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat.scheduledMessages.list"))
+        .and(body_partial_json(json!({"cursor": "page-2"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "scheduled_messages": [
+                {"id": "Q2", "channel_id": "C123", "post_at": 1792000600, "date_created": 1791000000, "text": "second"}
+            ],
+            "response_metadata": {"next_cursor": ""},
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat.scheduledMessages.list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "scheduled_messages": [
+                {"id": "Q1", "channel_id": "C123", "post_at": 1792000000, "date_created": 1791000000, "text": "first"}
+            ],
+            "response_metadata": {"next_cursor": "page-2"},
+        })))
+        .mount(&server)
+        .await;
+
+    let (client, _store) = test_client(&server).await;
+    let scheduled = client.messages.scheduled(Some("C123")).await.unwrap();
+
+    let ids: Vec<&str> = scheduled
+        .iter()
+        .map(|message| message.id.as_str())
+        .collect();
+    assert_eq!(ids, ["Q1", "Q2"]);
+}
+
+#[tokio::test]
 async fn send_rejects_empty_payload_without_calling_api() {
     let server = MockServer::start().await;
     // No mock registered: any HTTP call would 404 and surface as an error

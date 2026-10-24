@@ -86,6 +86,9 @@ slack-cli permalink <channel> <ts> --json
 slack-cli send   <channel> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] [--thread <ts>] --json
 slack-cli update <channel> <ts> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [-m METADATA] --json
 slack-cli delete <channel> <ts>
+slack-cli schedule <channel> <at> [-t TEXT] [--markdown-text MD] [-b BLOCKS] [-a ATTACHMENTS] [--thread <ts>] --json
+slack-cli scheduled [--channel <channel>] --json
+slack-cli unschedule <channel> <scheduled_message_id>
 
 # Reactions, pins, bookmarks, emoji
 slack-cli react      <channel> <ts> <emoji>
@@ -172,7 +175,8 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `messages --json` → `{messages: [...], next_cursor}` envelope. `next_cursor` is `null` on the last page; otherwise pass it back via `--cursor` to fetch the next page. **Lean default** fields: `ts, user, bot_id, username, text, thread_ts, reply_count, subtype, files, metadata`, plus `--expand`. Fields a message lacks are omitted. `files` lists `{id, name, title, mimetype, size, mode, permalink}` per shared file; a message that only shares a file has empty `text`, and `mode: "tombstone"` marks a deleted one.
 - `thread --json` → the same envelope, oldest first; the first page leads with the parent. A non-null `next_cursor` means the thread continues — follow it before summarizing.
 - `send --json`, `update --json`, `delete --json` → `{channel, ts}`.
-- `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `cache refresh` with `--json` → `{ok: true}`.
+- `react`, `unreact`, `pin`, `unpin`, `unbookmark`, `unschedule`, `cache refresh` with `--json` → `{ok: true}`.
+- `schedule --json` → `{channel, scheduled_message_id, post_at}`. `scheduled --json` → array of `{id, channel_id, post_at, date_created, text}`.
 - `permalink --json` → `{permalink}`. Non-JSON output is the URL alone.
 - `reactions --json` → `{channel, ts, reactions: [{name, count, users}]}`.
 - `pins --json` → array of `{ts, text, ...}`.
@@ -185,6 +189,10 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `auth status --json` → `{profile, active, method, workspace, client_id, tokens: {user, bot, app}, authorized_at}`. `app` is the Socket Mode app-level token and is `null` unless one has been registered. Each token is `{token, expires_at, renewable, scopes}` with `token` masked (`xoxp...abcd`) and `expires_at` null when no expiry is recorded. With no stored profiles, the response is `{profiles: []}`. On `auth status --verify`, success adds the live `auth.test` shape under `verified` (`team, team_id, user, user_id`, plus optional `url, bot_id, enterprise_id, enterprise_name, is_enterprise_install`). Verification failures instead appear as `verified.error` and the report still exits `0`; inspect that field. This command inspects stored profiles, not environment-token overrides.
 - `auth profiles --json` → `{profiles: [{name, active, method, workspace, tokens}]}` where `tokens` lists which kinds are held.
 - `auth scopes --json` → `{user: [...], bot: [...], app: [...]}`, the scopes to register on the Slack app, less anything `config.toml [auth].exclude_scopes` drops. `app` contains the Socket Mode scope (`connections:write`), separate from the CLI's user/bot installation request and therefore never excludable.
+
+## Sending later
+
+A session that ends cannot send later by itself, so hand the time to Slack: `slack-cli schedule <channel> <at>`, where `<at>` is Unix seconds or RFC 3339 with an offset (`2026-10-25T09:00:00+09:00`), at most 120 days ahead. Scheduled messages cannot carry `--metadata`. `unschedule` cancels until 60 seconds before posting.
 
 ## Message metadata and retries
 

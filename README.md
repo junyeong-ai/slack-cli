@@ -55,6 +55,9 @@ slack-cli send "#general" -m @meta.json -t "deploy done" # 추적용 metadata �
 echo '{"event_type":"x","event_payload":{}}' | slack-cli send "#general" -t "x" -m -
 slack-cli update "#general" 1234.5678 -t "수정됨"       # 수정 (text/markdown_text/blocks/attachments/metadata)
 slack-cli delete "#general" 1234.5678                   # 삭제
+slack-cli schedule "#general" 2026-10-25T09:00:00+09:00 -t "스탠드업"  # 예약 전송
+slack-cli scheduled                                     # 이 토큰으로 예약한 메시지
+slack-cli unschedule "#general" Q1298393284             # 예약 취소
 slack-cli permalink "#general" 1234.5678                # permalink URL 조회
 slack-cli messages "#general" --limit 15                # 조회 (lean 기본 필드)
 slack-cli messages "#general" --expand blocks,reactions # 필드 확장
@@ -381,6 +384,9 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `send <ch> [-t -b -a -m --markdown-text --thread]` | 메시지 전송 (content 필드 ≥1 필수) |
 | `update <ch> <ts> [-t -b -a -m --markdown-text]` | 메시지 수정 (content 필드 ≥1 필수) |
 | `delete <ch> <ts>` | 메시지 삭제 |
+| `schedule <ch> <at> [-t -b -a --markdown-text --thread]` | 예약 전송. `<at>`은 Unix 초 또는 오프셋 있는 RFC 3339, 최대 120일 뒤, `--metadata` 불가 |
+| `unschedule <ch> <id>` | 예약 취소 (게시 60초 전부터 불가) |
+| `scheduled [--channel <ch>]` | 이 토큰으로 예약한 메시지 목록 (Slack 앱에서 예약한 것은 제외) |
 | `permalink <ch> <ts>` | 메시지 permalink URL 조회 |
 | `messages <ch>` | 메시지 조회 |
 | `thread <ch> <ts>` | 스레드 조회 |

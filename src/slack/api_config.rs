@@ -196,6 +196,33 @@ pub const API_METHODS: &[(&str, ApiConfig)] = &[
         },
     ),
     (
+        "chat.scheduleMessage",
+        ApiConfig {
+            encoding: RequestEncoding::Json,
+            token_policy: TokenPolicy::BotPreferred,
+            rate_policy: rate(50, None),
+            scopes: WRITE_MESSAGES,
+        },
+    ),
+    (
+        "chat.scheduledMessages.list",
+        ApiConfig {
+            encoding: RequestEncoding::Json,
+            token_policy: TokenPolicy::BotPreferred,
+            rate_policy: rate(50, None),
+            scopes: UNSCOPED,
+        },
+    ),
+    (
+        "chat.deleteScheduledMessage",
+        ApiConfig {
+            encoding: RequestEncoding::Json,
+            token_policy: TokenPolicy::BotPreferred,
+            rate_policy: rate(50, None),
+            scopes: WRITE_MESSAGES,
+        },
+    ),
+    (
         "chat.update",
         ApiConfig {
             encoding: RequestEncoding::Json,

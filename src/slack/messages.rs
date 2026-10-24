@@ -7,11 +7,32 @@ use super::core::SlackCore;
 use crate::slack::{MessageMetadata, SlackMessage};
 
 const REPLIES_PAGE_SIZE: usize = 1000;
+const SCHEDULED_PAGE_SIZE: usize = 100;
 
 #[derive(Debug, serde::Serialize, Deserialize)]
 pub struct MessageResponse {
     pub channel: String,
     pub ts: String,
+}
+
+#[derive(Debug, serde::Serialize, Deserialize)]
+pub struct ScheduleResponse {
+    pub channel: String,
+    pub scheduled_message_id: String,
+    pub post_at: i64,
+}
+
+/// A message `chat.scheduleMessage` accepted and has not posted yet. Slack
+/// lists only what the same token scheduled; the Slack app's own scheduled
+/// messages are not included.
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
+pub struct ScheduledMessage {
+    pub id: String,
+    pub channel_id: String,
+    pub post_at: i64,
+    pub date_created: i64,
+    #[serde(default)]
+    pub text: String,
 }
 
 /// Content of a `chat.postMessage` or `chat.update` call.
@@ -124,6 +145,78 @@ impl SlackMessageClient {
             channel: response["channel"].as_str().unwrap_or(channel).to_string(),
             ts: ts.to_string(),
         })
+    }
+
+    /// Slack accepts a scheduled message that carries metadata and then never
+    /// posts it, so metadata is refused here rather than lost there.
+    pub async fn schedule(
+        &self,
+        channel: &str,
+        post_at: i64,
+        payload: MessagePayload,
+        thread_ts: Option<&str>,
+    ) -> Result<ScheduleResponse> {
+        payload.validate()?;
+        if payload.metadata.is_some() {
+            anyhow::bail!("--metadata cannot be scheduled: Slack never posts such a message");
+        }
+        let mut params = payload.into_post_json(channel, thread_ts);
+        params["post_at"] = json!(post_at);
+        let response = self
+            .core
+            .api_call_in_conversation("chat.scheduleMessage", params, "channel")
+            .await?;
+
+        Ok(ScheduleResponse {
+            channel: response["channel"].as_str().unwrap_or(channel).to_string(),
+            scheduled_message_id: response["scheduled_message_id"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Missing scheduled_message_id in response"))?
+                .to_string(),
+            post_at: response["post_at"].as_i64().unwrap_or(post_at),
+        })
+    }
+
+    pub async fn scheduled(&self, channel: Option<&str>) -> Result<Vec<ScheduledMessage>> {
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut params = json!({ "limit": SCHEDULED_PAGE_SIZE });
+            if let Some(channel) = channel {
+                params["channel"] = json!(channel);
+            }
+            if let Some(cursor) = &cursor {
+                params["cursor"] = json!(cursor);
+            }
+            let mut response = self
+                .core
+                .api_call_in_conversation("chat.scheduledMessages.list", params, "channel")
+                .await?;
+            let page = response
+                .get_mut("scheduled_messages")
+                .map(Value::take)
+                .ok_or_else(|| anyhow!("Missing scheduled_messages in response"))?;
+            all.extend(serde_json::from_value::<Vec<ScheduledMessage>>(page)?);
+
+            cursor = response["response_metadata"]["next_cursor"]
+                .as_str()
+                .filter(|c| !c.is_empty())
+                .map(ToOwned::to_owned);
+            if cursor.is_none() {
+                return Ok(all);
+            }
+        }
+    }
+
+    pub async fn delete_scheduled(&self, channel: &str, scheduled_message_id: &str) -> Result<()> {
+        let params = json!({
+            "channel": channel,
+            "scheduled_message_id": scheduled_message_id,
+        });
+        self.core
+            .api_call_in_conversation("chat.deleteScheduledMessage", params, "channel")
+            .await?;
+        Ok(())
     }
 
     pub async fn update(

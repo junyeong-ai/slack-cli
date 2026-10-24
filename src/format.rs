@@ -2,7 +2,8 @@ use crate::cache::SqliteCache;
 use crate::events::{DaemonStatus, Event, PruneOutcome, StoreCaps, StoreStats};
 use crate::slack::types::{MessageFile, SlackChannel, SlackMessage, SlackUser};
 use crate::slack::{
-    Bookmark, CustomEmoji, MessageReactions, PinnedMessage, SearchCapabilities, SearchResults,
+    Bookmark, CustomEmoji, MessageReactions, PinnedMessage, ScheduleResponse, ScheduledMessage,
+    SearchCapabilities, SearchResults,
 };
 use crate::update::install::Signature;
 use crate::update::{Action, UpdateOutcome};
@@ -649,6 +650,48 @@ pub fn print_pins(pins: &[PinnedMessage], as_json: bool) {
         } else {
             println!("[{}] {}", pin.ts, preview);
         }
+    }
+}
+
+pub fn print_schedule(scheduled: &ScheduleResponse, as_json: bool) {
+    if as_json {
+        print_json(scheduled);
+        return;
+    }
+
+    println!(
+        "✓ Scheduled for {} (id: {})",
+        format_epoch(scheduled.post_at),
+        scheduled.scheduled_message_id
+    );
+}
+
+pub fn print_scheduled(messages: &[ScheduledMessage], as_json: bool) {
+    if as_json {
+        print_json(messages);
+        return;
+    }
+
+    if messages.is_empty() {
+        println!("No scheduled messages");
+        return;
+    }
+
+    for message in messages {
+        let preview: String = message.text.chars().take(60).collect();
+        let ellipsis = if message.text.chars().count() > 60 {
+            "..."
+        } else {
+            ""
+        };
+        println!(
+            "{}  {}  {}  {}{}",
+            format_epoch(message.post_at),
+            message.channel_id,
+            message.id,
+            preview,
+            ellipsis
+        );
     }
 }
 

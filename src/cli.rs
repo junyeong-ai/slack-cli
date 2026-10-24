@@ -7,6 +7,21 @@ use crate::slack::{
     SearchChannelType, SearchContentType, SearchOptions, SearchSort, SearchSortDirection,
 };
 
+/// When a scheduled message posts. A time without an offset would post at a
+/// different moment depending on the machine's timezone, so only Unix seconds
+/// and RFC 3339 times with an offset are accepted.
+fn parse_post_at(value: &str) -> Result<i64, String> {
+    value
+        .parse::<i64>()
+        .or_else(|_| {
+            chrono::DateTime::parse_from_rfc3339(value).map(|time| time.timestamp())
+        })
+        .map_err(|_| {
+            "expected Unix seconds or an RFC 3339 time with an offset, e.g. 2026-10-25T09:00:00+09:00"
+                .to_string()
+        })
+}
+
 fn parse_search_limit(value: &str) -> Result<usize, String> {
     let max = SearchOptions::MAX_LIMIT;
     let limit = value
@@ -128,6 +143,39 @@ pub enum Command {
 
     #[command(about = "Delete a message")]
     Delete { channel: String, ts: String },
+
+    #[command(
+        about = "Schedule a message for Slack to post later",
+        long_about = "Schedule a message for Slack to post later, at most 120 days ahead.\n\
+                      <AT> is Unix seconds or an RFC 3339 time with an offset, e.g. \
+                      2026-10-25T09:00:00+09:00. Content flags are the same as `send`, \
+                      except --metadata: Slack never posts a scheduled message that carries it."
+    )]
+    Schedule {
+        channel: String,
+        #[arg(value_parser = parse_post_at, conflicts_with = "metadata")]
+        at: i64,
+        #[command(flatten)]
+        content: MessageContent,
+        #[arg(long, help = "Post as a reply in the given thread ts")]
+        thread: Option<String>,
+    },
+
+    #[command(about = "Cancel a scheduled message")]
+    Unschedule {
+        channel: String,
+        scheduled_message_id: String,
+    },
+
+    #[command(
+        about = "List messages scheduled with this token",
+        long_about = "List messages scheduled with this token. Slack lists only what the \
+                      same token scheduled, so messages scheduled in the Slack app are not included."
+    )]
+    Scheduled {
+        #[arg(long, help = "Only messages scheduled for this channel")]
+        channel: Option<String>,
+    },
 
     #[command(about = "Get the permalink URL for a message")]
     Permalink { channel: String, ts: String },
@@ -606,4 +654,18 @@ pub enum RefreshTarget {
     Users,
     Channels,
     All,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scheduled_time_needs_an_unambiguous_instant() {
+        assert_eq!(parse_post_at("1792000000"), Ok(1792000000));
+        assert_eq!(parse_post_at("2026-10-25T09:00:00+09:00"), Ok(1792886400));
+        assert_eq!(parse_post_at("2026-10-25T00:00:00Z"), Ok(1792886400));
+        assert!(parse_post_at("2026-10-25T09:00:00").is_err());
+        assert!(parse_post_at("2026-10-25").is_err());
+    }
 }
