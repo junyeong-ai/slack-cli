@@ -386,7 +386,7 @@ pub async fn run(
     };
 
     if options.announce {
-        eprintln!(
+        crate::errln!(
             "watching {} as {} — rules: {} | sinks: {} | retention: {}",
             identity.team,
             identity.user,

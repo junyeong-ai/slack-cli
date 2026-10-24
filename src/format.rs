@@ -191,6 +191,21 @@ pub fn write_line(line: std::fmt::Arguments<'_>) -> Result<(), OutputError> {
     Ok(())
 }
 
+/// `eprintln!` for diagnostics, without the panic: once stderr is gone there
+/// is nowhere left to report to, so a failed write is dropped and the command
+/// keeps its exit status.
+#[macro_export]
+macro_rules! errln {
+    ($($arg:tt)*) => {
+        $crate::format::write_diagnostic(::std::format_args!($($arg)*))
+    };
+}
+
+#[doc(hidden)]
+pub fn write_diagnostic(line: std::fmt::Arguments<'_>) {
+    let _ = writeln!(std::io::stderr().lock(), "{line}");
+}
+
 /// Writes one JSON document to stdout: indented for a terminal, a single line
 /// for a pipe, which is how a program or an agent reads it.
 pub fn print_json<T: Serialize + ?Sized>(value: &T) -> Result<(), OutputError> {
@@ -416,7 +431,7 @@ pub fn print_message_page(
 
     render_messages(messages, &allowed, cache)?;
     if let Some(cursor) = next_cursor {
-        eprintln!("More messages available: rerun with --cursor {}", cursor);
+        errln!("More messages available: rerun with --cursor {}", cursor);
     }
     Ok(())
 }

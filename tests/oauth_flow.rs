@@ -74,6 +74,7 @@ async fn authorize(
             client: &client,
             user_scopes: &scopes(&["users:read", "chat:write"]),
             open_browser: false,
+            prompt: |_, _| {},
             callback_timeout: Duration::from_secs(5),
         }
         .run_with(receiver, exchange, verifier, expected_state)

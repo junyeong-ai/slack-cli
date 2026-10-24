@@ -4,12 +4,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
+use url::Url;
 
 use crate::cli::AuthAction;
 use crate::config::{AuthConfig, Config};
 use crate::format::print_json;
-use crate::outln;
 use crate::slack::{SlackClient, scopes};
+use crate::{errln, outln};
 
 use super::Authenticator;
 use super::app_credential;
@@ -137,6 +138,7 @@ async fn login(
                 api_base_url: config.connection.api_base_url.clone(),
                 port: input.port,
                 open_browser: should_open_browser(input.no_browser, std::io::stdin().is_terminal()),
+                prompt: if json { prompt_json } else { prompt_text },
                 user_scopes,
             };
             browser_login::run(request).await?
@@ -239,6 +241,21 @@ fn login_scopes(excluded: &[String]) -> Result<Vec<String>> {
 /// Opening a browser assumes someone is at this machine to see it. Without a
 /// terminal there is no one — a script, a CI job, a test — and the URL printed
 /// instead is what such a caller can act on.
+fn prompt_text(url: &Url, browser_opened: bool) {
+    if browser_opened {
+        errln!("Opened browser for Slack authorization.");
+    } else {
+        errln!("Open this URL in a browser to authorize:\n  {url}");
+    }
+}
+
+fn prompt_json(url: &Url, browser_opened: bool) {
+    errln!(
+        "{}",
+        json!({ "authorize_url": url.as_str(), "browser_opened": browser_opened })
+    );
+}
+
 const fn should_open_browser(no_browser: bool, interactive: bool) -> bool {
     !no_browser && interactive
 }

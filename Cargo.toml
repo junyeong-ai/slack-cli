@@ -47,7 +47,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
 toml = "1.1.8"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.29.0", features = ["v4"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 sha2 = "0.11.1"
@@ -66,8 +66,11 @@ wiremock = "0.6.5"
 
 [lints.clippy]
 # Command output goes through `outln!` and `format::print_json`, which return
-# a closed or failed stdout as an error where `println!` panics.
+# a closed or failed stdout as an error where `println!` panics; diagnostics
+# go through `errln!`, which drops a failed stderr write where `eprintln!`
+# panics.
 print_stdout = "warn"
+print_stderr = "warn"
 
 [profile.release]
 opt-level = 3

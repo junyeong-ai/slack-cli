@@ -381,6 +381,7 @@ A command that needs an excluded scope is refused by Slack, and the CLI names th
 | `SLACK_PROFILE` | One-shot active profile override (same as global `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | client_id for the browser logins (same as `--client-id`; outranks `config.toml [auth]`) |
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
+| `NO_COLOR` | When non-empty, logs carry no color. Color is used only when stderr is a terminal |
 
 A `.env` file in the working directory supplies any of the above.
 
@@ -486,7 +487,7 @@ The lean `messages_fields` default is `ts`, `user`, `bot_id`, `username`, `text`
 | `3` | Auth error (inspect credentials, profile selection or permissions as directed) |
 | `4` | Rate limited |
 
-Runtime failures in `--json` mode print an `{"error": {"code", "message"}}` envelope to stderr. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. In `--json` mode stdout carries one JSON document, on a single line when piped and indented on a terminal; event streams use NDJSON.
+In `--json` mode every stderr line is a JSON object too: log records carry `level` and `fields`, `auth login` announces `{"authorize_url", "browser_opened"}`, and a runtime failure ends with the `{"error": {"code", "message"}}` envelope. Usage errors (exit code `2`) happen at parse time, so they print clap's diagnostic text instead — branch on the exit code alone. `code` is Slack's own error string for API failures (`channel_not_found`, …) and otherwise one of `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`. In `--json` mode stdout carries one JSON document, on a single line when piped and indented on a terminal; event streams use NDJSON.
 
 ### search Options
 - `--limit <N>` — Total results to return (1-100, default: `10`. Auto-paginates across 20-result pages.)

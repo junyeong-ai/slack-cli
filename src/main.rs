@@ -8,13 +8,13 @@ use slack_cli::{
     auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
     cache::{self, CacheStatus},
     cli::{CacheAction, Cli, Command, ConfigAction, MessageContent, RefreshTarget, SelfAction},
-    config, format, outln,
+    config, errln, format, outln,
     paths::AppPaths,
     slack,
     slack::{ConversationType, MessageMetadata, MessagePayload, SlackApiError},
     update,
 };
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::process::ExitCode;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -34,16 +34,22 @@ async fn main() -> ExitCode {
     } else {
         LevelFilter::WARN
     };
-    tracing_subscriber::fmt()
+    // Diagnostics follow the output mode. Under `--json` every stderr line is
+    // a JSON object, so the stream that carries the error envelope parses as
+    // a whole; text is colored only for a person at a terminal.
+    let logs = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
                 .with_default_directive(default_level.into())
                 .from_env_lossy(),
         )
         .with_writer(std::io::stderr)
-        .compact()
-        .with_target(false)
-        .init();
+        .with_target(false);
+    if cli.json {
+        logs.json().init();
+    } else {
+        logs.compact().with_ansi(colors_on_stderr()).init();
+    }
 
     let as_json = cli.json;
     match run(cli).await {
@@ -54,16 +60,23 @@ async fn main() -> ExitCode {
         Err(err) => {
             let (code, exit) = classify_error(&err);
             if as_json {
-                eprintln!(
+                errln!(
                     "{}",
                     serde_json::json!({ "error": { "code": code, "message": format!("{err:#}") } })
                 );
             } else {
-                eprintln!("Error: {err:?}");
+                errln!("Error: {err:?}");
             }
             ExitCode::from(exit)
         }
     }
+}
+
+/// Colors are for a person at a terminal: a pipe, a file or a service
+/// manager's log gets plain text, and `NO_COLOR` turns them off everywhere.
+fn colors_on_stderr() -> bool {
+    std::io::stderr().is_terminal()
+        && std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty())
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -592,7 +605,7 @@ async fn run(cli: Cli) -> Result<()> {
     }
 
     if cache_status == CacheStatus::NeedsRefresh && !cli.json {
-        eprintln!("Cache is stale. Run `slack-cli cache refresh` to update local lookup data.");
+        errln!("Cache is stale. Run `slack-cli cache refresh` to update local lookup data.");
     }
 
     Ok(())
@@ -803,13 +816,10 @@ async fn ensure_users_cache(
 ) -> Result<()> {
     if !cache.execute(|cache| cache.has_users_snapshot()).await? {
         if !json {
-            eprint!("Fetching users... ");
+            errln!("Fetching users...");
         }
         let users = slack.users.list().await?;
         cache.save_users(users).await?;
-        if !json {
-            eprintln!("done");
-        }
     }
     Ok(())
 }
@@ -825,12 +835,11 @@ async fn ensure_channels_cache(
         return Ok(None);
     }
     if !json {
-        eprint!("Fetching channels... ");
+        errln!("Fetching channels...");
     }
     let directory = slack.channels.list().await?;
     cache.save_channels(directory.channels).await?;
     if !json {
-        eprintln!("done");
         report_unreadable(&directory.unreadable);
     }
     Ok(Some(directory.unreadable))
@@ -846,7 +855,7 @@ fn unreadable_note(kind: ConversationType) -> String {
 
 fn report_unreadable(unreadable: &[ConversationType]) {
     for kind in unreadable {
-        eprintln!("Skipped {}", unreadable_note(*kind));
+        errln!("Skipped {}", unreadable_note(*kind));
     }
 }
 
@@ -999,13 +1008,10 @@ async fn refresh_cache(
     match target {
         RefreshTarget::Users | RefreshTarget::All => {
             if !json {
-                eprint!("Fetching users... ");
+                errln!("Fetching users...");
             }
             let users = slack.users.list().await?;
             cache.save_users(users).await?;
-            if !json {
-                eprintln!("✓");
-            }
         }
         _ => {}
     }
@@ -1014,13 +1020,12 @@ async fn refresh_cache(
     match target {
         RefreshTarget::Channels | RefreshTarget::All => {
             if !json {
-                eprint!("Fetching channels... ");
+                errln!("Fetching channels...");
             }
             let directory = slack.channels.list().await?;
             cache.save_channels(directory.channels).await?;
             unreadable = directory.unreadable;
             if !json {
-                eprintln!("✓");
                 report_unreadable(&unreadable);
             }
         }

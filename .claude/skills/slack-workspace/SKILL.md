@@ -35,7 +35,7 @@ slack-cli search "deploy plan changes" --sort timestamp --json
 
 ## Errors and exit codes
 
-Use `--json` for machine-readable stdout; event streams use NDJSON. Runtime failures print to stderr — in `--json` mode as an `{"error": {"code", "message"}}` envelope. `code` is Slack's error string verbatim for API failures (`channel_not_found`, `missing_scope`, …), otherwise `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`.
+Use `--json` for machine-readable stdout; event streams use NDJSON. In `--json` mode every stderr line is a JSON object: log records (`level`, `fields`), then on a runtime failure the `{"error": {"code", "message"}}` envelope as the last line. `code` is Slack's error string verbatim for API failures (`channel_not_found`, `missing_scope`, …), otherwise `auth_error` / `rate_limited` / `http_error` / `network_error` / `error`.
 
 Usage errors are the one exception: they exit `2` from clap at parse time with plain diagnostic text, never the envelope — branch on the exit code alone.
 

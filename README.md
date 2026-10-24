@@ -368,6 +368,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `SLACK_PROFILE` | 활성 프로필 1회 override (= 글로벌 `--profile`) |
 | `SLACK_CLI_CLIENT_ID` | 브라우저 로그인 시 client_id (= `--client-id`, `config.toml [auth]`보다 우선) |
 | `RUST_LOG` | 로그 필터 (예: `debug`, `slack_cli::cache=debug`). 설정 시 `--verbose`보다 우선 |
+| `NO_COLOR` | 비어 있지 않으면 로그에 색을 쓰지 않음. 색은 stderr가 터미널일 때만 쓰입니다 |
 
 작업 디렉터리에 `.env` 파일이 있으면 위 변수들을 거기서 읽습니다.
 
@@ -473,7 +474,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 | `3` | 인증 오류 (오류 내용에 따라 자격 증명·프로필·권한 확인) |
 | `4` | 레이트리밋 |
 
-`--json` 모드의 런타임 실패는 stderr 로 `{"error": {"code", "message"}}` 봉투를 출력합니다. 사용법 오류(종료 코드 `2`)는 파싱 단계에서 발생하므로 clap 의 진단 텍스트가 그대로 출력됩니다 — 종료 코드만으로 구분하면 됩니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. `--json`의 stdout에는 JSON 문서 하나가 출력됩니다. 파이프로 읽으면 한 줄로, 터미널에서는 들여쓰기해 출력하며, 이벤트 스트림은 NDJSON 형식입니다.
+`--json` 모드에서는 stderr의 각 줄도 JSON 객체입니다. 로그는 `level`과 `fields`를 가진 레코드로, `auth login`의 인증 안내는 `{"authorize_url", "browser_opened"}`로 출력되며, 런타임 실패는 마지막 줄에 `{"error": {"code", "message"}}` 봉투로 출력됩니다. 사용법 오류(종료 코드 `2`)는 파싱 단계에서 발생하므로 clap 의 진단 텍스트가 그대로 출력됩니다 — 종료 코드만으로 구분하면 됩니다. `code` 는 Slack API 오류면 Slack 의 오류 문자열 그대로(`channel_not_found` 등), 그 외에는 `auth_error` / `rate_limited` / `http_error` / `network_error` / `error` 입니다. `--json`의 stdout에는 JSON 문서 하나가 출력됩니다. 파이프로 읽으면 한 줄로, 터미널에서는 들여쓰기해 출력하며, 이벤트 스트림은 NDJSON 형식입니다.
 
 ### search 옵션
 - `--limit <N>` — 총 결과 수 (1-100, 기본: `10`. 20개 단위 페이지로 자동 페이징)

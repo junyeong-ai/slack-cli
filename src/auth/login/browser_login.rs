@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use chrono::Utc;
+use url::Url;
 
 use crate::auth::credential::TokenSet;
 use crate::auth::method::AuthMethod;
@@ -19,6 +20,7 @@ pub struct Request {
     pub api_base_url: String,
     pub port: u16,
     pub open_browser: bool,
+    pub prompt: fn(&Url, bool),
     pub user_scopes: Vec<String>,
 }
 
@@ -35,6 +37,7 @@ pub async fn run(request: Request) -> Result<Profile> {
         client: &request.client,
         user_scopes: &request.user_scopes,
         open_browser: request.open_browser,
+        prompt: request.prompt,
         callback_timeout: CALLBACK_TIMEOUT,
     }
     .run(receiver, exchange)

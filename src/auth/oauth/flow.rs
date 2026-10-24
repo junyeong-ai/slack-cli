@@ -19,6 +19,10 @@ pub struct Authorization<'a> {
     pub client: &'a OAuthClient,
     pub user_scopes: &'a [String],
     pub open_browser: bool,
+    /// Tells the person completing the flow where to authorize, given the
+    /// URL and whether a browser was opened on it. The caller chooses the
+    /// form, since only it knows the output mode.
+    pub prompt: fn(&Url, bool),
     pub callback_timeout: Duration,
 }
 
@@ -49,11 +53,8 @@ impl Authorization<'_> {
         let redirect_uri = receiver.redirect_uri();
         let url = self.authorize_url(&redirect_uri, &verifier, &expected_state);
 
-        if self.open_browser && browser::open(url.as_str()) {
-            eprintln!("Opened browser for Slack authorization.");
-        } else {
-            eprintln!("Open this URL in a browser to authorize:\n  {url}");
-        }
+        let opened = self.open_browser && browser::open(url.as_str());
+        (self.prompt)(&url, opened);
 
         let callback = receiver.accept_once(self.callback_timeout).await?;
         if callback.state != expected_state {
@@ -102,6 +103,7 @@ mod tests {
             client: &client,
             user_scopes: &user,
             open_browser: false,
+            prompt: |_, _| {},
             callback_timeout: Duration::from_secs(1),
         };
         authorization
