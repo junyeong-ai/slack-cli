@@ -294,6 +294,7 @@ channel_types = ["public_channel", "private_channel"]
 users_fields    = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
 messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "metadata"]
+                               # 허용 값은 각 명령의 --expand 와 같음
 
 [connection]
 api_base_url = "https://slack.com/api"
@@ -419,7 +420,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 ### users/channels 옵션
 - `--limit <N>` — 결과 제한 (기본: `10`)
 - `--id <ids>` — ID로 조회 (쉼표 구분)
-- `--expand <fields>` — 기본 필드 외 추가로 노출할 필드
+- `--expand <fields>` — 기본 필드 외 추가로 노출할 필드. 목록에 없는 이름은 종료 코드 `2`로 거부
   - users: `display_name`, `status`, `status_emoji`, `avatar`, `title`, `timezone`, `is_admin`, `is_bot`, `deleted`
   - channels: `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private`, `user` (DM 의 상대 user id)
 
@@ -439,7 +440,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 - `--oldest <date>` — (messages 전용) 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--latest <date>` — (messages 전용) 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--exclude-bots` — 봇 메시지 제외 (messages·thread 공통)
-- `--expand <fields>` — 기본 필드에 추가로 노출할 필드
+- `--expand <fields>` — 기본 필드에 추가로 노출할 필드. 목록에 없는 이름은 종료 코드 `2`로 거부
   - 계산 필드: `date`, `user_name`
   - 응답 필드: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
 

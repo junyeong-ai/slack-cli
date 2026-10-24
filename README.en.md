@@ -305,6 +305,7 @@ channel_types = ["public_channel", "private_channel"]
 users_fields    = ["id", "name", "real_name", "email"]
 channels_fields = ["id", "name", "type", "members"]
 messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "reply_count", "subtype", "metadata"]
+                               # Allowed: the same names as each command's --expand
 
 # Unknown keys are rejected (not silently ignored). Stale keys from prior
 # versions (`user_token`, `bot_token`, `max_idle_per_host`,
@@ -432,7 +433,7 @@ A `.env` file in the working directory supplies any of the above.
 ### users/channels Options
 - `--limit <N>` — Limit results (default: `10`)
 - `--id <ids>` — Lookup by IDs (comma-separated)
-- `--expand <fields>` — Extra fields beyond the defaults
+- `--expand <fields>` — Extra fields beyond the defaults. A name outside the list exits with code `2`
   - users: `display_name`, `status`, `status_emoji`, `avatar`, `title`, `timezone`, `is_admin`, `is_bot`, `deleted`
   - channels: `topic`, `purpose`, `created`, `creator`, `is_member`, `is_archived`, `is_private`, `user` (the DM peer's user id)
 
@@ -452,7 +453,7 @@ At least one of `text` / `markdown_text` / `blocks` / `attachments` must be prov
 - `--oldest <date>` — (messages only) Start time (Unix timestamp or YYYY-MM-DD)
 - `--latest <date>` — (messages only) End time (Unix timestamp or YYYY-MM-DD)
 - `--exclude-bots` — Exclude bot messages (messages and thread)
-- `--expand <fields>` — Extra fields beyond the lean default
+- `--expand <fields>` — Extra fields beyond the lean default. A name outside the list exits with code `2`
   - Computed: `date`, `user_name`
   - Response: `blocks`, `attachments`, `reactions`, `edited`, `parent_user_id`, `reply_users`, `reply_users_count`, `latest_reply`, `channel`, `permalink`
 

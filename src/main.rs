@@ -605,13 +605,11 @@ fn handle_config_action(
     }
 }
 
-fn merge_fields(defaults: &[String], expand: Option<&[String]>) -> Vec<String> {
+fn merge_fields<F: Copy + PartialEq>(defaults: &[F], expand: Option<&[F]>) -> Vec<F> {
     let mut fields = defaults.to_vec();
-    if let Some(extra) = expand {
-        for f in extra {
-            if !fields.contains(f) {
-                fields.push(f.clone());
-            }
+    for &field in expand.unwrap_or_default() {
+        if !fields.contains(&field) {
+            fields.push(field);
         }
     }
     fields

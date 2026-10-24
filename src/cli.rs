@@ -2,6 +2,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 use crate::auth::AuthMethod;
+use crate::format::{ChannelField, MessageField, UserField};
 use crate::slack::{
     SearchChannelType, SearchContentType, SearchOptions, SearchSort, SearchSortDirection,
 };
@@ -72,11 +73,12 @@ pub enum Command {
 
         #[arg(
             long,
+            value_enum,
             value_delimiter = ',',
             value_name = "FIELDS",
-            help = "Additional fields to include [id,name,real_name,display_name,email,status,status_emoji,avatar,title,timezone,is_admin,is_bot,deleted]"
+            help = "Fields to add to the configured defaults"
         )]
-        expand: Option<Vec<String>>,
+        expand: Option<Vec<UserField>>,
     },
 
     #[command(about = "Search channels by name or get by IDs")]
@@ -92,11 +94,12 @@ pub enum Command {
 
         #[arg(
             long,
+            value_enum,
             value_delimiter = ',',
             value_name = "FIELDS",
-            help = "Additional fields to include [id,name,type,members,topic,purpose,created,creator,is_member,is_archived,is_private,user]"
+            help = "Fields to add to the configured defaults"
         )]
-        expand: Option<Vec<String>>,
+        expand: Option<Vec<ChannelField>>,
     },
 
     #[command(
@@ -144,12 +147,12 @@ pub enum Command {
         exclude_bots: bool,
         #[arg(
             long,
+            value_enum,
             value_delimiter = ',',
             value_name = "FIELDS",
-            help = "Additional fields beyond the lean default \
-                    [blocks,attachments,reactions,edited,parent_user_id,reply_users,reply_users_count,latest_reply,channel,permalink,date,user_name]"
+            help = "Fields to add to the configured defaults"
         )]
-        expand: Option<Vec<String>>,
+        expand: Option<Vec<MessageField>>,
     },
 
     #[command(about = "Read thread messages")]
@@ -162,11 +165,12 @@ pub enum Command {
         exclude_bots: bool,
         #[arg(
             long,
+            value_enum,
             value_delimiter = ',',
             value_name = "FIELDS",
-            help = "Additional fields beyond the lean default (same vocabulary as `messages --expand`)"
+            help = "Fields to add to the configured defaults"
         )]
-        expand: Option<Vec<String>>,
+        expand: Option<Vec<MessageField>>,
     },
 
     #[command(about = "List channel members")]

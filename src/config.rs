@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use crate::format::{ChannelField, MessageField, UserField};
 use crate::paths::{self, AppPaths};
 use crate::slack::ConversationType;
 
@@ -69,44 +70,45 @@ pub struct CacheConfig {
 #[serde(deny_unknown_fields)]
 pub struct OutputConfig {
     #[serde(default = "default_users_fields")]
-    pub users_fields: Vec<String>,
+    pub users_fields: Vec<UserField>,
 
     #[serde(default = "default_channels_fields")]
-    pub channels_fields: Vec<String>,
+    pub channels_fields: Vec<ChannelField>,
 
     #[serde(default = "default_messages_fields")]
-    pub messages_fields: Vec<String>,
+    pub messages_fields: Vec<MessageField>,
 }
 
-fn default_users_fields() -> Vec<String> {
-    vec!["id", "name", "real_name", "email"]
-        .into_iter()
-        .map(String::from)
-        .collect()
-}
-
-fn default_channels_fields() -> Vec<String> {
-    vec!["id", "name", "type", "members"]
-        .into_iter()
-        .map(String::from)
-        .collect()
-}
-
-fn default_messages_fields() -> Vec<String> {
+fn default_users_fields() -> Vec<UserField> {
     vec![
-        "ts",
-        "user",
-        "bot_id",
-        "username",
-        "text",
-        "thread_ts",
-        "reply_count",
-        "subtype",
-        "metadata",
+        UserField::Id,
+        UserField::Name,
+        UserField::RealName,
+        UserField::Email,
     ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+}
+
+fn default_channels_fields() -> Vec<ChannelField> {
+    vec![
+        ChannelField::Id,
+        ChannelField::Name,
+        ChannelField::Type,
+        ChannelField::Members,
+    ]
+}
+
+fn default_messages_fields() -> Vec<MessageField> {
+    vec![
+        MessageField::Ts,
+        MessageField::User,
+        MessageField::BotId,
+        MessageField::Username,
+        MessageField::Text,
+        MessageField::ThreadTs,
+        MessageField::ReplyCount,
+        MessageField::Subtype,
+        MessageField::Metadata,
+    ]
 }
 
 impl Default for OutputConfig {
@@ -923,9 +925,27 @@ impl Config {
             .collect();
         println!("  channel_types: {:?}", channel_types);
         println!("\nOutput:");
-        println!("  users_fields: {:?}", self.output.users_fields);
-        println!("  channels_fields: {:?}", self.output.channels_fields);
-        println!("  messages_fields: {:?}", self.output.messages_fields);
+        let users_fields: Vec<&str> = self
+            .output
+            .users_fields
+            .iter()
+            .map(|f| f.as_str())
+            .collect();
+        let channels_fields: Vec<&str> = self
+            .output
+            .channels_fields
+            .iter()
+            .map(|f| f.as_str())
+            .collect();
+        let messages_fields: Vec<&str> = self
+            .output
+            .messages_fields
+            .iter()
+            .map(|f| f.as_str())
+            .collect();
+        println!("  users_fields: {:?}", users_fields);
+        println!("  channels_fields: {:?}", channels_fields);
+        println!("  messages_fields: {:?}", messages_fields);
         println!("\nRetry:");
         println!("  max_attempts: {}", self.retry.max_attempts);
         println!("  initial_delay_ms: {}", self.retry.initial_delay_ms);

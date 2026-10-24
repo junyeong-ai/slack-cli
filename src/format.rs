@@ -7,8 +7,147 @@ use crate::slack::{
 use crate::update::install::Signature;
 use crate::update::{Action, UpdateOutcome};
 use chrono::DateTime;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 use std::collections::HashSet;
+
+/// A field `users` can print. `--expand` and `[output].users_fields` share
+/// this vocabulary, so a misspelled name is refused instead of printing nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
+pub enum UserField {
+    Id,
+    Name,
+    RealName,
+    DisplayName,
+    Email,
+    Status,
+    StatusEmoji,
+    Avatar,
+    Title,
+    Timezone,
+    IsAdmin,
+    IsBot,
+    Deleted,
+}
+
+impl UserField {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Name => "name",
+            Self::RealName => "real_name",
+            Self::DisplayName => "display_name",
+            Self::Email => "email",
+            Self::Status => "status",
+            Self::StatusEmoji => "status_emoji",
+            Self::Avatar => "avatar",
+            Self::Title => "title",
+            Self::Timezone => "timezone",
+            Self::IsAdmin => "is_admin",
+            Self::IsBot => "is_bot",
+            Self::Deleted => "deleted",
+        }
+    }
+}
+
+/// A field `channels` can print; shared by `--expand` and
+/// `[output].channels_fields`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
+pub enum ChannelField {
+    Id,
+    Name,
+    User,
+    Type,
+    Members,
+    Topic,
+    Purpose,
+    Created,
+    Creator,
+    IsMember,
+    IsArchived,
+    IsPrivate,
+}
+
+impl ChannelField {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Name => "name",
+            Self::User => "user",
+            Self::Type => "type",
+            Self::Members => "members",
+            Self::Topic => "topic",
+            Self::Purpose => "purpose",
+            Self::Created => "created",
+            Self::Creator => "creator",
+            Self::IsMember => "is_member",
+            Self::IsArchived => "is_archived",
+            Self::IsPrivate => "is_private",
+        }
+    }
+}
+
+/// A field `messages` and `thread` can print; shared by `--expand` and
+/// `[output].messages_fields`. Every name except the computed `date` and
+/// `user_name` is a key of the serialized `SlackMessage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
+pub enum MessageField {
+    Ts,
+    User,
+    BotId,
+    Username,
+    Text,
+    Channel,
+    ThreadTs,
+    ReplyCount,
+    ReplyUsers,
+    ReplyUsersCount,
+    LatestReply,
+    ParentUserId,
+    Reactions,
+    Subtype,
+    Edited,
+    Blocks,
+    Attachments,
+    Permalink,
+    Metadata,
+    Date,
+    UserName,
+}
+
+impl MessageField {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ts => "ts",
+            Self::User => "user",
+            Self::BotId => "bot_id",
+            Self::Username => "username",
+            Self::Text => "text",
+            Self::Channel => "channel",
+            Self::ThreadTs => "thread_ts",
+            Self::ReplyCount => "reply_count",
+            Self::ReplyUsers => "reply_users",
+            Self::ReplyUsersCount => "reply_users_count",
+            Self::LatestReply => "latest_reply",
+            Self::ParentUserId => "parent_user_id",
+            Self::Reactions => "reactions",
+            Self::Subtype => "subtype",
+            Self::Edited => "edited",
+            Self::Blocks => "blocks",
+            Self::Attachments => "attachments",
+            Self::Permalink => "permalink",
+            Self::Metadata => "metadata",
+            Self::Date => "date",
+            Self::UserName => "user_name",
+        }
+    }
+}
 
 pub fn print_path(path: &std::path::Path, as_json: bool) {
     if as_json {
@@ -18,251 +157,125 @@ pub fn print_path(path: &std::path::Path, as_json: bool) {
     }
 }
 
-pub fn print_users(users: &[SlackUser], fields: &[String], as_json: bool) {
-    if users.is_empty() {
-        if as_json {
-            println!("[]");
-        } else {
-            println!("No users found");
-        }
-        return;
-    }
-
+pub fn print_users(users: &[SlackUser], fields: &[UserField], as_json: bool) {
     if as_json {
-        let filtered: Vec<Value> = users
+        let rows: Vec<Value> = users
             .iter()
-            .map(|u| filter_user_fields(u, fields))
+            .map(|user| {
+                let row: Map<String, Value> = fields
+                    .iter()
+                    .map(|&field| (field.as_str().to_owned(), user_value(user, field)))
+                    .collect();
+                Value::Object(row)
+            })
             .collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&filtered).unwrap_or_default()
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
         );
+        return;
+    }
+
+    if users.is_empty() {
+        println!("No users found");
         return;
     }
 
     for user in users {
-        let mut parts: Vec<String> = Vec::new();
-
-        for field in fields {
-            let value = get_user_field(user, field);
-            parts.push(value);
-        }
-
-        println!("{}", parts.join("\t"));
+        let cells: Vec<String> = fields.iter().map(|&field| user_cell(user, field)).collect();
+        println!("{}", cells.join("\t"));
     }
 }
 
-fn filter_user_fields(user: &SlackUser, fields: &[String]) -> Value {
-    let mut obj = serde_json::Map::new();
-
-    for field in fields {
-        match field.as_str() {
-            "id" => {
-                obj.insert("id".to_string(), json!(user.id));
-            }
-            "name" => {
-                obj.insert("name".to_string(), json!(user.name));
-            }
-            "real_name" => {
-                let v = user.profile.as_ref().and_then(|p| p.real_name.as_ref());
-                obj.insert("real_name".to_string(), json!(v));
-            }
-            "display_name" => {
-                let v = user.profile.as_ref().and_then(|p| p.display_name.as_ref());
-                obj.insert("display_name".to_string(), json!(v));
-            }
-            "email" => {
-                let v = user.profile.as_ref().and_then(|p| p.email.as_ref());
-                obj.insert("email".to_string(), json!(v));
-            }
-            "status" => {
-                let text = user.profile.as_ref().and_then(|p| p.status_text.as_ref());
-                let emoji = user.profile.as_ref().and_then(|p| p.status_emoji.as_ref());
-                let status = match (text, emoji) {
-                    (Some(t), Some(e)) if !t.is_empty() => format!("{} {}", e, t),
-                    (Some(t), _) if !t.is_empty() => t.clone(),
-                    (_, Some(e)) if !e.is_empty() => e.clone(),
-                    _ => String::new(),
-                };
-                obj.insert("status".to_string(), json!(status));
-            }
-            "status_emoji" => {
-                let v = user.profile.as_ref().and_then(|p| p.status_emoji.as_ref());
-                obj.insert("status_emoji".to_string(), json!(v));
-            }
-            "avatar" => {
-                let v = user.profile.as_ref().and_then(|p| p.avatar.as_ref());
-                obj.insert("avatar".to_string(), json!(v));
-            }
-            "title" => {
-                let v = user.profile.as_ref().and_then(|p| p.title.as_ref());
-                obj.insert("title".to_string(), json!(v));
-            }
-            "timezone" => {
-                let v = user.profile.as_ref().and_then(|p| p.timezone.as_ref());
-                obj.insert("timezone".to_string(), json!(v));
-            }
-            "is_admin" => {
-                obj.insert("is_admin".to_string(), json!(user.is_admin));
-            }
-            "is_bot" => {
-                obj.insert("is_bot".to_string(), json!(user.is_bot));
-            }
-            "deleted" => {
-                obj.insert("deleted".to_string(), json!(user.deleted));
-            }
-            _ => {}
-        }
+fn user_status(user: &SlackUser) -> Option<String> {
+    let profile = user.profile.as_ref()?;
+    match (profile.status_text.as_ref(), profile.status_emoji.as_ref()) {
+        (Some(t), Some(e)) if !t.is_empty() => Some(format!("{} {}", e, t)),
+        (Some(t), _) if !t.is_empty() => Some(t.clone()),
+        (_, Some(e)) if !e.is_empty() => Some(e.clone()),
+        _ => None,
     }
-
-    Value::Object(obj)
 }
 
-fn get_user_field(user: &SlackUser, field: &str) -> String {
+fn user_value(user: &SlackUser, field: UserField) -> Value {
+    let profile = user.profile.as_ref();
     match field {
-        "id" => user.id.clone(),
-        "name" => user.name.clone(),
-        "real_name" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.real_name.clone())
-            .unwrap_or_else(|| "-".to_string()),
-        "display_name" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.display_name.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "-".to_string()),
-        "email" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.email.clone())
-            .unwrap_or_else(|| "-".to_string()),
-        "status" => {
-            let text = user.profile.as_ref().and_then(|p| p.status_text.as_ref());
-            let emoji = user.profile.as_ref().and_then(|p| p.status_emoji.as_ref());
-            match (text, emoji) {
-                (Some(t), Some(e)) if !t.is_empty() => format!("{} {}", e, t),
-                (Some(t), _) if !t.is_empty() => t.clone(),
-                (_, Some(e)) if !e.is_empty() => e.clone(),
-                _ => "-".to_string(),
-            }
-        }
-        "status_emoji" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.status_emoji.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "-".to_string()),
-        "avatar" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.avatar.clone())
-            .unwrap_or_else(|| "-".to_string()),
-        "title" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.title.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "-".to_string()),
-        "timezone" => user
-            .profile
-            .as_ref()
-            .and_then(|p| p.timezone.clone())
-            .unwrap_or_else(|| "-".to_string()),
-        "is_admin" => if user.is_admin { "admin" } else { "-" }.to_string(),
-        "is_bot" => if user.is_bot { "bot" } else { "-" }.to_string(),
-        "deleted" => if user.deleted { "deleted" } else { "-" }.to_string(),
-        _ => "-".to_string(),
+        UserField::Id => json!(user.id),
+        UserField::Name => json!(user.name),
+        UserField::RealName => json!(profile.and_then(|p| p.real_name.as_ref())),
+        UserField::DisplayName => json!(profile.and_then(|p| p.display_name.as_ref())),
+        UserField::Email => json!(profile.and_then(|p| p.email.as_ref())),
+        UserField::Status => json!(user_status(user).unwrap_or_default()),
+        UserField::StatusEmoji => json!(profile.and_then(|p| p.status_emoji.as_ref())),
+        UserField::Avatar => json!(profile.and_then(|p| p.avatar.as_ref())),
+        UserField::Title => json!(profile.and_then(|p| p.title.as_ref())),
+        UserField::Timezone => json!(profile.and_then(|p| p.timezone.as_ref())),
+        UserField::IsAdmin => json!(user.is_admin),
+        UserField::IsBot => json!(user.is_bot),
+        UserField::Deleted => json!(user.deleted),
     }
 }
 
-pub fn print_channels(channels: &[SlackChannel], fields: &[String], as_json: bool) {
-    if channels.is_empty() {
-        if as_json {
-            println!("[]");
-        } else {
-            println!("No channels found");
-        }
-        return;
+fn user_cell(user: &SlackUser, field: UserField) -> String {
+    let profile = user.profile.as_ref();
+    let text = |value: Option<&String>| value.cloned().unwrap_or_else(|| "-".to_string());
+    let non_empty = |value: Option<&String>| {
+        value
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "-".to_string())
+    };
+    match field {
+        UserField::Id => user.id.clone(),
+        UserField::Name => user.name.clone(),
+        UserField::RealName => text(profile.and_then(|p| p.real_name.as_ref())),
+        UserField::DisplayName => non_empty(profile.and_then(|p| p.display_name.as_ref())),
+        UserField::Email => text(profile.and_then(|p| p.email.as_ref())),
+        UserField::Status => user_status(user).unwrap_or_else(|| "-".to_string()),
+        UserField::StatusEmoji => non_empty(profile.and_then(|p| p.status_emoji.as_ref())),
+        UserField::Avatar => text(profile.and_then(|p| p.avatar.as_ref())),
+        UserField::Title => non_empty(profile.and_then(|p| p.title.as_ref())),
+        UserField::Timezone => text(profile.and_then(|p| p.timezone.as_ref())),
+        UserField::IsAdmin => if user.is_admin { "admin" } else { "-" }.to_string(),
+        UserField::IsBot => if user.is_bot { "bot" } else { "-" }.to_string(),
+        UserField::Deleted => if user.deleted { "deleted" } else { "-" }.to_string(),
     }
+}
 
+pub fn print_channels(channels: &[SlackChannel], fields: &[ChannelField], as_json: bool) {
     if as_json {
-        let filtered: Vec<Value> = channels
+        let rows: Vec<Value> = channels
             .iter()
-            .map(|c| filter_channel_fields(c, fields))
+            .map(|channel| {
+                let row: Map<String, Value> = fields
+                    .iter()
+                    .map(|&field| (field.as_str().to_owned(), channel_value(channel, field)))
+                    .collect();
+                Value::Object(row)
+            })
             .collect();
         println!(
             "{}",
-            serde_json::to_string_pretty(&filtered).unwrap_or_default()
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
         );
         return;
     }
 
-    for ch in channels {
-        let mut parts: Vec<String> = Vec::new();
+    if channels.is_empty() {
+        println!("No channels found");
+        return;
+    }
 
-        for field in fields {
-            let value = get_channel_field(ch, field);
-            parts.push(value);
-        }
-
-        println!("{}", parts.join("\t"));
+    for channel in channels {
+        let cells: Vec<String> = fields
+            .iter()
+            .map(|&field| channel_cell(channel, field))
+            .collect();
+        println!("{}", cells.join("\t"));
     }
 }
 
-fn filter_channel_fields(ch: &SlackChannel, fields: &[String]) -> Value {
-    let mut obj = serde_json::Map::new();
-
-    for field in fields {
-        match field.as_str() {
-            "id" => {
-                obj.insert("id".to_string(), json!(ch.id));
-            }
-            "name" => {
-                obj.insert("name".to_string(), json!(ch.name));
-            }
-            "user" => {
-                obj.insert("user".to_string(), json!(ch.user));
-            }
-            "type" => {
-                let typ = get_channel_type(ch);
-                obj.insert("type".to_string(), json!(typ));
-            }
-            "members" => {
-                obj.insert("members".to_string(), json!(ch.num_members));
-            }
-            "topic" => {
-                let v = ch.topic.as_ref().map(|t| &t.value);
-                obj.insert("topic".to_string(), json!(v));
-            }
-            "purpose" => {
-                let v = ch.purpose.as_ref().map(|p| &p.value);
-                obj.insert("purpose".to_string(), json!(v));
-            }
-            "created" => {
-                obj.insert("created".to_string(), json!(ch.created));
-            }
-            "creator" => {
-                obj.insert("creator".to_string(), json!(ch.creator));
-            }
-            "is_member" => {
-                obj.insert("is_member".to_string(), json!(ch.is_member));
-            }
-            "is_archived" => {
-                obj.insert("is_archived".to_string(), json!(ch.is_archived));
-            }
-            "is_private" => {
-                obj.insert("is_private".to_string(), json!(ch.is_private));
-            }
-            _ => {}
-        }
-    }
-
-    Value::Object(obj)
-}
-
-fn get_channel_type(ch: &SlackChannel) -> &'static str {
+fn channel_type(ch: &SlackChannel) -> &'static str {
     if ch.is_im {
         "DM"
     } else if ch.is_mpim {
@@ -274,51 +287,64 @@ fn get_channel_type(ch: &SlackChannel) -> &'static str {
     }
 }
 
-fn get_channel_field(ch: &SlackChannel, field: &str) -> String {
+fn channel_value(ch: &SlackChannel, field: ChannelField) -> Value {
     match field {
-        "id" => ch.id.clone(),
-        "name" => ch.name.clone().unwrap_or_else(|| "-".to_string()),
-        "user" => ch.user.clone().unwrap_or_else(|| "-".to_string()),
-        "type" => get_channel_type(ch).to_string(),
-        "members" => ch
+        ChannelField::Id => json!(ch.id),
+        ChannelField::Name => json!(ch.name),
+        ChannelField::User => json!(ch.user),
+        ChannelField::Type => json!(channel_type(ch)),
+        ChannelField::Members => json!(ch.num_members),
+        ChannelField::Topic => json!(ch.topic.as_ref().map(|t| &t.value)),
+        ChannelField::Purpose => json!(ch.purpose.as_ref().map(|p| &p.value)),
+        ChannelField::Created => json!(ch.created),
+        ChannelField::Creator => json!(ch.creator),
+        ChannelField::IsMember => json!(ch.is_member),
+        ChannelField::IsArchived => json!(ch.is_archived),
+        ChannelField::IsPrivate => json!(ch.is_private),
+    }
+}
+
+fn channel_cell(ch: &SlackChannel, field: ChannelField) -> String {
+    let text = |value: Option<&String>| value.cloned().unwrap_or_else(|| "-".to_string());
+    let non_empty = |value: Option<&String>| {
+        value
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .unwrap_or_else(|| "-".to_string())
+    };
+    match field {
+        ChannelField::Id => ch.id.clone(),
+        ChannelField::Name => text(ch.name.as_ref()),
+        ChannelField::User => text(ch.user.as_ref()),
+        ChannelField::Type => channel_type(ch).to_string(),
+        ChannelField::Members => ch
             .num_members
             .map(|n| n.to_string())
             .unwrap_or_else(|| "-".to_string()),
-        "topic" => ch
-            .topic
-            .as_ref()
-            .map(|t| t.value.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "-".to_string()),
-        "purpose" => ch
-            .purpose
-            .as_ref()
-            .map(|p| p.value.clone())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "-".to_string()),
-        "created" => ch
+        ChannelField::Topic => non_empty(ch.topic.as_ref().map(|t| &t.value)),
+        ChannelField::Purpose => non_empty(ch.purpose.as_ref().map(|p| &p.value)),
+        ChannelField::Created => ch
             .created
             .map(|ts| {
-                chrono::DateTime::from_timestamp(ts, 0)
+                DateTime::from_timestamp(ts, 0)
                     .map(|dt| dt.format("%Y-%m-%d").to_string())
                     .unwrap_or_else(|| ts.to_string())
             })
             .unwrap_or_else(|| "-".to_string()),
-        "creator" => ch.creator.clone().unwrap_or_else(|| "-".to_string()),
-        "is_member" => if ch.is_member { "member" } else { "-" }.to_string(),
-        "is_archived" => if ch.is_archived { "archived" } else { "-" }.to_string(),
-        "is_private" => if ch.is_private { "private" } else { "public" }.to_string(),
-        _ => "-".to_string(),
+        ChannelField::Creator => text(ch.creator.as_ref()),
+        ChannelField::IsMember => if ch.is_member { "member" } else { "-" }.to_string(),
+        ChannelField::IsArchived => if ch.is_archived { "archived" } else { "-" }.to_string(),
+        ChannelField::IsPrivate => if ch.is_private { "private" } else { "public" }.to_string(),
     }
 }
 
 pub fn print_messages(
     messages: &[SlackMessage],
     as_json: bool,
-    fields: &[String],
+    fields: &[MessageField],
     cache: Option<&SqliteCache>,
 ) {
-    let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+    let allowed = field_names(fields);
 
     if as_json {
         let projected = project_messages(messages, &allowed, cache);
@@ -341,10 +367,10 @@ pub fn print_history(
     messages: &[SlackMessage],
     next_cursor: Option<&str>,
     as_json: bool,
-    fields: &[String],
+    fields: &[MessageField],
     cache: Option<&SqliteCache>,
 ) {
-    let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+    let allowed = field_names(fields);
 
     if as_json {
         let envelope = json!({
@@ -362,6 +388,10 @@ pub fn print_history(
     if let Some(cursor) = next_cursor {
         eprintln!("More messages available: rerun with --cursor {}", cursor);
     }
+}
+
+fn field_names(fields: &[MessageField]) -> HashSet<&'static str> {
+    fields.iter().map(|field| field.as_str()).collect()
 }
 
 fn project_messages(
@@ -385,8 +415,8 @@ fn render_messages(
         return;
     }
 
-    let expand_date = allowed.contains("date");
-    let expand_user_name = allowed.contains("user_name");
+    let expand_date = allowed.contains(MessageField::Date.as_str());
+    let expand_user_name = allowed.contains(MessageField::UserName.as_str());
 
     for msg in messages {
         // Priority: user > username (bot display name) > bot_id > "system"
@@ -436,12 +466,12 @@ fn project_message(
     if let Value::Object(map) = &mut value {
         map.retain(|key, _| allowed.contains(key.as_str()));
 
-        if allowed.contains("date")
+        if allowed.contains(MessageField::Date.as_str())
             && let Some(date_str) = format_timestamp(&msg.ts)
         {
             map.insert("date".to_string(), json!(date_str));
         }
-        if allowed.contains("user_name")
+        if allowed.contains(MessageField::UserName.as_str())
             && let Some(user_id) = &msg.user
             && let Some(name) = resolve_user_name(user_id, cache)
         {
@@ -1042,7 +1072,7 @@ pub fn format_epoch(seconds: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::slack::types::{MessageMetadata, SlackMessage};
+    use crate::slack::types::{EditedInfo, MessageChannel, MessageMetadata, SlackMessage};
 
     fn sample_message_with_blocks_and_metadata() -> SlackMessage {
         SlackMessage {
@@ -1071,18 +1101,90 @@ mod tests {
         }
     }
 
-    fn lean_fields() -> Vec<String> {
-        ["ts", "user", "text", "reply_count", "metadata"]
-            .into_iter()
-            .map(String::from)
-            .collect()
+    fn lean_fields() -> Vec<MessageField> {
+        vec![
+            MessageField::Ts,
+            MessageField::User,
+            MessageField::Text,
+            MessageField::ReplyCount,
+            MessageField::Metadata,
+        ]
+    }
+
+    fn assert_names_agree<F>(name: fn(F) -> &'static str)
+    where
+        F: clap::ValueEnum + Serialize + Copy + std::fmt::Debug,
+    {
+        for &field in F::value_variants() {
+            let flag = field.to_possible_value().expect("no field is hidden");
+            assert_eq!(flag.get_name(), name(field), "{field:?} flag name");
+            assert_eq!(
+                serde_json::to_value(field).unwrap(),
+                json!(name(field)),
+                "{field:?} config name"
+            );
+        }
+    }
+
+    #[test]
+    fn flags_config_and_output_keys_share_one_vocabulary() {
+        assert_names_agree(UserField::as_str);
+        assert_names_agree(ChannelField::as_str);
+        assert_names_agree(MessageField::as_str);
+    }
+
+    #[test]
+    fn message_fields_name_every_serialized_message_key() {
+        let message = SlackMessage {
+            ts: "1700000000.000100".into(),
+            user: Some("U1".into()),
+            bot_id: Some("B1".into()),
+            username: Some("deploy-bot".into()),
+            text: "hello".into(),
+            channel: Some(MessageChannel {
+                id: "C1".into(),
+                name: None,
+            }),
+            thread_ts: Some("1700000000.000100".into()),
+            reply_count: Some(1),
+            reply_users: Some(vec!["U2".into()]),
+            reply_users_count: Some(1),
+            latest_reply: Some("1700000001.000100".into()),
+            parent_user_id: Some("U1".into()),
+            reactions: Some(vec![]),
+            subtype: Some("bot_message".into()),
+            edited: Some(EditedInfo {
+                user: "U1".into(),
+                ts: "1700000002.000100".into(),
+            }),
+            blocks: Some(vec![]),
+            attachments: Some(vec![]),
+            permalink: Some("https://acme.slack.com/archives/C1/p1".into()),
+            metadata: Some(MessageMetadata {
+                event_type: "deploy_done".into(),
+                event_payload: json!({}),
+            }),
+        };
+        let serialized: HashSet<String> = serde_json::to_value(&message)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        let selectable: HashSet<String> = <MessageField as clap::ValueEnum>::value_variants()
+            .iter()
+            .filter(|field| !matches!(field, MessageField::Date | MessageField::UserName))
+            .map(|field| field.as_str().to_owned())
+            .collect();
+
+        assert_eq!(serialized, selectable);
     }
 
     #[test]
     fn project_message_drops_fields_outside_allowed_set() {
         let msg = sample_message_with_blocks_and_metadata();
-        let fields = lean_fields();
-        let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+        let allowed = field_names(&lean_fields());
         let projected = project_message(&msg, &allowed, None);
 
         assert!(projected.get("blocks").is_none());
@@ -1095,8 +1197,8 @@ mod tests {
     fn project_message_includes_blocks_when_allowed() {
         let msg = sample_message_with_blocks_and_metadata();
         let mut fields = lean_fields();
-        fields.push("blocks".into());
-        let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+        fields.push(MessageField::Blocks);
+        let allowed = field_names(&fields);
         let projected = project_message(&msg, &allowed, None);
 
         assert_eq!(projected["blocks"][0]["type"], json!("section"));
@@ -1106,8 +1208,8 @@ mod tests {
     fn project_message_adds_computed_date_when_requested() {
         let msg = sample_message_with_blocks_and_metadata();
         let mut fields = lean_fields();
-        fields.push("date".into());
-        let allowed: HashSet<&str> = fields.iter().map(String::as_str).collect();
+        fields.push(MessageField::Date);
+        let allowed = field_names(&fields);
         let projected = project_message(&msg, &allowed, None);
 
         assert!(projected.get("date").is_some());
