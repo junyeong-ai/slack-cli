@@ -263,10 +263,12 @@ pub const API_METHODS: &[(&str, ApiConfig)] = &[
         },
     ),
     (
-        // A file reserved by one token is completed by the same token.
+        // Both upload steps go form-encoded, as the official SDKs send them,
+        // and share a token policy: a file reserved by one token is completed
+        // by the same token.
         "files.getUploadURLExternal",
         ApiConfig {
-            encoding: RequestEncoding::Json,
+            encoding: RequestEncoding::Form,
             token_policy: TokenPolicy::BotPreferred,
             rate_policy: rate(100, None),
             scopes: WRITE_FILES,
@@ -275,7 +277,7 @@ pub const API_METHODS: &[(&str, ApiConfig)] = &[
     (
         "files.completeUploadExternal",
         ApiConfig {
-            encoding: RequestEncoding::Json,
+            encoding: RequestEncoding::Form,
             token_policy: TokenPolicy::BotPreferred,
             rate_policy: rate(100, None),
             scopes: WRITE_FILES,

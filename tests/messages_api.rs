@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use slack_cli::auth::{AuthLoadOptions, Authenticator, EnvOverrides};
 use slack_cli::config::Config;
 use slack_cli::slack::{MessageMetadata, MessagePayload, SlackClient, UploadOptions};
-use wiremock::matchers::{body_partial_json, method, path, query_param};
+use wiremock::matchers::{body_partial_json, body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 fn secret(value: &str) -> SecretString {
@@ -620,9 +620,8 @@ async fn upload_sends_bytes_without_the_token_and_shares_into_the_thread() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/files.getUploadURLExternal"))
-        .and(body_partial_json(
-            json!({"filename": "report.md", "length": 5}),
-        ))
+        .and(body_string_contains("filename=report.md"))
+        .and(body_string_contains("length=5"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "ok": true,
             "upload_url": format!("{}/upload/F01", server.uri()),
@@ -637,23 +636,23 @@ async fn upload_sends_bytes_without_the_token_and_shares_into_the_thread() {
         .expect(1)
         .mount(&server)
         .await;
-    let (responder, mut rx) = capture(json!({
-        "ok": true,
-        "files": [{"id": "F01", "title": "Weekly"}],
-    }));
     Mock::given(method("POST"))
         .and(path("/files.completeUploadExternal"))
-        .respond_with(responder)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true,
+            "files": [{"id": "F01", "title": "Weekly"}],
+        })))
         .mount(&server)
         .await;
 
-    let (client, _store) = test_client(&server).await;
+    let (client, store) = test_client(&server).await;
+    let report = store.path().join("report.md");
+    std::fs::write(&report, "hello").unwrap();
     let file = client
         .files
         .upload(
             "C123",
-            "report.md",
-            b"hello".to_vec(),
+            &report,
             UploadOptions {
                 title: Some("Weekly".into()),
                 initial_comment: Some("see attached".into()),
@@ -665,20 +664,25 @@ async fn upload_sends_bytes_without_the_token_and_shares_into_the_thread() {
         .unwrap();
 
     assert_eq!(file.id, "F01");
-    let completion = rx.recv().await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let completion: std::collections::HashMap<String, String> = serde_urlencoded::from_bytes(
+        &requests
+            .iter()
+            .find(|request| request.url.path() == "/files.completeUploadExternal")
+            .unwrap()
+            .body,
+    )
+    .unwrap();
     assert_eq!(
-        completion["files"],
+        serde_json::from_str::<Value>(&completion["files"]).unwrap(),
         json!([{"id": "F01", "title": "Weekly"}])
     );
-    assert_eq!(completion["channel_id"], json!("C123"));
-    assert_eq!(completion["thread_ts"], json!("1700000000.000100"));
-    assert_eq!(completion["initial_comment"], json!("see attached"));
+    assert_eq!(completion["channel_id"], "C123");
+    assert_eq!(completion["thread_ts"], "1700000000.000100");
+    assert_eq!(completion["initial_comment"], "see attached");
 
-    let upload = server
-        .received_requests()
-        .await
-        .unwrap()
-        .into_iter()
+    let upload = requests
+        .iter()
         .find(|request| request.url.path() == "/upload/F01")
         .unwrap();
     assert_eq!(upload.body, b"hello");
@@ -709,15 +713,12 @@ async fn a_failed_byte_upload_is_never_completed() {
         .mount(&server)
         .await;
 
-    let (client, _store) = test_client(&server).await;
+    let (client, store) = test_client(&server).await;
+    let report = store.path().join("report.md");
+    std::fs::write(&report, "hello").unwrap();
     let err = client
         .files
-        .upload(
-            "C123",
-            "report.md",
-            b"hello".to_vec(),
-            UploadOptions::default(),
-        )
+        .upload("C123", &report, UploadOptions::default())
         .await
         .unwrap_err();
     assert!(err.to_string().contains("500"), "{err}");

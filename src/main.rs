@@ -282,21 +282,12 @@ async fn run(cli: Cli) -> Result<()> {
             thread,
             alt_text,
         } => {
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .with_context(|| format!("{} does not name a file", path.display()))?
-                .to_owned();
-            let content = tokio::fs::read(&path)
-                .await
-                .with_context(|| format!("failed to read {}", path.display()))?;
             let id = resolve_channel(&channel, &slack, &cache, cli.json).await?;
             let file = slack
                 .files
                 .upload(
                     &id,
-                    &filename,
-                    content,
+                    &path,
                     slack::UploadOptions {
                         title,
                         initial_comment: comment,
@@ -311,7 +302,7 @@ async fn run(cli: Cli) -> Result<()> {
             } else {
                 println!(
                     "✓ Uploaded {} (id: {})",
-                    file.title.as_deref().unwrap_or(&filename),
+                    file.title.as_deref().unwrap_or(&path.display().to_string()),
                     file.id
                 );
             }
