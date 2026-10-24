@@ -165,9 +165,13 @@ fn confirm(from: &str, to: &str, assume_yes: bool, interactive: bool) -> Result<
     if !interactive {
         bail!("replacing the running binary needs confirmation. re-run with --yes");
     }
-    let mut out = std::io::stdout();
-    write!(out, "Replace the running binary (v{from} → v{to})? [y/N]: ")?;
-    out.flush()?;
+    // On stderr, so stdout carries only the outcome, as `--json` promises.
+    let mut prompt = std::io::stderr();
+    write!(
+        prompt,
+        "Replace the running binary (v{from} → v{to})? [y/N]: "
+    )?;
+    prompt.flush()?;
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES"))

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Logs are colored only when stderr is a terminal, and `NO_COLOR` turns color off. Pipes, files and service-manager logs no longer receive escape codes.
 - A command whose stderr is a closed pipe exits with its usual status instead of aborting.
+- `self update` asks for confirmation on stderr, so stdout carries only the outcome, one JSON document under `--json`.
 
 ## [0.20.0] - 2026-10-24
 
