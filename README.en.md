@@ -329,7 +329,7 @@ messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "rep
 [connection]
 api_base_url = "https://slack.com/api"
 rate_limit_per_minute = 20
-app_distribution = "commercial_external"
+app_distribution = "marketplace_or_internal"
 timeout_seconds = 30
 
 [retry]
@@ -372,7 +372,7 @@ on = ["message", "reaction_added", "reaction_removed"]
 subscribe_emoji = "eyes"       # follow replies in threads I reacted to with :eyes:
 ```
 
-Set `app_distribution` according to Slack's `conversations.history` and `conversations.replies` rate-limit policy. Use `marketplace_or_internal` for Slack Marketplace-approved apps or internal customer-built apps.
+`app_distribution` follows Slack's `conversations.history` and `conversations.replies` rate limits. An app you create for your own workspace, as in [Authentication](#authentication), is an internal app and keeps the default `marketplace_or_internal`. Set `commercial_external` for an app distributed to other workspaces outside the Slack Marketplace: Slack serves those 15 messages a call and one call a minute, and the CLI then requests no more than that.
 
 `[auth]` resolves as **command-line flag > environment variable > `config.toml`**. Recording `client_id` here spares every `auth login` a flag or an environment variable.
 
@@ -476,7 +476,7 @@ Every connection, including Slack, OAuth, release downloads and Socket Mode, tru
 At least one of `text` / `markdown_text` / `blocks` / `attachments` must be provided. Only one flag per invocation may read from stdin (`-`).
 
 ### messages/thread Options
-- `--limit <N>` — Limit results (default: `15`). Under `app_distribution = "commercial_external"` (the default) Slack's limit caps each call at 15, and calls within one process run at most once a minute
+- `--limit <N>` — Limit results (default: `15`). Under `app_distribution = "commercial_external"` Slack's limit caps each call at 15, and calls within one process run at most once a minute
 - `--cursor <cursor>` — Fetch the next page using `next_cursor` from the previous response
 - `--oldest <date>` — (messages only) Start time (Unix timestamp or YYYY-MM-DD)
 - `--latest <date>` — (messages only) End time (Unix timestamp or YYYY-MM-DD)

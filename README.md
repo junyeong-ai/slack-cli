@@ -318,7 +318,7 @@ messages_fields = ["ts", "user", "bot_id", "username", "text", "thread_ts", "rep
 [connection]
 api_base_url = "https://slack.com/api"
 rate_limit_per_minute = 20
-app_distribution = "commercial_external"
+app_distribution = "marketplace_or_internal"
 timeout_seconds = 30
 
 [retry]
@@ -362,7 +362,7 @@ subscribe_emoji = "eyes"       # 내가 :eyes: 를 찍은 스레드의 답글을
 ```
 
 
-`app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책에 맞춥니다. Slack Marketplace 승인 앱 또는 내부 고객 제작 앱이면 `marketplace_or_internal`로 설정할 수 있습니다.
+`app_distribution`은 Slack의 `conversations.history`/`conversations.replies` 제한 정책을 따릅니다. [인증](#인증)처럼 자기 워크스페이스용으로 직접 만든 앱은 내부 앱이므로 기본값 `marketplace_or_internal`을 그대로 씁니다. Slack Marketplace 밖에서 다른 워크스페이스에 배포하는 앱이면 `commercial_external`로 설정하세요. Slack은 그런 앱에 호출당 15건, 분당 1회만 허용하며, CLI도 그 이상을 요청하지 않습니다.
 
 `[auth]`의 우선순위는 **명령행 플래그 > 환경변수 > `config.toml`** 입니다. `client_id`를 여기 두면 `auth login`에 매번 플래그나 환경변수를 붙일 필요가 없습니다.
 
@@ -466,7 +466,7 @@ Slack, OAuth, 릴리스 다운로드, Socket Mode를 포함한 모든 연결은 
 `text`/`markdown_text`/`blocks`/`attachments` 중 최소 하나는 반드시 제공해야 합니다. 같은 호출에서 `-` (stdin) 은 최대 한 플래그에만 사용 가능합니다.
 
 ### messages/thread 옵션
-- `--limit <N>` — 결과 제한 (기본: `15`). `app_distribution = "commercial_external"`(기본)에서는 Slack 제한에 맞춰 호출당 최대 15건이고, 한 프로세스 안의 호출은 분당 1회로 제한됩니다
+- `--limit <N>` — 결과 제한 (기본: `15`). `app_distribution = "commercial_external"`에서는 Slack 제한에 맞춰 호출당 최대 15건이고, 한 프로세스 안의 호출은 분당 1회로 제한됩니다
 - `--cursor <cursor>` — 이전 응답의 `next_cursor` 로 다음 페이지 조회
 - `--oldest <date>` — (messages 전용) 시작 시간 (Unix timestamp 또는 YYYY-MM-DD)
 - `--latest <date>` — (messages 전용) 종료 시간 (Unix timestamp 또는 YYYY-MM-DD)

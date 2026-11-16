@@ -135,10 +135,10 @@ slack-cli auth scopes --json
 3. Page `thread <channel> <ts> --json` the same way for the messages whose `reply_count` matters.
 4. Sort what you collected by `ts` before summarizing, and cite with `permalink`.
 
-Under the default `app_distribution = "commercial_external"`, Slack serves
-`messages` and `thread` 15 messages a call and one call a minute, so a long
-history costs minutes. Narrow it with `--oldest`/`--latest`, or find the
-messages with `search` first; exit `4` means wait before the next call.
+An app distributed outside the Slack Marketplace gets 15 messages a call and
+one call a minute from `messages` and `thread`, so a long history costs
+minutes there. Narrow it with `--oldest`/`--latest`, or find the messages with
+`search` first; exit `4` means wait before the next call.
 
 ## JSON sources for `--blocks`, `--attachments`, `--metadata`
 

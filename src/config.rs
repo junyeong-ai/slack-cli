@@ -142,8 +142,8 @@ pub struct RetryConfig {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlackAppDistribution {
-    #[default]
     CommercialExternal,
+    #[default]
     MarketplaceOrInternal,
 }
 
@@ -1427,7 +1427,7 @@ mod tests {
             assert_eq!(config.rate_limit_per_minute, 20);
             assert!(matches!(
                 config.app_distribution,
-                SlackAppDistribution::CommercialExternal
+                SlackAppDistribution::MarketplaceOrInternal
             ));
         }
     }
