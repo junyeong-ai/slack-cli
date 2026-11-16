@@ -38,27 +38,27 @@ reqwest = { version = "0.13.5", features = ["json", "rustls", "stream"], default
 # accepts only from the rustls version it links itself.
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 rustls-platform-verifier = "0.7.1"
-webpki-roots = "1.0.11"
+webpki-roots = "1.0.12"
 # Socket Mode connects through `tls::connect_websocket`; the feature only enables rustls.
 tokio-tungstenite = { version = "0.30.0", features = ["connect", "handshake", "rustls-tls-webpki-roots"], default-features = false }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.42.0", features = ["bundled"] }
 r2d2 = "0.8.10"
-r2d2_sqlite = "0.35.0"
+r2d2_sqlite = "0.37.0"
 anyhow = "1.0.104"
 thiserror = "2.0.21"
 governor = "0.10.4"
 chrono = { version = "0.4.45", features = ["serde"] }
 dotenvy = "0.15.7"
-toml = "1.1.8"
+toml = "1.2.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-uuid = { version = "1.29.0", features = ["v4"] }
+uuid = { version = "1.29.2", features = ["v4"] }
 secrecy = { version = "0.10.3", features = ["serde"] }
 sha2 = "0.11.1"
 base64 = "0.23.1"
-rand = "0.10.3"
-rpassword = "7.5.4"
+rand = "0.10.4"
+rpassword = "7.5.5"
 etcetera = "0.11.0"
 open = "5.4.5"
 tempfile = "3.27.0"
