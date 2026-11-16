@@ -191,7 +191,7 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 3. **OAuth & Permissions** → Redirect URLs에 `http://127.0.0.1:53682/callback` 등록
 4. **OAuth & Permissions** → PKCE 활성화 후 **Basic Information**에서 client_id 복사
 
-> PKCE 활성화는 앱을 public client로 표시하며 되돌릴 수 없습니다(해제하려면 Slack 지원 문의). PKCE 앱의 loopback 리다이렉트는 데스크톱 리다이렉트로 처리되어 **bot scope를 요청할 수 없고**, 발급 토큰은 **항상 12시간마다 회전**합니다. CLI가 refresh token으로 자동 갱신하므로 재로그인은 필요 없습니다.
+> PKCE 활성화는 앱을 public client로 표시하며 되돌릴 수 없습니다(해제하려면 Slack 지원 문의). PKCE 앱의 loopback 리다이렉트는 데스크톱 리다이렉트로 처리되어 **bot scope를 요청할 수 없고**, 발급 토큰은 **항상 12시간마다 회전**합니다. CLI가 refresh token으로 자동 갱신합니다([토큰 회전](#토큰-회전) 참고).
 
 **User Token Scopes** (전체 기능 사용 시):
 
@@ -237,6 +237,8 @@ search:read.public  users:read  users:read.email
 ### 토큰 회전
 
 Slack은 PKCE 설치에 항상 만료 시각과 refresh token을 함께 발급합니다. CLI가 만료 2시간 전부터 `oauth.v2.access`로 자동 갱신합니다. 갱신은 `auth.json`에 대한 프로세스 간 잠금 아래에서 수행되므로, 동시에 실행된 여러 호출이 이미 소진된 refresh token을 다시 쓰는 일이 없습니다.
+
+Slack은 PKCE 앱에 발급한 refresh token을 발급 30일 뒤 만료시킵니다. 갱신할 때마다 새 refresh token을 받으므로 꾸준히 쓰는 프로필은 로그인이 유지되지만, 30일 동안 쓰지 않은 프로필은 `auth login`을 다시 해야 합니다.
 
 ```bash
 slack-cli auth status          # 토큰별 만료 시각과 갱신 가능 여부

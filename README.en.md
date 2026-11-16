@@ -191,7 +191,7 @@ SLACK_CLI_CLIENT_ID=<client-id> slack-cli auth login --method pkce
 3. **OAuth & Permissions** → Redirect URLs → register `http://127.0.0.1:53682/callback`
 4. **OAuth & Permissions** → enable PKCE, then copy the client id from **Basic Information**
 
-> Enabling PKCE marks the app a public client and cannot be undone without contacting Slack support. Slack routes a PKCE app's loopback redirect as a desktop redirect: it **cannot carry bot scopes**, and the tokens it issues **always rotate every 12 hours**. The CLI renews them from the refresh token, so this needs no re-login.
+> Enabling PKCE marks the app a public client and cannot be undone without contacting Slack support. Slack routes a PKCE app's loopback redirect as a desktop redirect: it **cannot carry bot scopes**, and the tokens it issues **always rotate every 12 hours**. The CLI renews them from the refresh token (see [Token rotation](#token-rotation)).
 
 **User Token Scopes** (full feature set):
 
@@ -237,6 +237,8 @@ search:read.public  users:read  users:read.email
 ### Token rotation
 
 Slack issues an expiry and a refresh token with every PKCE installation, and the CLI renews the pair through `oauth.v2.access` starting two hours before expiry. Renewal runs under a cross-process lock on `auth.json`, so concurrent invocations can never spend a refresh token Slack has already revoked.
+
+Slack expires every refresh token a PKCE app receives 30 days after issuing it. Each renewal brings a new one, so a profile in regular use stays logged in; one left unused for 30 days needs a new `auth login`.
 
 ```bash
 slack-cli auth status          # Per-token expiry and whether it can be renewed
