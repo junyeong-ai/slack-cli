@@ -68,7 +68,7 @@ pub struct SocketStream {
 
 impl SocketStream {
     pub async fn connect(url: &str) -> Result<Self> {
-        let inner = crate::tls::connect_websocket(url)
+        let inner = crate::net::connect_websocket(url)
             .await
             .context("could not open the Socket Mode connection")?;
         Ok(Self { inner })

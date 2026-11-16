@@ -394,6 +394,7 @@ A command that needs an excluded scope is refused by Slack, and the CLI names th
 | `RUST_LOG` | Log filter (e.g. `debug`, `slack_cli::cache=debug`). Takes precedence over `--verbose` when set |
 | `NO_COLOR` | When non-empty, logs carry no color. Color is used only when stderr is a terminal |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | (Linux) CA certificate file and directories to trust instead of the system's; if no certificate can be read from them, the bundled Mozilla roots are trusted with a warning |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` | Proxy for every connection and the hosts exempt from it, read as curl reads them. Socket Mode tunnels only through an `http://` proxy and refuses any other kind rather than bypassing it |
 
 A `.env` file in the working directory, or else the nearest parent directory that has one, supplies any of the above the environment does not set.
 

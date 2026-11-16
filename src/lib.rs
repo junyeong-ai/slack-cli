@@ -5,9 +5,9 @@ pub mod cli;
 pub mod config;
 pub mod events;
 pub mod format;
+pub mod net;
 pub mod paths;
 pub mod slack;
-pub mod tls;
 pub mod update;
 
 pub use config::Config;
