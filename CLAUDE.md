@@ -25,9 +25,11 @@ src/
 ## Build & test
 
 The toolchain is pinned by `rust-toolchain.toml` (single source of truth —
-rustup picks it up automatically; don't restate the version in commands). The
-README badge and its build-from-source lines repeat it and the `rust-version`
-for users, so a bump updates them too.
+rustup picks it up automatically; don't restate the version in commands).
+`Cargo.toml`'s `rust-version` names the same release: nothing older builds or
+tests the crate, and Cargo resolves dependency versions against it. A bump
+raises both, along with the README badge and build-from-source lines that
+repeat them.
 
 ```bash
 cargo nextest run --profile ci --all-features --workspace --locked
