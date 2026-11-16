@@ -35,6 +35,10 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 ```
 
+Tests serve Slack from mock servers on `127.0.0.1`. In a shell that sets
+`HTTP_PROXY` or `HTTPS_PROXY`, such as a sandbox, add `127.0.0.1,localhost`
+to `NO_PROXY`, or every mocked call goes to the proxy and those tests fail.
+
 Debug a single command:
 ```bash
 RUST_LOG=debug cargo run -- users "john"
