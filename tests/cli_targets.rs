@@ -457,7 +457,7 @@ async fn user_targets_use_the_operation_actor_instead_of_cached_human_dms() {
         .await;
     Mock::given(path("/assistant.search.context"))
         .and(header("authorization", "Bearer xoxp-user"))
-        .and(body_partial_json(json!({"context_channel_id":"DHUMAN123"})))
+        .and(body_partial_json(json!({"modifiers":"in:<#DHUMAN123>"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok":true,"results":{}})))
         .expect(1)
         .mount(&server)

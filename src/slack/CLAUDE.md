@@ -110,6 +110,7 @@ Both RTS methods are wired in: `assistant.search.context` runs the query, `assis
 - `PAGE_SIZE = 20` — API hard limit per request. Never expose to callers.
 - `TokenPolicy::UserRequired` — bot calls would need an `action_token` lifted from a message event payload that a CLI never receives.
 - `SearchOptions` field names mirror the API parameters exactly. CLI flag short forms (`--include-context`, `--include-archived`, `--no-semantic`) are CLI affordances mapped via clap `long = "..."`.
+- `SearchOptions::channel` is the exception: `context` resolves it like any conversation target and sends it as an `in:<#ID>` modifier. Slack's `context_channel_id` is a relevance hint that still returns other conversations, so it cannot restrict a search.
 - `search.info` needs only `search:read.public` and takes `UserPreferred`, not `UserRequired`: unlike `context` it carries no `action_token` requirement, so a bot token answers it too.
 
 ## Response shapes

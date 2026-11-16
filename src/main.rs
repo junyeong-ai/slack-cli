@@ -449,7 +449,7 @@ async fn run(cli: Cli) -> Result<()> {
             let query = query.context("a search query is required")?;
             let before = before.as_deref().map(parse_unix_seconds).transpose()?;
             let after = after.as_deref().map(parse_unix_seconds).transpose()?;
-            let context_channel_id = match channel {
+            let channel = match channel {
                 Some(input) => Some(resolve_channel(&input, &slack, &cache, cli.json).await?),
                 None => None,
             };
@@ -458,7 +458,7 @@ async fn run(cli: Cli) -> Result<()> {
                 limit,
                 channel_types,
                 content_types,
-                context_channel_id,
+                channel,
                 include_archived_channels,
                 before,
                 after,

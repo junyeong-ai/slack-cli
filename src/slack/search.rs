@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::core::SlackCore;
 
+const METHOD: &str = "assistant.search.context";
 const PAGE_SIZE: usize = 20;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -82,7 +83,9 @@ pub struct SearchOptions {
     pub limit: usize,
     pub channel_types: Vec<SearchChannelType>,
     pub content_types: Vec<SearchContentType>,
-    pub context_channel_id: Option<String>,
+    /// Restricts results to one conversation: a conversation ID, or a user ID
+    /// whose existing DM is searched.
+    pub channel: Option<String>,
     pub include_archived_channels: bool,
     pub before: Option<i64>,
     pub after: Option<i64>,
@@ -263,7 +266,17 @@ impl SlackSearchClient {
 
     pub async fn context(&self, query: &str, options: &SearchOptions) -> Result<SearchResults> {
         let limit = options.limit.clamp(1, SearchOptions::MAX_LIMIT);
-        let mut params = build_request_params(query, options);
+        let conversation = match &options.channel {
+            Some(target) => Some(self.core.conversation(METHOD, target).await?),
+            None => None,
+        };
+        let mut params = build_request_params(
+            query,
+            options,
+            conversation
+                .as_ref()
+                .map(|conversation| conversation.id.as_str()),
+        );
 
         let mut results = SearchResults::default();
         let mut cursor: Option<String> = None;
@@ -277,15 +290,15 @@ impl SlackSearchClient {
                 params["cursor"] = json!(cursor);
             }
 
-            let response = self
-                .core
-                .api_call_in_conversation(
-                    "assistant.search.context",
-                    params.clone(),
-                    "context_channel_id",
-                )
-                .await
-                .context("Search requires a user token (xoxp-...) with search:read.* scopes")?;
+            let response = match &conversation {
+                Some(conversation) => {
+                    self.core
+                        .api_call_as(conversation, METHOD, params.clone())
+                        .await
+                }
+                None => self.core.api_call(METHOD, params.clone()).await,
+            }
+            .context("Search requires a user token (xoxp-...) with search:read.* scopes")?;
             let response: SearchContextResponse = serde_json::from_value(response)?;
 
             results.extend(response.results);
@@ -315,7 +328,10 @@ impl SlackSearchClient {
     }
 }
 
-fn build_request_params(query: &str, options: &SearchOptions) -> Value {
+/// `channel_id` restricts the search through the `in:` modifier. Slack treats
+/// `context_channel_id` as a relevance hint and still returns results from
+/// other conversations.
+fn build_request_params(query: &str, options: &SearchOptions, channel_id: Option<&str>) -> Value {
     let channel_types: Vec<&'static str> = options
         .channel_types
         .iter()
@@ -342,10 +358,15 @@ fn build_request_params(query: &str, options: &SearchOptions) -> Value {
         "highlight": options.highlight,
     });
 
-    if let Some(channel_id) = &options.context_channel_id {
-        params["context_channel_id"] = json!(channel_id);
-    }
-    if let Some(modifiers) = &options.modifiers {
+    let scope = channel_id.map(|id| format!("in:<#{id}>"));
+    let modifiers = [options.modifiers.as_deref(), scope.as_deref()]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|modifier| !modifier.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !modifiers.is_empty() {
         params["modifiers"] = json!(modifiers);
     }
     if let Some(before) = options.before {
@@ -367,7 +388,7 @@ mod tests {
             limit: 10,
             channel_types: vec![SearchChannelType::PublicChannel],
             content_types: vec![SearchContentType::Messages],
-            context_channel_id: None,
+            channel: None,
             include_archived_channels: false,
             before: None,
             after: None,
@@ -509,18 +530,16 @@ mod tests {
         let mut opts = sample_options();
         opts.before = Some(1_700_000_000);
         opts.after = Some(1_600_000_000);
-        opts.context_channel_id = Some("C123ABCDE".to_string());
         opts.disable_semantic_search = true;
         opts.include_archived_channels = true;
         opts.highlight = true;
         opts.include_message_blocks = true;
 
-        let params = build_request_params("hello", &opts);
+        let params = build_request_params("hello", &opts, None);
 
         assert_eq!(params["query"], json!("hello"));
         assert_eq!(params["before"], json!(1_700_000_000));
         assert_eq!(params["after"], json!(1_600_000_000));
-        assert_eq!(params["context_channel_id"], json!("C123ABCDE"));
         assert_eq!(params["disable_semantic_search"], json!(true));
         assert_eq!(params["include_archived_channels"], json!(true));
         assert_eq!(params["highlight"], json!(true));
@@ -533,10 +552,20 @@ mod tests {
         opts.modifiers = Some("has:pin".to_string());
         opts.include_deleted_users = true;
 
-        let params = build_request_params("hello", &opts);
+        let params = build_request_params("hello", &opts, None);
 
         assert_eq!(params["modifiers"], json!("has:pin"));
         assert_eq!(params["include_deleted_users"], json!(true));
+    }
+
+    #[test]
+    fn a_channel_restricts_the_search_through_the_in_modifier() {
+        let mut opts = sample_options();
+        opts.modifiers = Some("has:pin".to_string());
+
+        let params = build_request_params("hello", &opts, Some("C123ABCDE"));
+
+        assert_eq!(params["modifiers"], json!("has:pin in:<#C123ABCDE>"));
     }
 
     #[test]
@@ -551,10 +580,9 @@ mod tests {
 
     #[test]
     fn request_params_omit_unset_optional_filters() {
-        let params = build_request_params("hello", &sample_options());
+        let params = build_request_params("hello", &sample_options(), None);
         assert!(params.get("before").is_none());
         assert!(params.get("after").is_none());
-        assert!(params.get("context_channel_id").is_none());
         assert!(params.get("modifiers").is_none());
     }
 }
