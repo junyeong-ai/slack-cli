@@ -13,6 +13,8 @@ Phase 2: FTS5 phrase MATCH          only if Phase 1 returned nothing
 
 LIKE searches substrings and ranks exact names first. FTS5 searches a quoted phrase only when LIKE returns no rows; it does not perform typo correction or approximate matching.
 
+A query equal to a cached ID ranks that row above every name match and passes the discovery filters (bots, archived channels), as `--id` would. Otherwise an ID would reach FTS5 and return the channels whose topic or purpose mentions it.
+
 ## FTS5 query sanitization
 
 Every user-supplied query passes through `helpers::process_fts_query` before reaching `MATCH`: FTS5 reads `MATCH` input as query syntax, so raw input becomes operators, column filters or a syntax error. The helper:

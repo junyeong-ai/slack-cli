@@ -169,12 +169,13 @@ impl SqliteCache {
             .prepare_cached(
                 "SELECT data,
                 CASE
-                    WHEN lower(name) = lower(?1) THEN 0
-                    ELSE 1
+                    WHEN id = ?1 THEN 0
+                    WHEN lower(name) = lower(?1) THEN 1
+                    ELSE 2
                 END as priority
              FROM channels
-             WHERE (is_archived = 0 OR is_archived IS NULL)
-             AND name LIKE ?2
+             WHERE id = ?1
+             OR ((is_archived = 0 OR is_archived IS NULL) AND name LIKE ?2)
              ORDER BY priority, name
              LIMIT ?3",
             )
@@ -232,6 +233,7 @@ impl SqliteCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::slack::types::ChannelPurpose;
     use rstest::rstest;
 
     fn create_test_channel(
@@ -684,5 +686,27 @@ mod tests {
         cache.save_channels(channels).await.unwrap();
 
         assert!(cache.find_dm_by_user("U_anyone").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_exact_id_finds_that_channel_rather_than_one_mentioning_it() {
+        let cache = setup_cache().await;
+        let mut mentioning =
+            create_test_channel("C0BBBBBBBB", "security", false, false, false, false);
+        mentioning.purpose = Some(ChannelPurpose {
+            value: "Alerts relayed from C0AAAAAAAA".into(),
+            creator: "U0CREATOR1".into(),
+            last_set: 0,
+        });
+        let archived = create_test_channel("C0AAAAAAAA", "deploys", false, true, false, false);
+        cache
+            .save_channels(vec![mentioning, archived])
+            .await
+            .unwrap();
+
+        let found = cache.search_channels("C0AAAAAAAA", 10).unwrap();
+
+        let ids: Vec<&str> = found.iter().map(|channel| channel.id.as_str()).collect();
+        assert_eq!(ids, ["C0AAAAAAAA"]);
     }
 }

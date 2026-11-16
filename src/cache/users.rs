@@ -171,14 +171,15 @@ impl SqliteCache {
         let like_sql = format!(
             "SELECT data,
                 CASE
-                    WHEN lower(name) = lower(?1) THEN 0
-                    WHEN lower(display_name) = lower(?1) THEN 1
-                    WHEN lower(real_name) = lower(?1) THEN 2
-                    ELSE 3
+                    WHEN id = ?1 THEN 0
+                    WHEN lower(name) = lower(?1) THEN 1
+                    WHEN lower(display_name) = lower(?1) THEN 2
+                    WHEN lower(real_name) = lower(?1) THEN 3
+                    ELSE 4
                 END as priority
              FROM users
-             WHERE 1=1 {}
-             AND (name LIKE ?2 OR display_name LIKE ?2 OR real_name LIKE ?2 OR email LIKE ?2)
+             WHERE id = ?1
+             OR ((name LIKE ?2 OR display_name LIKE ?2 OR real_name LIKE ?2 OR email LIKE ?2) {})
              ORDER BY priority, name
              LIMIT ?3",
             bot_filter
@@ -652,5 +653,25 @@ mod tests {
         result1.unwrap();
         result2.unwrap();
         assert_eq!(cache.get_users().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_exact_id_finds_that_user_even_when_discovery_skips_bots() {
+        let cache = setup_cache().await;
+        cache
+            .save_users(vec![create_test_user(
+                "U0BOTBOT01",
+                "deploy-bot",
+                None,
+                true,
+            )])
+            .await
+            .unwrap();
+
+        let found = cache.search_users("U0BOTBOT01", 10, false).unwrap();
+
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "U0BOTBOT01");
+        assert!(cache.search_users("deploy", 10, false).unwrap().is_empty());
     }
 }
