@@ -200,7 +200,7 @@ slack-cli normalizes responses to simpler shapes than raw Slack API. Reach for t
 - `bookmarks --json` (list) → array of `{id, channel_id, title, link, type, emoji?, date_created, date_updated}`.
 - `bookmark --json` (add) → single object with the same shape.
 - `emoji --json` → array of `{name, url, is_alias, alias_for}`. Iterate with `.[]`, do not subscript by emoji name.
-- `search --json` → `{messages, files, channels, users}` object. Each `.messages[]` uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape.
+- `search --json` → `{messages, files, channels, users}` object. Each `.messages[]` uses `message_ts`, `content`, `channel_id`, `channel_name`, `author_user_id`, `author_name`, `permalink` — **not** the regular `ts`/`text`/`user` shape. `blocks` appears only on a message whose `content` is empty, an integration's post that carries its body in Block Kit alone.
 - `cache stats --json` → `{users: N, channels: N}`.
 - `search --capabilities --json` → `{is_ai_search_enabled}`. When false the workspace ranks by keyword whatever `--no-semantic` says.
 - `auth status --json` → `{profile, active, method, workspace, tokens: {user, bot, app}, …}`; each token is masked, and `null` when the profile does not hold that kind. `--verify` adds the live `auth.test` result under `verified`; a failure appears as `verified.error` and still exits `0`. It reports the stored profile, not environment-token overrides.

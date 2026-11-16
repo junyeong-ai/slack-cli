@@ -797,9 +797,27 @@ pub fn print_search_capabilities(
     )
 }
 
-pub fn print_search_results(results: &SearchResults, as_json: bool) -> Result<(), OutputError> {
+/// A search result's `content` already carries its text, links and mentions,
+/// so its blocks repeat them at several times the size. Only a post whose
+/// body exists in Block Kit alone, as many integrations send, keeps them.
+fn drop_redundant_blocks(results: &mut SearchResults) {
+    for message in &mut results.messages {
+        if !message.text.trim().is_empty() {
+            message.blocks = None;
+        }
+    }
+}
+
+pub fn print_search_results(
+    mut results: SearchResults,
+    as_json: bool,
+    include_message_blocks: bool,
+) -> Result<(), OutputError> {
     if as_json {
-        return print_json(results);
+        if !include_message_blocks {
+            drop_redundant_blocks(&mut results);
+        }
+        return print_json(&results);
     }
 
     if results.messages.is_empty()
@@ -1308,5 +1326,29 @@ mod tests {
         let projected = project_message(&msg, &allowed, None).unwrap();
 
         assert!(projected.get("date").is_some());
+    }
+
+    #[test]
+    fn search_results_keep_blocks_only_where_content_is_empty() {
+        let mut results: SearchResults = serde_json::from_value(json!({
+            "messages": [
+                {
+                    "message_ts": "1.0",
+                    "content": "deployed <https://example.com|v2>",
+                    "blocks": [{"type": "rich_text"}],
+                },
+                {"message_ts": "2.0", "content": "", "blocks": [{"type": "section"}]},
+            ]
+        }))
+        .unwrap();
+
+        drop_redundant_blocks(&mut results);
+        let output = serde_json::to_value(&results).unwrap();
+
+        assert!(output["messages"][0].get("blocks").is_none());
+        assert_eq!(
+            output["messages"][1]["blocks"],
+            json!([{"type": "section"}])
+        );
     }
 }

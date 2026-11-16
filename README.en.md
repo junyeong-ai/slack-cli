@@ -509,6 +509,7 @@ In `--json` mode every stderr line is a JSON object too: log records carry `leve
 - `--channel-types <types>` — Conversation types to search (default: `public_channel,private_channel,mpim,im`)
 - `--content-types <types>` — Content types to search (default: `messages`)
 - `--include-context` — Include surrounding context messages
+- `--include-blocks` — With `--json`, keep Block Kit `blocks` on every message (by default only on messages whose `content` is empty)
 - `--include-bots` — Include bot-authored messages
 - `--include-archived` — Include archived channels
 - `--include-deleted-users` — Include deleted users in results

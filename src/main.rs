@@ -432,6 +432,7 @@ async fn run(cli: Cli) -> Result<()> {
             before,
             after,
             include_context_messages,
+            include_message_blocks,
             include_bots,
             include_deleted_users,
             modifiers,
@@ -474,7 +475,7 @@ async fn run(cli: Cli) -> Result<()> {
             };
             let results = slack.search.context(&query, &options).await?;
 
-            format::print_search_results(&results, cli.json)?;
+            format::print_search_results(results, cli.json, include_message_blocks)?;
         }
 
         Command::React { channel, ts, emoji } => {

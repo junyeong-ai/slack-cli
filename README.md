@@ -499,6 +499,7 @@ Slack, OAuth, 릴리스 다운로드, Socket Mode를 포함한 모든 연결은 
 - `--channel-types <types>` — 검색할 대화 타입 (기본: `public_channel,private_channel,mpim,im`)
 - `--content-types <types>` — 검색 대상 (기본: `messages`)
 - `--include-context` — 검색 결과 주변 맥락 포함
+- `--include-blocks` — `--json`에서 모든 메시지에 Block Kit `blocks`를 남김 (기본은 `content`가 빈 메시지에만)
 - `--include-bots` — 봇 메시지 포함
 - `--include-deleted-users` — 삭제된 사용자 포함
 - `--include-archived` — 아카이브 채널 포함

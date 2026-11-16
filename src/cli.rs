@@ -299,6 +299,11 @@ pub enum Command {
             help = "Include surrounding context messages"
         )]
         include_context_messages: bool,
+        #[arg(
+            long = "include-blocks",
+            help = "With --json, keep Block Kit blocks on every message, not only on those whose content is empty"
+        )]
+        include_message_blocks: bool,
         #[arg(long, help = "Include bot-authored messages")]
         include_bots: bool,
         #[arg(

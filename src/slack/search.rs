@@ -189,9 +189,9 @@ pub struct SearchMessageResult {
     pub permalink: Option<String>,
     #[serde(default)]
     pub is_author_bot: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<Vec<serde_json::Value>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_messages: Option<serde_json::Value>,
 }
 
