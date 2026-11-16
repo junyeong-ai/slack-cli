@@ -159,10 +159,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### 소스 빌드
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release --locked   # rust-toolchain.toml이 1.99.1 툴체인을 자동 선택
+cargo build --release --locked   # rust-toolchain.toml이 1.100.0 툴체인을 자동 선택
 ```
 
-**요구사항**: Rust 1.98.0+ (rustup). 저장소 빌드는 1.99.1을 사용합니다.
+**요구사항**: Rust 1.98.0+ (rustup). 저장소 빌드는 1.100.0을 사용합니다.
 
 ---
 

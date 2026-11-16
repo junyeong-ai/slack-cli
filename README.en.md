@@ -159,10 +159,10 @@ cargo install --locked --git https://github.com/junyeong-ai/slack-cli
 ### Build from Source
 ```bash
 git clone https://github.com/junyeong-ai/slack-cli && cd slack-cli
-cargo build --release --locked   # rust-toolchain.toml selects the 1.99.1 toolchain
+cargo build --release --locked   # rust-toolchain.toml selects the 1.100.0 toolchain
 ```
 
-**Requirements**: Rust 1.98.0+ (rustup). Repository builds use 1.99.1.
+**Requirements**: Rust 1.98.0+ (rustup). Repository builds use 1.100.0.
 
 ---
 
