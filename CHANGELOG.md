@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** `search --json` keeps a message's `blocks` only when its `content` is empty, as with an integration's post that carries its body in Block Kit alone. `content` already holds the text, links and mentions, so 50 results shrink from about 95 KB to 36 KB. `--include-blocks` keeps blocks on every message, and fields a result lacks are omitted instead of printed as `null`.
+- **Breaking:** `app_distribution` defaults to `marketplace_or_internal`. Slack's limit of one `conversations.history` or `.replies` call a minute and 15 messages a call applies only to apps distributed outside the Marketplace, and the app the README has you create is an internal one; `messages --limit 50` returned 15. Set `commercial_external` in `[connection]` for an app distributed to other workspaces.
+- Rust 1.100.0, dependencies, GitHub Actions and CI tools are updated to their latest releases. rusqlite stays at 0.42, the newest that r2d2_sqlite accepts, which bundles the same SQLite as 0.43.
+
+### Fixed
+
+- `search --channel` keeps every result inside the named conversation. It sent Slack a relevance hint that still returned other channels' messages, and none of a DM's.
+- `users <ID>` and `channels <ID>` return that user or channel. `channels` returned another channel whose purpose mentioned the ID, and `users` found nobody.
+- Socket Mode connects through the `http://` proxy that `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` name, as Web API requests already did, so the daemon works on a network that allows only proxied traffic. Any other kind of proxy is refused rather than bypassed.
+- An expired login whose renewal fails says to run `slack-cli auth login`. Slack expires a PKCE refresh token 30 days after issuing it, and a profile left unused that long reported only `invalid_refresh_token`.
+- Error messages name each cause once. A corrupted `auth.json`, for one, repeated its parse error in the `--json` envelope and in the text report.
+- The README says a PKCE login lapses after 30 days unused, and the bundled skill no longer claims search leaves out every bot post by default.
+
 ## [0.20.3] - 2026-10-24
 
 ### Changed

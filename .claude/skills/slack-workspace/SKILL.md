@@ -227,7 +227,7 @@ A name outside this table exits `2` and lists the valid names.
 
 ## `search`
 
-Slack's Real-time Search, paged up to `--limit` (1–100, default 10). Bots, deleted users and archived channels are left out unless `--include-bots`, `--include-deleted-users` or `--include-archived` is given. `--modifiers "has:pin from:@alice"` passes Slack search modifiers, and `--sort timestamp` orders by time instead of relevance. `slack-cli search --help` lists the remaining filters.
+Slack's Real-time Search, paged up to `--limit` (1–100, default 10). `--channel <channel>` keeps every result inside that conversation. Deleted users and archived channels are left out unless `--include-deleted-users` or `--include-archived` is given; `--include-bots` admits bot posts, though some integration posts arrive without it, marked `is_author_bot`. `--modifiers "has:pin from:@alice"` passes Slack search modifiers, and `--sort timestamp` orders by time instead of relevance. `slack-cli search --help` lists the remaining filters.
 
 ## Real-time events
 
