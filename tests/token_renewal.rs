@@ -219,6 +219,7 @@ async fn a_spent_token_without_a_recorded_client_asks_for_a_fresh_login() {
         .expect_err("cannot renew");
     let message = format!("{:#}", anyhow::Error::from(err));
     assert!(message.contains("not recorded"), "{message}");
+    assert!(message.contains("slack-cli auth login"), "{message}");
 }
 
 #[tokio::test]
@@ -240,6 +241,7 @@ async fn a_refusal_from_slack_is_reported_against_the_profile() {
     let message = format!("{:#}", anyhow::Error::from(err));
     assert!(message.contains("acme"), "{message}");
     assert!(message.contains("invalid_refresh_token"), "{message}");
+    assert!(message.contains("slack-cli auth login"), "{message}");
     assert_eq!(
         message.matches("invalid_refresh_token").count(),
         1,

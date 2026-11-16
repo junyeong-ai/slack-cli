@@ -58,7 +58,7 @@ pub enum AuthError {
 
     #[error(
         "the OAuth client that issued the {kind} token in profile '{profile}' is not recorded, \
-         so the token cannot be renewed. run: slack-cli auth login"
+         so the token cannot be renewed"
     )]
     ClientUnknown { profile: String, kind: TokenKind },
 
@@ -72,6 +72,17 @@ pub enum AuthError {
 
     #[error("renewing the {kind} token in profile '{profile}' returned a token of another kind")]
     RenewalMismatch { profile: String, kind: TokenKind },
+
+    #[error(
+        "the {kind} token in profile '{profile}' has expired and could not be renewed. \
+         run: slack-cli auth login"
+    )]
+    ExpiredAfterFailedRenewal {
+        profile: String,
+        kind: TokenKind,
+        #[source]
+        cause: Box<AuthError>,
+    },
 
     #[error("failed to read auth store at {path}")]
     StoreRead {

@@ -53,7 +53,7 @@ Slack also supports rotating `xoxe.xapp-` tokens. The CLI does not store or refr
 | `NeedsRenewal` | holds a refresh token and expiry is within 2 hours (or past) | exchange it |
 | `Expired` | expiry has passed with no refresh token | tell the user to log in again |
 
-A renewal that cannot complete — no client recorded, the exchange refused, the network failed — is only fatal once the token is genuinely past its expiry. Inside the window the command runs on the credential it already holds and the next invocation retries, so a transient failure never turns a working token into an error.
+A renewal that cannot complete — no client recorded, the exchange refused, the network failed — is only fatal once the token is genuinely past its expiry, and then `ExpiredAfterFailedRenewal` sends the user to `auth login` with the failure as its cause: a new login recovers from every one of them. Inside the window the command runs on the credential it already holds and the next invocation retries, so a transient failure never turns a working token into an error.
 
 Renewal is driven only by the recorded expiry — never by reacting to an API error. Slack's `expires_in` is authoritative, so nothing has to be inferred from a failure.
 

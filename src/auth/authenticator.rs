@@ -246,6 +246,8 @@ impl Authenticator {
             return self
                 .keep_using(
                     state,
+                    name,
+                    kind,
                     current,
                     AuthError::ClientUnknown {
                         profile: name.to_string(),
@@ -270,6 +272,8 @@ impl Authenticator {
                 return self
                     .keep_using(
                         state,
+                        name,
+                        kind,
                         current,
                         AuthError::RenewalFailed {
                             profile: name.to_string(),
@@ -292,6 +296,8 @@ impl Authenticator {
             return self
                 .keep_using(
                     state,
+                    name,
+                    kind,
                     current,
                     AuthError::RenewalMismatch {
                         profile: name.to_string(),
@@ -320,15 +326,22 @@ impl Authenticator {
 
     /// A failed renewal may reuse the credential only while its recorded
     /// expiry still permits use, checked after the network and state-lock waits.
+    /// Past that expiry a new login is the one remedy whatever the failure was.
     async fn keep_using(
         &self,
         state: AuthState,
+        profile: &str,
+        kind: TokenKind,
         credential: Credential,
         reason: AuthError,
     ) -> Result<Secret, AuthError> {
         let mut snapshot = self.state.write().await;
         if !credential.is_live(Utc::now()) {
-            return Err(reason);
+            return Err(AuthError::ExpiredAfterFailedRenewal {
+                profile: profile.to_owned(),
+                kind,
+                cause: Box::new(reason),
+            });
         }
         tracing::warn!(
             error = %format_args!("{:#}", anyhow::Error::from(reason)),
@@ -552,6 +565,8 @@ mod tests {
             let result = auth
                 .keep_using(
                     AuthState::default(),
+                    "test",
+                    TokenKind::User,
                     credential,
                     AuthError::ClientUnknown {
                         profile: "test".into(),
@@ -560,7 +575,11 @@ mod tests {
                 )
                 .await;
             if minutes < 0 {
-                assert!(matches!(result, Err(AuthError::ClientUnknown { .. })));
+                assert!(matches!(
+                    result,
+                    Err(AuthError::ExpiredAfterFailedRenewal { cause, .. })
+                        if matches!(*cause, AuthError::ClientUnknown { .. })
+                ));
             } else {
                 assert_eq!(result.unwrap().expose_secret(), "xoxe-current");
             }
