@@ -217,7 +217,7 @@ async fn a_spent_token_without_a_recorded_client_asks_for_a_fresh_login() {
         .token_for(TokenPolicy::UserRequired)
         .await
         .expect_err("cannot renew");
-    let message = err.to_string();
+    let message = format!("{:#}", anyhow::Error::from(err));
     assert!(message.contains("not recorded"), "{message}");
 }
 
@@ -237,9 +237,14 @@ async fn a_refusal_from_slack_is_reported_against_the_profile() {
         .token_for(TokenPolicy::UserRequired)
         .await
         .expect_err("renewal fails");
-    let message = err.to_string();
+    let message = format!("{:#}", anyhow::Error::from(err));
     assert!(message.contains("acme"), "{message}");
     assert!(message.contains("invalid_refresh_token"), "{message}");
+    assert_eq!(
+        message.matches("invalid_refresh_token").count(),
+        1,
+        "{message}"
+    );
 }
 
 #[tokio::test]

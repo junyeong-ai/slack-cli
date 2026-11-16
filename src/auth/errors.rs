@@ -62,7 +62,7 @@ pub enum AuthError {
     )]
     ClientUnknown { profile: String, kind: TokenKind },
 
-    #[error("could not renew the {kind} token in profile '{profile}': {source}")]
+    #[error("could not renew the {kind} token in profile '{profile}'")]
     RenewalFailed {
         profile: String,
         kind: TokenKind,
@@ -73,21 +73,21 @@ pub enum AuthError {
     #[error("renewing the {kind} token in profile '{profile}' returned a token of another kind")]
     RenewalMismatch { profile: String, kind: TokenKind },
 
-    #[error("failed to read auth store at {path}: {source}")]
+    #[error("failed to read auth store at {path}")]
     StoreRead {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
 
-    #[error("failed to write auth store at {path}: {source}")]
+    #[error("failed to write auth store at {path}")]
     StoreWrite {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
 
-    #[error("auth store at {path} is corrupted: {source}")]
+    #[error("auth store at {path} is corrupted")]
     StoreParse {
         path: PathBuf,
         #[source]
@@ -97,7 +97,7 @@ pub enum AuthError {
     #[error("auth store schema version {found} is not supported (expected {expected})")]
     UnsupportedSchema { found: u32, expected: u32 },
 
-    #[error("OAuth flow failed: {0}")]
+    #[error("OAuth flow failed")]
     OAuth(#[from] OAuthError),
 
     #[error("internal: {0}")]
@@ -124,9 +124,9 @@ pub enum OAuthError {
     #[error("token exchange response was missing field: {0}")]
     MissingField(&'static str),
 
-    #[error("HTTP error during OAuth: {0}")]
+    #[error("HTTP error during OAuth")]
     Http(#[from] reqwest::Error),
 
-    #[error("io error: {0}")]
+    #[error("I/O error during OAuth")]
     Io(#[from] std::io::Error),
 }

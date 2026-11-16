@@ -27,7 +27,7 @@ pub enum SlackApiError {
     },
 
     /// The request never produced a usable response (DNS, TLS, timeout, …).
-    #[error("HTTP request failed: {source}")]
+    #[error("HTTP request failed")]
     Transport {
         #[source]
         source: reqwest::Error,

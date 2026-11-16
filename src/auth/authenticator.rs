@@ -331,7 +331,7 @@ impl Authenticator {
             return Err(reason);
         }
         tracing::warn!(
-            error = %reason,
+            error = %format_args!("{:#}", anyhow::Error::from(reason)),
             "could not renew the Slack token; continuing with the one still in date"
         );
         *snapshot = state;
