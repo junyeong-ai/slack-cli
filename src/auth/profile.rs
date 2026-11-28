@@ -43,3 +43,21 @@ impl Profile {
         format!("{} ({})", self.workspace.team_name, self.workspace.team_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_profile_writes_back_the_timestamps_auth_json_holds() {
+        let stored = json!({
+            "method": "pkce",
+            "workspace": {"team_id": "T01", "team_name": "Acme"},
+            "tokens": {"user": {"token": "xoxe.xoxp-1", "expires_at": "2026-10-17T01:20:00.120Z"}},
+            "authorized_at": "2026-10-17T01:20:00.123400Z"
+        });
+        let profile: Profile = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&profile).unwrap(), stored);
+    }
+}

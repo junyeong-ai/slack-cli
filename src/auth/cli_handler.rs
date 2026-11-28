@@ -733,6 +733,19 @@ mod tests {
     }
 
     #[test]
+    fn status_json_reports_an_expiry_as_auth_json_holds_it() {
+        let credential: Credential = serde_json::from_value(json!({
+            "token": "xoxe.xoxp-1",
+            "expires_at": "2026-10-17T01:20:00.120Z"
+        }))
+        .unwrap();
+        assert_eq!(
+            credential_json(&credential)["expires_at"],
+            "2026-10-17T01:20:00.120Z"
+        );
+    }
+
+    #[test]
     fn slugify_lowercases_and_dashes_non_alnum() {
         assert_eq!(slugify("Acme Inc."), "acme-inc");
         assert_eq!(slugify("My Team!"), "my-team");

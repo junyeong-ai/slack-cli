@@ -422,6 +422,20 @@ async fn environment_tokens_bypass_the_store_entirely() {
     assert_eq!(token.expose_secret(), "xoxp-from-env");
 }
 
+/// The namespace names the cache directory, so a change in how it is derived
+/// strands every existing cache.
+#[tokio::test]
+async fn a_cache_namespace_keeps_the_name_earlier_releases_gave_it() {
+    let mut contents = profile(json!({"token": "xoxp-1"}), Value::Null);
+    contents["profiles"]["acme"]["authorized_at"] = json!("2026-10-17T00:00:00.120Z");
+    let store = Store::with(contents);
+    let auth = store.authenticator("http://localhost/api".into()).await;
+    assert_eq!(
+        auth.cache_namespace().await.unwrap(),
+        "76485be971aebbe27ef2219b8ab25512357ba4a47b0c1f4fc568149726917065"
+    );
+}
+
 #[tokio::test]
 async fn cache_namespaces_follow_authorization_not_token_rotation() {
     let store = Store::with(profile(expiring_in(30), Value::Null));

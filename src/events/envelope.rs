@@ -356,6 +356,19 @@ mod tests {
         assert!(event.raw.is_none());
     }
 
+    #[test]
+    fn an_event_writes_back_the_received_at_the_event_log_holds() {
+        let event = from_event_callback(
+            &callback(json!({"type": "message", "channel": "C01", "ts": "1700000000.000100"})),
+            false,
+        )
+        .unwrap();
+        let mut stored = serde_json::to_value(&event).unwrap();
+        stored["received_at"] = json!("2026-10-17T01:20:00.120Z");
+        let event: Event = serde_json::from_value(stored.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&event).unwrap(), stored);
+    }
+
     /// The text and author of an edited message live only in the nested
     /// object; reading the top level would produce an event with no author
     /// and no text, which every rule would then decline to match.
