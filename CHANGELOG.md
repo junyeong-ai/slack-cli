@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** building from source needs Rust 1.100.1, the toolchain the repository builds and tests with. The previous floor of 1.98.0 rested on a misread release note. Release binaries, `install.sh` and `self update` need no Rust at all.
+- Rust 1.100.1, dependencies, GitHub Actions and CI tools are updated to their latest releases. `url` 2.5.9 fixes RUSTSEC-2026-0592, a stack overflow in `Url::origin()`, which slack-cli does not call itself. rusqlite stays at 0.42, the newest that r2d2_sqlite accepts.
 
 ## [0.21.0] - 2026-11-16
 
