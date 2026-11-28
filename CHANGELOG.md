@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** building from source needs Rust 1.100.0, the toolchain the repository builds and tests with. The previous floor of 1.98.0 rested on a misread release note. Release binaries, `install.sh` and `self update` need no Rust at all.
+- **Breaking:** building from source needs Rust 1.100.1, the toolchain the repository builds and tests with. The previous floor of 1.98.0 rested on a misread release note. Release binaries, `install.sh` and `self update` need no Rust at all.
 
 ## [0.21.0] - 2026-11-16
 
