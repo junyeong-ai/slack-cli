@@ -20,13 +20,28 @@ use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
-#[tokio::main]
-async fn main() -> ExitCode {
+/// The stack a command runs on. Linux and macOS give the main thread 8 MiB
+/// and Windows gives it 1 MiB, less than a debug build needs to parse the
+/// command line, so every platform runs the command on a thread of this size.
+const COMMAND_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn main() -> ExitCode {
     // Before anything reads the environment: clap binds `--profile` and
-    // `--client-id` to env vars at parse time, and the log filter below reads
-    // RUST_LOG.
+    // `--client-id` to env vars at parse time, and the log filter reads
+    // RUST_LOG. Writing it is sound only while no other thread exists.
     dotenvy::dotenv().ok();
 
+    std::thread::Builder::new()
+        .name("slack-cli".to_owned())
+        .stack_size(COMMAND_STACK_SIZE)
+        .spawn(cli_main)
+        .expect("the operating system refused to start the command thread")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+#[tokio::main]
+async fn cli_main() -> ExitCode {
     let cli = Cli::parse();
 
     let default_level = if cli.verbose {
