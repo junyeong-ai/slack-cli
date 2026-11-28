@@ -9,12 +9,12 @@ use crate::slack::{
 
 /// When a scheduled message posts. A time without an offset would post at a
 /// different moment depending on the machine's timezone, so only Unix seconds
-/// and RFC 3339 times with an offset are accepted.
+/// and times with an offset are accepted.
 fn parse_post_at(value: &str) -> Result<i64, String> {
     value
         .parse::<i64>()
         .or_else(|_| {
-            chrono::DateTime::parse_from_rfc3339(value).map(|time| time.timestamp())
+            value.parse::<jiff::Timestamp>().map(|time| time.as_second())
         })
         .map_err(|_| {
             "expected Unix seconds or an RFC 3339 time with an offset, e.g. 2026-10-25T09:00:00+09:00"
@@ -704,6 +704,10 @@ mod tests {
         assert_eq!(parse_post_at("1792000000"), Ok(1792000000));
         assert_eq!(parse_post_at("2026-10-25T09:00:00+09:00"), Ok(1792886400));
         assert_eq!(parse_post_at("2026-10-25T00:00:00Z"), Ok(1792886400));
+        assert_eq!(
+            parse_post_at("2026-10-25T09:00:00+09:00[Asia/Seoul]"),
+            Ok(1792886400)
+        );
         assert!(parse_post_at("2026-10-25T09:00:00").is_err());
         assert!(parse_post_at("2026-10-25").is_err());
     }

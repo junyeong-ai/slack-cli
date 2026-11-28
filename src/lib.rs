@@ -7,6 +7,7 @@ pub mod events;
 pub mod format;
 pub mod net;
 pub mod paths;
+mod rfc3339;
 pub mod slack;
 pub mod update;
 

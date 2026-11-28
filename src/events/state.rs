@@ -565,7 +565,7 @@ impl EventState {
 mod tests {
     use super::*;
     use crate::events::envelope::{EVENT_SCHEMA, EventKind, EventSource};
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn state() -> (EventState, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -755,7 +755,7 @@ mod tests {
     /// Cursor tests run against the recovery horizon, which is measured from
     /// now — so their timestamps have to be too.
     fn ts(offset_seconds: i64) -> String {
-        format!("{}.000000", Utc::now().timestamp() + offset_seconds)
+        format!("{}.000000", Timestamp::now().as_second() + offset_seconds)
     }
 
     fn message(channel: &str, ts: &str) -> Event {
@@ -777,7 +777,7 @@ mod tests {
             text: Some("hi".to_string()),
             reaction: None,
             item_user: None,
-            received_at: Utc::now(),
+            received_at: Timestamp::now(),
             matched: Vec::new(),
             raw: None,
         }

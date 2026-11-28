@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::Deserialize;
 
 use super::credential::{Credential, TokenSet};
@@ -30,7 +30,7 @@ struct V1Profile {
     scopes: Vec<String>,
     #[serde(default)]
     client_id: Option<String>,
-    authorized_at: DateTime<Utc>,
+    authorized_at: Timestamp,
 }
 
 #[derive(Debug, Default, Deserialize)]

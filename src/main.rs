@@ -1,8 +1,8 @@
 mod commands;
 
 use anyhow::{Context, Result};
-use chrono::{Local, NaiveDate, TimeZone};
 use clap::Parser;
+use jiff::{civil, tz::TimeZone};
 use serde_json::Value;
 use slack_cli::{
     auth::{self, AuthError, AuthLoadOptions, Authenticator, EnvOverrides},
@@ -902,20 +902,16 @@ fn parse_unix_seconds(input: &str) -> Result<i64> {
         return Ok(secs as i64);
     }
 
-    let date = NaiveDate::parse_from_str(input, "%Y-%m-%d").map_err(|_| {
+    let date = civil::Date::strptime("%Y-%m-%d", input).map_err(|_| {
         anyhow::anyhow!(
             "Invalid date format: {} (expected Unix timestamp or YYYY-MM-DD)",
             input
         )
     })?;
-    let dt = date
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| anyhow::anyhow!("Invalid time"))?;
-    let local = Local
-        .from_local_datetime(&dt)
-        .single()
-        .ok_or_else(|| anyhow::anyhow!("Invalid timezone conversion"))?;
-    Ok(local.timestamp())
+    let midnight = date
+        .to_zoned_datetime(TimeZone::system())
+        .map_err(|err| anyhow::anyhow!("Invalid date: {input} ({err})"))?;
+    Ok(midnight.timestamp().as_second())
 }
 
 fn parse_timestamp(input: &str) -> Result<String> {

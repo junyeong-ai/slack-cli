@@ -405,7 +405,7 @@ async fn a_redelivered_envelope_is_stored_once() {
 async fn streaming_mode_keeps_no_event_log_at_all() {
     // A timestamp from now, because the observable below is the recovery
     // cursor and that is bounded by `backfill_max_age_hours`.
-    let recent = format!("{}.000100", chrono::Utc::now().timestamp() - 5);
+    let recent = format!("{}.000100", jiff::Timestamp::now().as_second() - 5);
     let (port, _acks, _socket) =
         socket_server(vec![message_envelope("env-1", &recent, "hi <@U_TEST>")]).await;
 
@@ -536,7 +536,7 @@ async fn a_reconnect_recovers_what_the_gap_swallowed() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let missed_ts = format!("{}.000100", chrono::Utc::now().timestamp() - 30);
+    let missed_ts = format!("{}.000100", jiff::Timestamp::now().as_second() - 30);
     Mock::given(method("GET"))
         .and(path("/conversations.history"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -561,7 +561,7 @@ async fn a_reconnect_recovers_what_the_gap_swallowed() {
         .state
         .advance_cursor(
             "C0000001",
-            &format!("{}.000000", chrono::Utc::now().timestamp() - 120),
+            &format!("{}.000000", jiff::Timestamp::now().as_second() - 120),
             true,
         )
         .unwrap();
@@ -620,7 +620,7 @@ async fn recovery_never_reaches_a_channel_no_rule_cares_about() {
         .state
         .advance_cursor(
             "C0000009",
-            &format!("{}.000000", chrono::Utc::now().timestamp() - 60),
+            &format!("{}.000000", jiff::Timestamp::now().as_second() - 60),
             false,
         )
         .unwrap();
@@ -694,7 +694,7 @@ async fn a_live_event_does_not_wait_for_a_slow_recovery() {
         .state
         .advance_cursor(
             "C0000001",
-            &format!("{}.000000", chrono::Utc::now().timestamp() - 120),
+            &format!("{}.000000", jiff::Timestamp::now().as_second() - 120),
             true,
         )
         .unwrap();
@@ -792,8 +792,8 @@ async fn recovery_pages_through_a_gap_deeper_than_one_response() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let newest = format!("{}.000100", chrono::Utc::now().timestamp() - 20);
-    let older = format!("{}.000100", chrono::Utc::now().timestamp() - 40);
+    let newest = format!("{}.000100", jiff::Timestamp::now().as_second() - 20);
+    let older = format!("{}.000100", jiff::Timestamp::now().as_second() - 40);
 
     // First request (no cursor) hands back a page and a cursor.
     Mock::given(method("GET"))
@@ -829,7 +829,7 @@ async fn recovery_pages_through_a_gap_deeper_than_one_response() {
         .state
         .advance_cursor(
             "C0000001",
-            &format!("{}.000000", chrono::Utc::now().timestamp() - 300),
+            &format!("{}.000000", jiff::Timestamp::now().as_second() - 300),
             true,
         )
         .unwrap();
@@ -878,7 +878,7 @@ async fn recovery_pages_through_a_gap_deeper_than_one_response() {
 /// or a workspace's every channel would join the rationed catch-up list.
 #[tokio::test]
 async fn an_unmatched_event_moves_the_cursor_without_claiming_recovery() {
-    let quiet_ts = format!("{}.000100", chrono::Utc::now().timestamp() - 5);
+    let quiet_ts = format!("{}.000100", jiff::Timestamp::now().as_second() - 5);
     let (port, _acks, _socket) = socket_server(vec![
         json!({
             "type": "events_api",
@@ -1072,8 +1072,8 @@ async fn recovery_reaches_replies_in_a_subscribed_thread() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let root = &format!("{}.000100", chrono::Utc::now().timestamp() - 100);
-    let reply = format!("{}.000100", chrono::Utc::now().timestamp() - 50);
+    let root = &format!("{}.000100", jiff::Timestamp::now().as_second() - 100);
+    let reply = format!("{}.000100", jiff::Timestamp::now().as_second() - 50);
     Mock::given(method("GET"))
         .and(path("/conversations.replies"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -1380,7 +1380,7 @@ async fn recovery_reads_the_tail_of_a_long_thread_not_its_head() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let base = chrono::Utc::now().timestamp() - 1000;
+    let base = jiff::Timestamp::now().as_second() - 1000;
     let root = &format!("{base}.000100");
     let reply_ts = |index: usize| format!("{}.000100", base + 100 + index as i64);
     let followed_to = reply_ts(55);
@@ -1465,7 +1465,7 @@ async fn a_gap_older_than_the_horizon_is_read_from_the_horizon() {
     let server = MockServer::start().await;
     let _auth = mount_common(&server, port).await;
 
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let inside_the_window = format!("{}.000100", now - 6 * 3600);
 
     // Answers `oldest` the way Slack does, so the assertion is about what the
@@ -1545,7 +1545,7 @@ async fn a_clamped_recovery_leaves_the_cursor_at_the_horizon() {
     config.events = spooling(vec![mention_rule()]);
     config.events.backfill_max_age_hours = 24;
 
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let dir = tempfile::tempdir().unwrap();
     let runtime = EventRuntime::open(dir.path(), "test", &config).unwrap();
     runtime
@@ -1746,7 +1746,7 @@ impl Respond for DelayedHistory {
 
 #[tokio::test]
 async fn a_cancelled_recovery_keeps_its_checkpoint_across_restart() {
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     let initial = format!("{}.000000", now - 120);
     let missed = format!("{}.000000", now - 60);
     let live = format!("{}.000000", now - 1);

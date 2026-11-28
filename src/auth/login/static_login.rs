@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::Utc;
+use jiff::Timestamp;
 use secrecy::ExposeSecret;
 
 use crate::auth::credential::{Credential, TokenSet};
@@ -44,6 +44,6 @@ pub async fn run(
             app: app_token.map(crate::auth::app_credential),
         },
         client: None,
-        authorized_at: Utc::now(),
+        authorized_at: Timestamp::now(),
     })
 }

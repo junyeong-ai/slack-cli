@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use jiff::Timestamp;
 
 use super::envelope::{EVENT_SCHEMA, Event, EventKind, EventSource};
 use super::state::EventState;
@@ -65,7 +65,7 @@ pub(super) async fn recover_batch(
     // in between reported rather than dropped in silence.
     let horizon = format!(
         "{}.000000",
-        config.backfill_horizon(Utc::now())?.timestamp()
+        config.backfill_horizon(Timestamp::now())?.as_second()
     );
     let limit = config.backfill_max_channels;
     let (gaps, watched, threads) = state
@@ -283,7 +283,7 @@ fn from_history(channel: &str, team_id: Option<&str>, message: SlackMessage) -> 
         text: Some(message.text).filter(|text| !text.is_empty()),
         reaction: None,
         item_user: None,
-        received_at: Utc::now(),
+        received_at: Timestamp::now(),
         matched: Vec::new(),
         raw: None,
     }
@@ -293,7 +293,7 @@ fn from_history(channel: &str, team_id: Option<&str>, message: SlackMessage) -> 
 mod tests {
     use super::*;
     use crate::events::envelope::from_event_callback;
-    use chrono::Duration;
+    use jiff::SignedDuration;
     use serde_json::json;
 
     /// Slack serves at most `PAGE` replies a request and, when `oldest` is
@@ -429,7 +429,7 @@ mod tests {
         .unwrap();
         let slack = SlackClient::new(config.clone(), Arc::new(auth)).unwrap();
         let state = EventState::open(&dir.path().join("state.db")).unwrap();
-        let base = Utc::now().timestamp() - 1000;
+        let base = Timestamp::now().as_second() - 1000;
         let ts = |offset: i64| format!("{}.000000", base + offset);
         state
             .watch_thread("C1", &ts(90), "rule", "eyes", None, Some(&ts(100)))
@@ -462,8 +462,8 @@ mod tests {
         }
         server.reset().await;
         state.unwatch_thread("C1", &ts(90), "rule").unwrap();
-        let old = format!("{}.000000", Utc::now().timestamp() - 172800);
-        let recent = format!("{}.000000", Utc::now().timestamp() - 10);
+        let old = format!("{}.000000", Timestamp::now().as_second() - 172800);
+        let recent = format!("{}.000000", Timestamp::now().as_second() - 10);
         state
             .watch_thread("C1", &old, "rule", "eyes", None, Some(&old))
             .unwrap();
@@ -491,8 +491,9 @@ mod tests {
             .cursor_ts
             .parse::<f64>()
             .unwrap();
-        let expected =
-            (Utc::now() - Duration::hours(config.events.backfill_max_age_hours)).timestamp() as f64;
+        let expected = (Timestamp::now()
+            - SignedDuration::from_hours(config.events.backfill_max_age_hours))
+        .as_second() as f64;
         assert!((cutoff - expected).abs() < 5.0);
         let request = server.received_requests().await.unwrap().pop().unwrap();
         let requested = request

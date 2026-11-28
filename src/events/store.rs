@@ -254,7 +254,7 @@ impl EventStore for SqliteStore {
                 event.ts,
                 event.thread_ts,
                 event.user,
-                event.received_at.timestamp(),
+                event.received_at.as_second(),
                 payload,
             ],
         )?;
@@ -449,7 +449,7 @@ impl EventStore for SqliteStore {
 mod tests {
     use super::*;
     use crate::events::envelope::{EVENT_SCHEMA, EventKind, EventSource};
-    use chrono::{Duration, Utc};
+    use jiff::{SignedDuration, Timestamp};
 
     fn config(mode: EventRetention) -> EventsConfig {
         EventsConfig {
@@ -479,7 +479,7 @@ mod tests {
             text: Some("body".into()),
             reaction: None,
             item_user: None,
-            received_at: Utc::now(),
+            received_at: Timestamp::now(),
             matched: vec!["mention".into()],
             raw: None,
         }
@@ -728,7 +728,7 @@ mod tests {
     fn an_archive_drops_what_has_aged_out() {
         let (store, _dir) = store(EventRetention::Archive);
         let mut old = event("1700000000.000100");
-        old.received_at = Utc::now() - Duration::days(30);
+        old.received_at = Timestamp::now() - SignedDuration::from_hours(30 * 24);
         store.append(&old).unwrap();
         store.append(&event("1700000001.000100")).unwrap();
 

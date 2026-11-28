@@ -53,7 +53,7 @@ mod tests {
     use crate::auth::credential::TokenSet;
     use crate::auth::method::AuthMethod;
     use crate::auth::profile::WorkspaceInfo;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn empty_profile(team: &str) -> Profile {
         Profile {
@@ -65,7 +65,7 @@ mod tests {
             },
             tokens: TokenSet::default(),
             client: None,
-            authorized_at: Utc::now(),
+            authorized_at: Timestamp::now(),
         }
     }
 

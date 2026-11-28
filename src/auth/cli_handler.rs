@@ -9,6 +9,7 @@ use url::Url;
 use crate::cli::AuthAction;
 use crate::config::{AuthConfig, Config};
 use crate::format::print_json;
+use crate::rfc3339;
 use crate::slack::{SlackClient, scopes};
 use crate::{errln, outln};
 
@@ -390,7 +391,7 @@ fn describe(credential: &Credential) -> String {
             };
             format!(
                 "{masked} (expires {}, {renewal})",
-                expiry.format("%Y-%m-%dT%H:%M:%SZ")
+                expiry.strftime("%Y-%m-%dT%H:%M:%SZ")
             )
         }
         None => format!("{masked} (does not expire)"),
@@ -400,7 +401,7 @@ fn describe(credential: &Credential) -> String {
 fn credential_json(credential: &Credential) -> Value {
     json!({
         "token": mask_secret(&credential.token),
-        "expires_at": credential.expires_at,
+        "expires_at": credential.expires_at.map(rfc3339::format),
         "renewable": credential.refresh_token.is_some(),
         "scopes": credential.scopes,
     })
@@ -619,7 +620,7 @@ fn print_status_json(
             "bot": profile.tokens.bot.as_ref().map(credential_json),
             "app": profile.tokens.app.as_ref().map(credential_json),
         },
-        "authorized_at": profile.authorized_at,
+        "authorized_at": rfc3339::format(profile.authorized_at),
     });
     match verification {
         Some(Ok(identity)) => {
@@ -873,7 +874,7 @@ mod tests {
         let rotating = Credential {
             token: secret::new("xoxe.xoxp-abcdefgh"),
             refresh_token: Some(secret::new("xoxe-refresh")),
-            expires_at: Some(chrono::Utc::now()),
+            expires_at: Some(jiff::Timestamp::now()),
             scopes: vec![],
         };
         assert!(describe(&rotating).contains("renewable"));

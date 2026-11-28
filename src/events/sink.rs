@@ -219,7 +219,7 @@ fn summarize(event: &Event) -> String {
     }
     format!(
         "{} [{}] {} {} {}{}",
-        event.received_at.format("%H:%M:%S"),
+        event.received_at.strftime("%H:%M:%S"),
         event.matched.join(","),
         event.channel.as_deref().unwrap_or("-"),
         event
@@ -367,7 +367,7 @@ mod tests {
     use super::*;
     use crate::config::default_sink;
     use crate::events::envelope::{EVENT_SCHEMA, EventKind, EventSource};
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn event() -> Event {
         Event {
@@ -388,7 +388,7 @@ mod tests {
             text: Some("hello there".into()),
             reaction: None,
             item_user: None,
-            received_at: Utc::now(),
+            received_at: Timestamp::now(),
             matched: vec!["mention".into()],
             raw: None,
         }

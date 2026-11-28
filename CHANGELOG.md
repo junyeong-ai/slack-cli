@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** building from source needs Rust 1.100.1, the toolchain the repository builds and tests with. The previous floor of 1.98.0 rested on a misread release note. Release binaries, `install.sh` and `self update` need no Rust at all.
 - Rust 1.100.1, dependencies, GitHub Actions and CI tools are updated to their latest releases. `url` 2.5.9 fixes RUSTSEC-2026-0592, a stack overflow in `Url::origin()`, which slack-cli does not call itself. rusqlite stays at 0.42, the newest that r2d2_sqlite accepts.
+- Dates and times are handled by jiff in place of chrono, which its maintainer no longer maintains (RUSTSEC-2026-0543). Timestamps are written exactly as before, so `auth.json`, the event log, cache directories and JSON output are unchanged. `schedule` also accepts the other ISO 8601 and RFC 9557 forms of a time with an offset, such as `2026-10-25T09:00:00+09:00[Asia/Seoul]`.
 
 ## [0.21.0] - 2026-11-16
 

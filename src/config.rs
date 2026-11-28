@@ -475,13 +475,10 @@ impl EventsConfig {
             .context("events.retention_days exceeds the supported seconds range")
     }
 
-    pub(crate) fn backfill_horizon(
-        &self,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<chrono::DateTime<chrono::Utc>> {
-        chrono::Duration::try_hours(self.backfill_max_age_hours)
+    pub(crate) fn backfill_horizon(&self, now: jiff::Timestamp) -> Result<jiff::Timestamp> {
+        jiff::SignedDuration::try_from_hours(self.backfill_max_age_hours)
             .filter(|_| self.backfill_max_age_hours > 0)
-            .and_then(|duration| now.checked_sub_signed(duration))
+            .and_then(|duration| now.checked_sub(duration).ok())
             .context(
                 "events.backfill_max_age_hours must be positive and fit the supported date range",
             )
@@ -522,7 +519,7 @@ impl EventsConfig {
             );
         }
         if self.backfill {
-            self.backfill_horizon(chrono::Utc::now())?;
+            self.backfill_horizon(jiff::Timestamp::now())?;
         }
 
         let sinks = self.effective_sinks();
@@ -1102,12 +1099,12 @@ mod tests {
 
     #[test]
     fn event_periods_preserve_representable_and_disabled_settings() {
-        let now = chrono::DateTime::from_timestamp(1_792_200_000, 0).unwrap();
+        let now = jiff::Timestamp::from_second(1_792_200_000).unwrap();
         let mut config = EventsConfig::default();
         assert_eq!(config.retention_seconds().unwrap(), 7 * 86_400);
         assert_eq!(
             config.backfill_horizon(now).unwrap(),
-            now - chrono::Duration::hours(24)
+            now - jiff::SignedDuration::from_hours(24)
         );
         config.retention_days = (i64::MAX / 86_400) as u64;
         assert!(config.validate().is_ok());

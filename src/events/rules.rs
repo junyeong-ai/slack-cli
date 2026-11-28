@@ -296,7 +296,7 @@ mod tests {
     use super::*;
     use crate::config::EventKindConfig;
     use crate::events::envelope::{EVENT_SCHEMA, EventSource};
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     const ME: &str = "U_ME";
 
@@ -339,7 +339,7 @@ mod tests {
             text: None,
             reaction: None,
             item_user: None,
-            received_at: Utc::now(),
+            received_at: Timestamp::now(),
             matched: Vec::new(),
             raw: None,
         }

@@ -2,7 +2,7 @@
 //! when a rotating token is renewed, when it is left alone, what reaches disk
 //! afterwards, and how a store written by an older schema is carried forward.
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use slack_cli::auth::{AuthLoadOptions, Authenticator, EnvOverrides, TokenKind, TokenPolicy};
@@ -58,7 +58,7 @@ fn expiring_in(minutes: i64) -> Value {
     json!({
         "token": "xoxe.xoxp-current",
         "refresh_token": "xoxe-refresh-1",
-        "expires_at": Utc::now() + Duration::minutes(minutes),
+        "expires_at": Timestamp::now() + SignedDuration::from_mins(minutes),
         "scopes": ["users:read"]
     })
 }
@@ -169,7 +169,7 @@ async fn a_token_that_cannot_be_renewed_is_used_until_it_actually_expires() {
     let store = Store::with(profile(
         json!({
             "token": "xoxe.xoxp-no-refresh",
-            "expires_at": Utc::now() + Duration::minutes(30),
+            "expires_at": Timestamp::now() + SignedDuration::from_mins(30),
             "scopes": []
         }),
         json!({"id": "123.456"}),
@@ -186,7 +186,7 @@ async fn an_expired_token_without_a_refresh_token_asks_for_a_fresh_login() {
     let store = Store::with(profile(
         json!({
             "token": "xoxe.xoxp-dead",
-            "expires_at": Utc::now() - Duration::hours(1),
+            "expires_at": Timestamp::now() - SignedDuration::from_hours(1),
             "scopes": []
         }),
         json!({"id": "123.456"}),
@@ -478,7 +478,7 @@ async fn logout_preserves_replacement_authorizations_and_uses_current_rotated_to
         .await
         .unwrap();
     assert_eq!(token.expose_secret(), "xoxp-rotated");
-    rotated.authorized_at += Duration::seconds(1);
+    rotated.authorized_at += SignedDuration::from_secs(1);
     auth.upsert_profile("acme", rotated, true).await.unwrap();
     assert!(matches!(
         auth.token_for_authorization("acme", TokenKind::User, expected)

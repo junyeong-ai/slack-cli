@@ -53,7 +53,7 @@ r2d2_sqlite = "0.37.2"
 anyhow = "1.0.105"
 thiserror = "2.0.21"
 governor = "0.10.4"
-chrono = { version = "0.4.45", features = ["serde"] }
+jiff = { version = "1.0.3", features = ["serde"] }
 dotenvy = "0.15.7"
 toml = "1.2.3"
 tracing = "0.1.44"

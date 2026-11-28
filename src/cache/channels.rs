@@ -1,7 +1,7 @@
 use super::error::CacheResult;
 use super::sqlite_cache::SqliteCache;
 use crate::slack::types::SlackChannel;
-use chrono::Utc;
+use jiff::Timestamp;
 use rusqlite::{TransactionBehavior, params};
 
 use rusqlite::OptionalExtension;
@@ -44,7 +44,7 @@ impl SqliteCache {
         )?;
         tx.execute("DELETE FROM channels_new", [])?;
 
-        let now = Utc::now().timestamp();
+        let now = Timestamp::now().as_second();
         tx.execute(
             "INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_channel_sync', ?)",
             params![now.to_string()],

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -117,7 +117,8 @@ pub struct Event {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item_user: Option<String>,
 
-    pub received_at: DateTime<Utc>,
+    #[serde(with = "crate::rfc3339::required")]
+    pub received_at: Timestamp,
 
     /// Names of the rules that matched. Empty until the rule engine has run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -274,7 +275,7 @@ pub fn from_event_callback(payload: &Value, keep_raw: bool) -> Option<Event> {
         text: None,
         reaction: str_field(event, "reaction"),
         item_user: str_field(event, "item_user"),
-        received_at: Utc::now(),
+        received_at: Timestamp::now(),
         matched: Vec::new(),
         raw: keep_raw.then(|| event.clone()),
     };

@@ -7,7 +7,7 @@ use crate::slack::{
 };
 use crate::update::install::Signature;
 use crate::update::{Action, UpdateOutcome};
-use chrono::DateTime;
+use jiff::{Timestamp, tz::TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -397,8 +397,9 @@ fn channel_cell(ch: &SlackChannel, field: ChannelField) -> String {
         ChannelField::Created => ch
             .created
             .map(|ts| {
-                DateTime::from_timestamp(ts, 0)
-                    .map(|dt| dt.format("%Y-%m-%d").to_string())
+                Timestamp::from_second(ts)
+                    .ok()
+                    .map(|time| time.strftime("%Y-%m-%d").to_string())
                     .unwrap_or_else(|| ts.to_string())
             })
             .unwrap_or_else(|| "-".to_string()),
@@ -533,7 +534,9 @@ fn project_message(
 
 fn format_timestamp(ts: &str) -> Option<String> {
     let ts_secs: i64 = ts.split('.').next()?.parse().ok()?;
-    DateTime::from_timestamp(ts_secs, 0).map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+    Timestamp::from_second(ts_secs)
+        .ok()
+        .map(|time| time.strftime("%Y-%m-%d %H:%M:%S").to_string())
 }
 
 fn resolve_user_name(user_id: &str, cache: Option<&SqliteCache>) -> Option<String> {
@@ -946,7 +949,7 @@ pub fn print_events(events: &[Event], as_json: bool) -> Result<(), OutputError> 
         outln!(
             "{:>6}  {}  [{}]  {}  {}  {}",
             event.seq,
-            event.received_at.format("%Y-%m-%d %H:%M:%S"),
+            event.received_at.strftime("%Y-%m-%d %H:%M:%S"),
             event.matched.join(","),
             event.kind.as_str(),
             event.channel.as_deref().unwrap_or("-"),
@@ -1046,7 +1049,7 @@ pub fn print_daemon_status(
         return Ok(());
     };
 
-    let age = chrono::Utc::now().timestamp() - status.heartbeat_at;
+    let age = Timestamp::now().as_second() - status.heartbeat_at;
     let beating = age <= stale_after;
 
     if as_json {
@@ -1161,13 +1164,13 @@ fn human_bytes(bytes: u64) -> String {
 /// A stored epoch as a local timestamp. Public because `main` reports one in
 /// an error, and a raw number there would be the only place the CLI shows one.
 pub fn format_epoch(seconds: i64) -> String {
-    DateTime::from_timestamp(seconds, 0)
-        .map(|dt| {
-            dt.with_timezone(&chrono::Local)
-                .format("%Y-%m-%d %H:%M:%S")
+    Timestamp::from_second(seconds)
+        .map(|time| {
+            time.to_zoned_datetime(TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S")
                 .to_string()
         })
-        .unwrap_or_else(|| seconds.to_string())
+        .unwrap_or_else(|_| seconds.to_string())
 }
 
 #[cfg(test)]

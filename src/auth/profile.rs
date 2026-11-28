@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use super::credential::TokenSet;
@@ -18,7 +18,8 @@ pub struct Profile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<OAuthClient>,
 
-    pub authorized_at: DateTime<Utc>,
+    #[serde(with = "crate::rfc3339::required")]
+    pub authorized_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -15,6 +15,7 @@ src/
 ├── lib.rs        Library re-exports
 ├── net.rs        TLS trust and proxy route shared by every HTTPS and WSS connection
 ├── paths.rs      Platform config/cache directories (XDG on Unix, Known Folders on Windows)
+├── rfc3339.rs    The text form of every timestamp the CLI writes
 ├── auth/        See src/auth/CLAUDE.md
 ├── slack/       See src/slack/CLAUDE.md
 ├── cache/       See src/cache/CLAUDE.md

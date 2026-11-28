@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use chrono::Utc;
+use jiff::Timestamp;
 use secrecy::ExposeSecret;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
+
+use crate::rfc3339;
 
 use super::credential::{Credential, Readiness, TokenKind};
 use super::env::EnvOverrides;
@@ -166,7 +168,7 @@ impl Authenticator {
                 })?;
             (
                 credential.token.clone(),
-                credential.readiness(Utc::now()),
+                credential.readiness(Timestamp::now()),
                 profile.clone(),
             )
         };
@@ -202,7 +204,7 @@ impl Authenticator {
         {
             return Err(AuthError::AuthorizationChanged(name.to_owned()));
         }
-        let now = Utc::now();
+        let now = Timestamp::now();
 
         let (current, refresh_token, client) = {
             let profile = state
@@ -307,7 +309,7 @@ impl Authenticator {
                 .await;
         };
 
-        let renewed = issued.into_credential(Utc::now());
+        let renewed = issued.into_credential(Timestamp::now());
         let token = renewed.token.clone();
 
         state
@@ -336,7 +338,7 @@ impl Authenticator {
         reason: AuthError,
     ) -> Result<Secret, AuthError> {
         let mut snapshot = self.state.write().await;
-        if !credential.is_live(Utc::now()) {
+        if !credential.is_live(Timestamp::now()) {
             return Err(AuthError::ExpiredAfterFailedRenewal {
                 profile: profile.to_owned(),
                 kind,
@@ -381,7 +383,12 @@ impl Authenticator {
                 .profiles
                 .get(name)
                 .ok_or_else(|| AuthError::UnknownProfile(name.to_owned()))?;
-            serde_json::json!(["profile", name, profile.workspace, profile.authorized_at])
+            serde_json::json!([
+                "profile",
+                name,
+                profile.workspace,
+                rfc3339::format(profile.authorized_at)
+            ])
         };
         let digest = Sha256::digest(
             serde_json::to_vec(&(self.exchange.api_base_url.trim_end_matches('/'), identity))
@@ -465,7 +472,7 @@ impl Authenticator {
                 profile: name.to_owned(),
                 kind,
             })?;
-        match credential.readiness(Utc::now()) {
+        match credential.readiness(Timestamp::now()) {
             Readiness::Ready => Ok(credential.token.clone()),
             Readiness::NeedsRenewal => self.renew(name, kind, expected).await,
             Readiness::Expired => Err(AuthError::NotRenewable {
@@ -542,7 +549,7 @@ impl Authenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
+    use jiff::SignedDuration;
 
     #[tokio::test]
     async fn renewal_failure_checks_expiry_at_the_fallback_boundary() {
@@ -556,11 +563,11 @@ mod tests {
         .await
         .unwrap();
         for minutes in [-1, 1] {
-            let expires_at = Utc::now() + Duration::minutes(minutes);
+            let expires_at = Timestamp::now() + SignedDuration::from_mins(minutes);
             let mut credential =
                 Credential::permanent(super::super::secret::new("xoxe-current"), vec![]);
             credential.expires_at = Some(expires_at);
-            let previously_live = credential.is_live(expires_at - Duration::seconds(1));
+            let previously_live = credential.is_live(expires_at - SignedDuration::from_secs(1));
             assert!(previously_live);
             let result = auth
                 .keep_using(

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use secrecy::ExposeSecret;
 use serde::Deserialize;
 
@@ -50,13 +50,13 @@ pub struct IssuedToken {
 }
 
 impl IssuedToken {
-    pub fn into_credential(self, now: DateTime<Utc>) -> Credential {
+    pub fn into_credential(self, now: Timestamp) -> Credential {
         Credential {
             token: self.token,
             refresh_token: self.refresh_token,
             expires_at: self
                 .expires_in
-                .map(|seconds| now + Duration::seconds(seconds)),
+                .map(|seconds| now + SignedDuration::from_secs(seconds)),
             scopes: self.scopes,
         }
     }
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn issued_tokens_without_an_expiry_become_permanent_credentials() {
         let response = parse(r#"{"ok": true, "access_token": "xoxb-static"}"#).unwrap();
-        let credential = response.bot.unwrap().into_credential(Utc::now());
+        let credential = response.bot.unwrap().into_credential(Timestamp::now());
         assert!(!credential.expires());
         assert!(credential.refresh_token.is_none());
     }
@@ -374,9 +374,12 @@ mod tests {
             r#"{"ok": true, "access_token": "xoxe.xoxb", "expires_in": 43200, "token_type": "bot"}"#,
         )
         .unwrap();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let credential = response.bot.unwrap().into_credential(now);
-        assert_eq!(credential.expires_at, Some(now + Duration::seconds(43200)));
+        assert_eq!(
+            credential.expires_at,
+            Some(now + SignedDuration::from_secs(43200))
+        );
         assert_eq!(credential.readiness(now), Readiness::Ready);
     }
 

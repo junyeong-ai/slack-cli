@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use super::secret::{self, Secret};
@@ -6,7 +6,7 @@ use super::secret::{self, Secret};
 /// How long before a recorded expiry a credential is treated as due for
 /// renewal. Matches the window used by Slack's own SDKs, and leaves ample
 /// room for a request issued now to complete before the deadline.
-const RENEWAL_WINDOW: Duration = Duration::minutes(120);
+const RENEWAL_WINDOW: SignedDuration = SignedDuration::from_mins(120);
 
 /// One Slack access token together with everything needed to keep it alive.
 ///
@@ -25,8 +25,12 @@ pub struct Credential {
     )]
     pub refresh_token: Option<Secret>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::rfc3339::option"
+    )]
+    pub expires_at: Option<Timestamp>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
@@ -61,11 +65,11 @@ impl Credential {
 
     /// Whether the recorded expiry permits use, independently of renewal timing.
     /// Revocation and unrecorded expiry are determined by Slack.
-    pub fn is_live(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_live(&self, now: Timestamp) -> bool {
         self.expires_at.is_none_or(|expiry| now < expiry)
     }
 
-    pub fn readiness(&self, now: DateTime<Utc>) -> Readiness {
+    pub fn readiness(&self, now: Timestamp) -> Readiness {
         let Some(expiry) = self.expires_at else {
             return Readiness::Ready;
         };
@@ -165,7 +169,7 @@ mod tests {
         Credential {
             token: secret::new("xoxe.xoxp-test"),
             refresh_token: Some(secret::new("xoxe-refresh")),
-            expires_at: Some(Utc::now() + Duration::minutes(minutes)),
+            expires_at: Some(Timestamp::now() + SignedDuration::from_mins(minutes)),
             scopes: vec![],
         }
     }
@@ -181,30 +185,36 @@ mod tests {
     fn permanent_credentials_are_always_ready() {
         let credential = Credential::permanent(secret::new("xoxp-static"), vec![]);
         assert!(!credential.expires());
-        assert_eq!(credential.readiness(Utc::now()), Readiness::Ready);
+        assert_eq!(credential.readiness(Timestamp::now()), Readiness::Ready);
     }
 
     #[test]
     fn renewal_is_due_inside_the_window_and_after_expiry() {
         assert_eq!(
-            expiring_in(119).readiness(Utc::now()),
+            expiring_in(119).readiness(Timestamp::now()),
             Readiness::NeedsRenewal
         );
         assert_eq!(
-            expiring_in(-1).readiness(Utc::now()),
+            expiring_in(-1).readiness(Timestamp::now()),
             Readiness::NeedsRenewal
         );
     }
 
     #[test]
     fn renewal_is_not_due_outside_the_window() {
-        assert_eq!(expiring_in(121).readiness(Utc::now()), Readiness::Ready);
-        assert_eq!(expiring_in(720).readiness(Utc::now()), Readiness::Ready);
+        assert_eq!(
+            expiring_in(121).readiness(Timestamp::now()),
+            Readiness::Ready
+        );
+        assert_eq!(
+            expiring_in(720).readiness(Timestamp::now()),
+            Readiness::Ready
+        );
     }
 
     #[test]
     fn liveness_tracks_the_expiry_alone() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         assert!(Credential::permanent(secret::new("xoxp"), vec![]).is_live(now));
         assert!(expiring_in(1).is_live(now));
         assert!(!expiring_in(-1).is_live(now));
@@ -213,11 +223,11 @@ mod tests {
     #[test]
     fn a_credential_that_cannot_be_renewed_is_used_until_it_actually_expires() {
         assert_eq!(
-            without_refresh_token(30).readiness(Utc::now()),
+            without_refresh_token(30).readiness(Timestamp::now()),
             Readiness::Ready
         );
         assert_eq!(
-            without_refresh_token(-1).readiness(Utc::now()),
+            without_refresh_token(-1).readiness(Timestamp::now()),
             Readiness::Expired
         );
     }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::Utc;
+use jiff::Timestamp;
 use url::Url;
 
 use crate::auth::credential::TokenSet;
@@ -43,7 +43,7 @@ pub async fn run(request: Request) -> Result<Profile> {
     .run(receiver, exchange)
     .await?;
 
-    let issued_at = Utc::now();
+    let issued_at = Timestamp::now();
     let team = response.team()?.clone();
 
     Ok(Profile {
